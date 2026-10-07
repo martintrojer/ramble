@@ -27,8 +27,20 @@ pub enum FsEvent {
     Removed,
 }
 
-/// The watched file: its canonical folder and its name.
-type Target = Arc<Mutex<Option<(PathBuf, std::ffi::OsString)>>>;
+/// The watched file: its canonical folder, its name, and its state at the
+/// last emit (or at `watch`).
+type Target = Arc<Mutex<Option<(PathBuf, std::ffi::OsString, FileState)>>>;
+
+/// A hash of the file's bytes; `None` while it does not exist.
+type FileState = Option<u64>;
+
+fn file_state(path: &Path) -> FileState {
+    use std::hash::{Hash, Hasher};
+    let bytes = std::fs::read(path).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some(h.finish())
+}
 
 /// Watches one file at a time through its parent folder (non-recursive),
 /// so editors that replace the file by rename still trigger a reload.
@@ -81,16 +93,21 @@ impl FileWatcher {
         let Ok(dir) = parent.canonicalize() else {
             return;
         };
+        // Taken before watching, so a write after this point is never lost.
+        // macOS FSEvents also replays writes from just before the watch
+        // started; the debouncer drops those since the state is unchanged.
+        let state = file_state(&dir.join(name));
         if self.inner.watch(&dir, RecursiveMode::NonRecursive).is_ok() {
             *self.target.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some((dir.clone(), name.to_os_string()));
+                Some((dir.clone(), name.to_os_string(), state));
             self.dir = Some(dir);
         }
     }
 }
 
 /// Collect raw events touching the target, wait for a quiet period, then
-/// re-stat the file and emit Changed or Removed.
+/// re-read the file and emit Changed or Removed if its state differs from
+/// the last emit (events alone are not proof of a change: see `watch`).
 fn debounce(rx: mpsc::Receiver<Vec<PathBuf>>, target: Target, emit: impl Fn(PathBuf, FsEvent)) {
     let mut due: Option<Instant> = None;
     loop {
@@ -100,7 +117,7 @@ fn debounce(rx: mpsc::Receiver<Vec<PathBuf>>, target: Target, emit: impl Fn(Path
         match rx.recv_timeout(wait) {
             Ok(paths) => {
                 let t = target.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                let Some((_, name)) = t else { continue };
+                let Some((_, name, _)) = t else { continue };
                 // Compare names only: macOS reports /private/... paths.
                 if paths
                     .iter()
@@ -111,10 +128,18 @@ fn debounce(rx: mpsc::Receiver<Vec<PathBuf>>, target: Target, emit: impl Fn(Path
             }
             Err(RecvTimeoutError::Timeout) => {
                 due = None;
-                let t = target.lock().unwrap_or_else(|e| e.into_inner()).clone();
-                let Some((dir, name)) = t else { continue };
-                let file = dir.join(&name);
-                let ev = if file.exists() {
+                let mut t = target.lock().unwrap_or_else(|e| e.into_inner());
+                let Some((dir, name, last)) = t.as_mut() else {
+                    continue;
+                };
+                let file = dir.join(&*name);
+                let now = file_state(&file);
+                if now == *last {
+                    continue;
+                }
+                *last = now;
+                drop(t);
+                let ev = if now.is_some() {
                     FsEvent::Changed
                 } else {
                     FsEvent::Removed

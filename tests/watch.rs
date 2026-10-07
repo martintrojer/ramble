@@ -46,6 +46,30 @@ fn watcher_reports_change_then_removal() {
 }
 
 #[test]
+fn events_that_leave_the_file_unchanged_are_not_reported() {
+    // macOS FSEvents replays writes from just before the watch started;
+    // an event is only reported when the bytes differ from what the
+    // watcher last saw. Rewriting the same bytes has the same shape.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "one\n").unwrap();
+    let (tx, rx) = mpsc::channel::<(PathBuf, FsEvent)>();
+    let mut w = FileWatcher::new(move |p, e| {
+        let _ = tx.send((p, e));
+    })
+    .unwrap();
+    w.watch(Some(&file));
+    std::fs::write(&file, "one\n").unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "unchanged file reported"
+    );
+    std::fs::write(&file, "two\n").unwrap();
+    let (_, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
+    assert_eq!(ev, FsEvent::Changed);
+}
+
+#[test]
 fn app_reloads_through_real_watcher() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("a.md");
