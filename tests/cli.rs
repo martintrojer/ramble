@@ -340,9 +340,7 @@ fn print_width_uses_config_max_width() {
     }
 }
 
-// ORCH-FOLLOWUP: enable after t02 merges (doc::from_bytes is todo!() on main).
 #[test]
-#[ignore]
 fn binary_file_shows_message() {
     let tmp = TempDir::new().unwrap();
     let bin = tmp.path().join("b.md");
