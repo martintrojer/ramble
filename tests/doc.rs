@@ -566,3 +566,57 @@ fn code_spans_outside_links_and_add_links_reindexes_inline_code() {
         .collect();
     assert_eq!(code_links, [Some(0), Some(1), None, None]);
 }
+
+fn visible_rows(doc: &Document) -> Vec<String> {
+    let page = ramble::render::render(doc, 40, &ramble::render::Theme::catppuccin_mocha());
+    ramble::render::to_ansi(&page)
+        .lines()
+        .map(|l| {
+            let mut out = String::new();
+            let mut chars = l.chars();
+            while let Some(c) = chars.next() {
+                if c == '\x1b' {
+                    chars.by_ref().find(|c| c.is_ascii_alphabetic());
+                } else {
+                    out.push(c);
+                }
+            }
+            out.trim().to_owned()
+        })
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+#[test]
+fn yaml_front_matter_is_metadata() {
+    let src = "---\ntitle: X\ntags: [a]\nsee: \"[x](y.md)\"\n---\n\n# Real\n";
+    let doc = parse(src.to_owned());
+    let texts: Vec<&str> = doc.headings.iter().map(|h| h.text.as_str()).collect();
+    assert_eq!(texts, vec!["Real"]);
+    assert!(doc.links.is_empty());
+    assert_eq!(
+        doc.front_matter,
+        Some(0.."---\ntitle: X\ntags: [a]\nsee: \"[x](y.md)\"\n---".len())
+    );
+    assert!(matches!(
+        doc.blocks.as_slice(),
+        [Block::Heading { level: 1, .. }]
+    ));
+    assert_eq!(visible_rows(&doc).first().map(String::as_str), Some("Real"));
+}
+
+#[test]
+fn leading_rule_without_closing_fence_is_not_front_matter() {
+    let src = "---\nJust text after a rule.\n\nMore text.\n";
+    let doc = parse(src.to_owned());
+    assert_eq!(doc.front_matter, None);
+    assert!(matches!(
+        doc.blocks.as_slice(),
+        [
+            Block::Rule { .. },
+            Block::Paragraph { .. },
+            Block::Paragraph { .. }
+        ]
+    ));
+    assert!(doc.headings.is_empty());
+}

@@ -32,6 +32,9 @@ pub struct Document {
     /// code-path links. The app keeps those naming an existing file
     /// ([`Document::add_links`]); `doc` itself does no I/O.
     pub code_spans: Vec<CodeSpan>,
+    /// Byte range of a leading YAML front-matter block (`---` ... `---`),
+    /// fences included. It is metadata: no block, heading or link.
+    pub front_matter: Option<Range<usize>>,
     /// True when the input had invalid UTF-8 that was replaced with U+FFFD.
     pub lossy: bool,
 }
@@ -207,12 +210,17 @@ pub fn parse(source: String) -> Document {
     let headings = collect_headings(&events);
     let links = collect_links(&events);
     let code_spans = collect_code_spans(&source, &events);
+    let front_matter = events.iter().find_map(|(event, range)| match event {
+        Event::Start(Tag::MetadataBlock(_)) => Some(range.clone()),
+        _ => None,
+    });
     Document {
         source,
         blocks,
         headings,
         links,
         code_spans,
+        front_matter,
         lossy: false,
     }
 }
@@ -396,6 +404,7 @@ fn options() -> Options {
         | Options::ENABLE_GFM
         | Options::ENABLE_WIKILINKS
         | Options::ENABLE_HEADING_ATTRIBUTES
+        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
 }
 
 fn events(src: &str) -> Vec<(Event<'_>, Range<usize>)> {
@@ -697,8 +706,9 @@ fn parse_blocks(src: &str, events: &Events<'_>, i: &mut usize) -> Vec<Block> {
                     children,
                 });
             }
-            // Not enabled (definition lists, metadata) or unexpected:
-            // keep the walk balanced.
+            // Front matter (metadata, recorded in `Document::front_matter`),
+            // not enabled (definition lists) or unexpected: keep the walk
+            // balanced.
             _ => skip_to_end(events, i),
         }
     }
