@@ -26,6 +26,14 @@ impl App {
     /// Run the queued side effect (if any). The caller must have left the
     /// TUI first; `run` does this.
     pub fn run_pending_effect(&mut self) {
+        // The review thread pauses while ramble is suspended, and polls
+        // once on return.
+        self.review_pause(true);
+        self.run_effect();
+        self.review_pause(false);
+    }
+
+    fn run_effect(&mut self) {
         match self.pending_effect.take() {
             Some(Effect::Edit { path, line }) => {
                 if let Err(e) = (self.editor)(&path, line) {

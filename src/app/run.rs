@@ -30,6 +30,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
     if let Err(e) = app.start_watcher() {
         app.set_status(format!("live reload off: {e:#}"));
     }
+    app.start_review();
     while !app.should_quit() {
         if app.pending_effect().is_some() {
             suspend_and_run(terminal, || app.run_pending_effect())?;

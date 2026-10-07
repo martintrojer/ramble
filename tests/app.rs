@@ -2476,3 +2476,24 @@ fn more_than_26_visible_links_get_two_letter_labels() {
     send(&mut app, ctrl('o'));
     assert_eq!(app.cursor(), at(target.row, target.col_start));
 }
+
+#[test]
+fn review_jump_and_gutter_follow_markers() {
+    let (dir, mut app) = app();
+    keys(&mut app, "]r");
+    assert_eq!(app.status(), ramble::app::NO_REVIEW);
+    let mut m = ramble::review::Markers::default();
+    m.files.insert(
+        ramble::review::canonical(&dir.path().join("doc.md")),
+        ramble::review::FileMarks {
+            count: 1,
+            lines: vec![(5, 5)],
+        },
+    );
+    app.event(AppEvent::Review(m));
+    assert_eq!(app.review_gutter(), 1);
+    keys(&mut app, "]r");
+    // Source line 5 is "Para 2".
+    assert_eq!(app.cursor().row, para_row(2));
+    assert!(screen(&app).contains("review 1"));
+}

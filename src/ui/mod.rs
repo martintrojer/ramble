@@ -2,6 +2,7 @@
 //! widget per area; later units add a file and one call here.
 
 mod content;
+mod gutter;
 mod hints;
 mod hover;
 mod picker;
@@ -23,7 +24,9 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if side.width > 0 {
         sidebar::draw(frame, app, side);
     }
-    content::draw(frame, app, content);
+    let (gutter_area, text_area) = gutter::split(app, content);
+    gutter::draw(frame, app, gutter_area);
+    content::draw(frame, app, text_area);
     hover::draw(frame, app, content);
     hints::draw(frame, app, content);
     status::draw(frame, app, status);

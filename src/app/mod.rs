@@ -20,6 +20,7 @@ mod marks;
 mod motion;
 mod page;
 mod picker;
+mod review_glue;
 mod run;
 mod scroll;
 mod search;
@@ -48,6 +49,7 @@ pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
+pub use review_glue::{MARKER as REVIEW_MARKER, NO_MORE_REVIEW, NO_REVIEW};
 pub use run::{run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
@@ -124,6 +126,8 @@ pub enum AppEvent {
     /// An event from a language server (`run` drains the app's own LSP
     /// channel with [`App::pump_lsp`]; this variant injects one directly).
     Lsp(crate::lsp::LspEvent),
+    /// New comment markers from the review thread.
+    Review(crate::review::Markers),
 }
 
 /// Runs an editor on a file (at a line, if given) outside the TUI.
@@ -186,6 +190,7 @@ pub struct App {
     /// The `:` command being typed.
     cmdline: Option<String>,
     hints: hints::Hints,
+    review: review_glue::ReviewState,
 }
 
 impl App {
@@ -236,6 +241,7 @@ impl App {
             picker: Default::default(),
             cmdline: None,
             hints: hints::Hints::default(),
+            review: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -319,6 +325,7 @@ impl App {
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
+            AppEvent::Review(m) => self.review_event(m),
         }
     }
 

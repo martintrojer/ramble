@@ -102,6 +102,9 @@ pub enum Action {
     OpenOp(crate::notebook::Op),
     Picker(super::PickerAction),
     Cmd(super::CmdAction),
+    // Review markers.
+    /// `]r` (true) / `[r`.
+    ReviewJump(bool),
 }
 
 /// What a key sequence means so far.
@@ -220,6 +223,8 @@ impl App {
                 ('[', 'l') => KeyResult::Action(A::LinkMotion(false, count)),
                 (']', ']') => KeyResult::Action(A::HeadingMotion(true, count)),
                 ('[', '[') => KeyResult::Action(A::HeadingMotion(false, count)),
+                (']', 'r') => KeyResult::Action(A::ReviewJump(true)),
+                ('[', 'r') => KeyResult::Action(A::ReviewJump(false)),
                 _ => KeyResult::None,
             };
         };
@@ -244,6 +249,7 @@ impl App {
                 return KeyResult::Count(c as usize - '0' as usize);
             }
             KeyCode::Char('g' | 'z' | 'Z' | 'm' | '\'') => return KeyResult::Pending,
+            // `]l [l ]] [[` (links, headings) and `]r [r` (review markers).
             KeyCode::Char('[' | ']') => return KeyResult::Pending,
             KeyCode::Char(';') => A::LinkRepeat(true, count),
             KeyCode::Char(',') => A::LinkRepeat(false, count),
@@ -343,6 +349,7 @@ impl App {
             A::OpenOp(op) => self.open_op(op, None),
             A::Picker(a) => self.picker_action(a),
             A::Cmd(a) => self.cmd_action(a),
+            A::ReviewJump(fwd) => self.review_jump(fwd),
         }
     }
 }

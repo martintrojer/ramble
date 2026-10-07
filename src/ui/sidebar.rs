@@ -81,7 +81,9 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
                 (false, _, true) => ("  ", Style::new().fg(palette::TEXT)),
                 (false, _, false) => ("  ", Style::new().fg(palette::OVERLAY)),
             };
-            Line::from(Span::styled(format!("{indent}{icon}{}", i.name), style))
+            let text = format!("{indent}{icon}{}", i.name);
+            let mark = review_mark(app, &i.path, Span::raw(text.as_str()).width(), area.width);
+            Line::from(vec![Span::styled(text, style), mark])
         })
         .collect();
     let focused = app.focus() == Focus::Files;
@@ -92,6 +94,24 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         rows,
         tree.selected_index(&items),
     );
+}
+
+/// The review marker after a tree row of `used` columns: `●`, plus the
+/// comment count when it fits in `width`; dim on folders.
+fn review_mark(app: &App, path: &std::path::Path, used: usize, width: u16) -> Span<'static> {
+    match app.file_marker(path) {
+        Some((c, Some(n))) => {
+            let full = format!(" {c} {n}");
+            let fits = used + Span::raw(full.as_str()).width() <= width as usize;
+            let text = if fits { full } else { format!(" {c}") };
+            Span::styled(text, Style::new().fg(palette::PEACH))
+        }
+        Some((c, None)) => Span::styled(
+            format!(" {c}"),
+            Style::new().fg(palette::PEACH).add_modifier(Modifier::DIM),
+        ),
+        None => Span::raw(""),
+    }
 }
 
 fn draw_outline(frame: &mut Frame, app: &App, area: Rect) {

@@ -59,10 +59,15 @@ impl App {
         self.retarget_watch();
         self.lsp_page_changed();
         self.sync_tree();
+        self.review_page_changed();
     }
 
     fn render_width(&self) -> u16 {
-        let cols = self.size.0.saturating_sub(self.sidebar_cols());
+        let cols = self
+            .size
+            .0
+            .saturating_sub(self.sidebar_cols())
+            .saturating_sub(self.review_gutter());
         cols.min(self.config.render.max_width).max(1)
     }
 

@@ -20,8 +20,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
         return;
     }
+    let review = match app.review_count() {
+        0 => String::new(),
+        n => format!("review {n}  "),
+    };
     let right = format!(
-        " {}  {}  ← {} ",
+        " {review}{}  {}  ← {} ",
         app.lsp_label(),
         app.position_label(),
         app.history_depth()
