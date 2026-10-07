@@ -1,5 +1,5 @@
-//! Render tests. They build `Document`s by hand and inject an inline walker
-//! through `render_with`, so they do not depend on `doc::parse`.
+//! Render tests. Most build `Document`s by hand and inject an inline walker
+//! through `render_with`; a few render real `doc::parse` output.
 
 use std::ops::Range;
 
@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use ramble::doc::{
     AlertKind, Alignment, Block, Document, Inline, InlineStyle, Link, LinkKind, ListItem,
 };
-use ramble::render::{RenderedPage, Theme, palette, render_with, to_ansi};
+use ramble::render::{RenderedPage, Theme, palette, render, render_with, to_ansi};
 use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
@@ -465,6 +465,89 @@ fn to_ansi_has_truecolor_and_plain_text_within_width() {
         assert!(UnicodeWidthStr::width(line) <= 40, "{line:?}");
     }
     assert!(ansi.ends_with("\x1b[0m\n"));
+}
+
+fn row_text(page: &RenderedPage, row: usize) -> String {
+    page.lines[row]
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect()
+}
+
+#[test]
+fn narrow_table_wraps_cells_inside_borders() {
+    let src = "| Name | Value |\n|:-----|------:|\n| é | 😀 |\n| 漢字 | long cell text here |\n";
+    let d = ramble::doc::parse(src.to_string());
+    // Natural width is 30; at 24 the columns shrink and cells wrap.
+    let page = render(&d, 24, &Theme::catppuccin_mocha());
+    let rows: Vec<String> = (0..page.lines.len()).map(|r| row_text(&page, r)).collect();
+    assert!(!rows.is_empty());
+    let width = UnicodeWidthStr::width(rows[0].as_str());
+    for row in &rows {
+        let first = row.chars().next().expect("non-empty row");
+        let last = row.chars().last().expect("non-empty row");
+        assert!("┌├└│".contains(first), "{row:?}");
+        assert!("┐┤┘│".contains(last), "{row:?}");
+        assert_eq!(UnicodeWidthStr::width(row.as_str()), width, "{row:?}");
+        assert!(width <= 24, "{row:?}");
+    }
+    // The long cell wraps at a word boundary onto two rows.
+    let long = rows
+        .iter()
+        .position(|r| r.contains("long cell"))
+        .expect("long cell row");
+    assert!(rows[long + 1].contains("text here"), "{rows:#?}");
+}
+
+#[test]
+fn control_chars_draw_as_question_marks() {
+    for (src, drawn) in [
+        ("```\nx\u{1b}y\u{7}z\n```\n", "x?y?z"),
+        ("a\u{7}b\n", "a?b"),
+    ] {
+        let d = ramble::doc::parse(src.to_string());
+        let page = render(&d, 40, &Theme::catppuccin_mocha());
+        let text = row_text(&page, 0);
+        assert_eq!(text.trim_end(), drawn, "{src:?}");
+        assert!(!text.chars().any(char::is_control), "{text:?}");
+        assert_eq!(page.lines[0].width(), drawn.len());
+        let seg = &page.srcmap.segments[0];
+        assert_eq!(seg.span.col_end - seg.span.col_start, drawn.len());
+    }
+}
+
+#[test]
+fn touching_links_get_separate_segments() {
+    // Two links whose visible text is contiguous in the source.
+    let src = "ab";
+    let links = vec![
+        Link {
+            kind: LinkKind::Markdown,
+            dest: "x".into(),
+            range: 0..1,
+            text_range: 0..1,
+        },
+        Link {
+            kind: LinkKind::Markdown,
+            dest: "y".into(),
+            range: 1..2,
+            text_range: 1..2,
+        },
+    ];
+    let d = doc(src, vec![para(src, "ab")], links);
+    let page = draw(&d, 40);
+    for (i, link) in d.links.iter().enumerate() {
+        let segs: Vec<_> = page
+            .srcmap
+            .segments
+            .iter()
+            .filter(|s| s.link == Some(i))
+            .collect();
+        assert_eq!(segs.len(), 1, "link {i}: {:?}", page.srcmap.segments);
+        assert_eq!(segs[0].src, link.text_range, "link {i}");
+    }
+    assert_eq!(page.srcmap.segments.len(), 2);
 }
 
 // ---------------------------------------------------------------------------
