@@ -319,6 +319,35 @@ fn blocks_tables_tasks_alerts_footnotes_code() {
 }
 
 #[test]
+fn all_alert_kinds() {
+    let doc = parse(
+        "> [!NOTE]\n> a\n\n> [!TIP]\n> a\n\n> [!IMPORTANT]\n> a\n\n\
+         > [!WARNING]\n> a\n\n> [!CAUTION]\n> a\n\n> [!note]\n> a\n"
+            .to_owned(),
+    );
+    let alerts: Vec<Option<AlertKind>> = doc
+        .blocks
+        .iter()
+        .map(|b| match b {
+            Block::BlockQuote { alert, .. } => *alert,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    use AlertKind::*;
+    assert_eq!(
+        alerts,
+        [
+            Some(Note),
+            Some(Tip),
+            Some(Important),
+            Some(Warning),
+            Some(Caution),
+            Some(Note)
+        ]
+    );
+}
+
+#[test]
 fn loose_list_task_items() {
     let doc = parse("- [ ] a\n\n- [x] b\n\n- c\n".to_owned());
     let Block::List { items, .. } = &doc.blocks[0] else {
