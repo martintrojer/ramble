@@ -1965,30 +1965,65 @@ fn tags_open_a_second_picker_of_notes_by_tag() {
 
 #[test]
 fn a_stale_picker_reply_is_dropped() {
-    let (_d, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+    // Both requests are held, and "first" is answered while the second
+    // picker is still loading: only the seq check can drop it.
+    let (_d, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
         json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
                {"expect": "workspace/executeCommand", "as": "first"},
-               {"expect": "workspace/executeCommand",
-                "reply": zk_notes(root, &[("Second", "b.md")])},
-               {"respond": "first", "result": zk_notes(root, &[("First", "a.md")])}])
+               {"expect": "workspace/executeCommand", "as": "second"},
+               {"respond": "first", "result": zk_notes(root, &[("First", "a.md")])},
+               {"respond": "second", "result": zk_notes(root, &[("Second", "b.md")])}])
     });
     running(&mut app);
     leader(&mut app, "zf");
     send(&mut app, key(KeyCode::Esc));
     leader(&mut app, "zf");
+    executed(&log, 2);
     pump_until(&mut app, "second", |a| !picker_labels(a).is_empty());
     pump_for(&mut app, Duration::from_millis(300));
     assert_eq!(picker_labels(&app), ["Second"]);
 }
 
 #[test]
+fn a_picker_reply_from_another_server_instance_is_dropped() {
+    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |_| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "workspace/executeCommand", "as": "held"}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    leader(&mut app, "zf");
+    executed(&log, 1);
+    app.event(AppEvent::Lsp(ramble::lsp::LspEvent::Response {
+        server: "zk@/elsewhere".into(),
+        id: 2,
+        tag: ramble::app::PICKER_TAG_BASE | 1,
+        result: Ok(zk_notes(&root, &[("Foreign", "b.md")])),
+    }));
+    assert!(app.picker().unwrap().loading, "foreign reply dropped");
+    assert!(picker_labels(&app).is_empty());
+}
+
+/// A note of `n` paragraphs, none of which links anywhere.
+fn filler(name: &str, n: usize) -> String {
+    let mut s = format!("# {name}\n\n");
+    for i in 1..=n {
+        s.push_str(&format!("{name} filler {i}\n\n"));
+    }
+    s
+}
+
+#[test]
 fn zk_backlinks_send_references_at_0_0_and_open_at_the_line() {
-    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+    // c.md has no link back to a.md, so zk's line is used.
+    let mut c = filler("C page", 20);
+    c.push_str("## Deep\n\nbottom\n");
+    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[("c.md", &c)], |root| {
         json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
                {"expect": "textDocument/references", "reply": [
-                   {"uri": uri(&root.join("b.md")), "range": {
-                       "start": {"line": 44, "character": 0},
-                       "end": {"line": 44, "character": 0}}}]}])
+                   {"uri": uri(&root.join("c.md")), "range": {
+                       "start": {"line": 42, "character": 0},
+                       "end": {"line": 42, "character": 0}}}]}])
     });
     let root = dir.path().canonicalize().unwrap();
     running(&mut app);
@@ -1998,12 +2033,44 @@ fn zk_backlinks_send_references_at_0_0_and_open_at_the_line() {
     assert_eq!(req["position"], json!({"line": 0, "character": 0}));
     assert_eq!(req["context"]["includeDeclaration"], json!(false));
     let item = app.picker().unwrap().items[0].clone();
-    assert_eq!(item.label, "B page", "first heading of b.md");
-    assert_eq!(item.detail, "b.md:45");
+    assert_eq!(item.label, "C page", "first heading of c.md");
+    assert_eq!(item.detail, "c.md:43");
     send(&mut app, key(KeyCode::Enter));
-    assert_eq!(page_path(&app), root.join("b.md"));
-    assert_eq!(row_text(&app, app.cursor().row), "Deep", "b.md line 45");
+    assert_eq!(page_path(&app), root.join("c.md"));
+    assert_eq!(row_text(&app, app.cursor().row), "Deep", "c.md line 43");
     assert_eq!(app.history_depth(), 1);
+}
+
+#[test]
+fn zk_backlinks_land_on_the_first_link_back_not_zks_line() {
+    // zk reports the first substring hit of "a" (line 3, "para 0"); the
+    // wikilink to a.md is on line 83.
+    let mut long = String::from("# Long\n\npara 0\n");
+    for i in 1..40 {
+        long.push_str(&format!("\npara {i}\n"));
+    }
+    long.push_str("\n[[a]] link\n");
+    assert_eq!(long.lines().position(|l| l == "[[a]] link"), Some(82));
+    let (dir, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[("long.md", &long)], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+                   {"expect": "textDocument/references", "reply": [
+                       {"uri": uri(&root.join("long.md")), "range": {
+                           "start": {"line": 2, "character": 0},
+                           "end": {"line": 2, "character": 0}}}]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    keys(&mut app, "grr");
+    pump_until(&mut app, "backlinks", |a| !picker_labels(a).is_empty());
+    assert_eq!(app.picker().unwrap().items[0].detail, "long.md:3");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("long.md"));
+    assert_eq!(
+        row_text(&app, app.cursor().row),
+        "a link",
+        "long.md line 83"
+    );
+    assert_eq!(app.link_under_cursor(), Some(0));
 }
 
 #[test]

@@ -274,7 +274,10 @@ fn zk_end_to_end() {
     let items = ramble::notebook::location_items(&refs, &root);
     let mut details: Vec<&str> = items.iter().map(|i| i.detail.as_str()).collect();
     details.sort();
-    // zk counts lines in tagged.md from after its front matter (0.15.6).
+    // zk 0.15.6 reports the line of the first substring hit of the target
+    // stem ("a") in the raw source, front matter included: tagged.md:2 is
+    // the "a" in "tags:", not the link; b.md:3 is right by coincidence.
+    // ramble moves to the real link on open (app tests).
     assert_eq!(details, ["b.md:3", "tagged.md:2"], "{refs}");
     assert!(items.iter().any(|i| i.label == "Tagged"), "{items:?}");
 

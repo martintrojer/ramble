@@ -15,7 +15,12 @@ use serde_json::Value;
 use super::keys::{Action, KeyResult};
 use super::{App, Mode};
 use crate::lsp::Kind;
+use crate::nav::{self, Target};
 use crate::notebook::{self, Item, Op, Sources, zk};
+
+fn canonical(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+}
 
 /// High bit set on every picker request tag.
 pub const PICKER_TAG_BASE: u64 = 1 << 63;
@@ -60,6 +65,9 @@ struct Picker {
     seq: u64,
     /// Server root the request went to (relative paths in details).
     root: PathBuf,
+    /// Backlinks: the canonical path of the page the picker was opened
+    /// from; Enter lands on the first link back to it.
+    from: Option<PathBuf>,
 }
 
 impl Picker {
@@ -75,6 +83,7 @@ impl Picker {
             loading: false,
             seq: 0,
             root,
+            from: None,
         }
     }
 
@@ -259,16 +268,20 @@ impl App {
             return;
         };
         let params = notebook::references_params(&path, pos);
-        self.picker_request(
+        let sent = self.picker_request(
             "Backlinks",
             Content::Locations,
             root,
             "textDocument/references",
             params,
         );
+        if sent && let Some(p) = self.picker.open.as_mut() {
+            p.from = Some(canonical(&path));
+        }
     }
 
-    /// Send a picker request and show the picker loading.
+    /// Send a picker request and show the picker loading. False when it
+    /// could not be sent (status set, no picker shown).
     fn picker_request(
         &mut self,
         title: &str,
@@ -276,21 +289,22 @@ impl App {
         root: PathBuf,
         method: &str,
         params: Value,
-    ) {
+    ) -> bool {
         self.picker.seq += 1;
         let seq = self.picker.seq;
         let Some((client, ..)) = self.lsp_running() else {
             self.set_status(format!("{title}: no language server"));
-            return;
+            return false;
         };
         if let Err(e) = client.request(method, params, PICKER_TAG_BASE | seq) {
             self.set_status(format!("{title}: {e:#}"));
-            return;
+            return false;
         }
         let mut p = Picker::new(title, content, root);
         p.loading = true;
         p.seq = seq;
         self.show_picker(p);
+        true
     }
 
     fn show_picker(&mut self, p: Picker) {
@@ -378,7 +392,7 @@ impl App {
         let Some(item) = p.filtered.get(p.selected).map(|&i| p.items[i].clone()) else {
             return;
         };
-        let (content, root) = (p.content, p.root.clone());
+        let (content, root, from) = (p.content, p.root.clone(), p.from.clone());
         self.close_picker();
         match content {
             Content::Tags => {
@@ -391,12 +405,63 @@ impl App {
                     self.follow_link_index(i);
                 }
             }
-            Content::Notes | Content::Locations => {
+            Content::Notes => {
                 if let Some(path) = &item.path {
                     self.open_path_at(path, item.line);
                 }
             }
+            Content::Locations => {
+                if let Some(path) = &item.path {
+                    self.open_backlink(path, item.line, from.as_deref());
+                }
+            }
         }
+    }
+
+    /// Open a backlink: the cursor goes to the first link in the opened
+    /// page that resolves to `from` (zk reports the line of the first
+    /// substring hit of the target's name, often not the link), else to
+    /// the server's `line`.
+    fn open_backlink(&mut self, path: &Path, line: Option<usize>, from: Option<&Path>) {
+        let before = self.page_id();
+        self.open_path_at(path, line);
+        if self.page_id() == before {
+            return;
+        }
+        let Some(i) = from.and_then(|f| self.first_link_to(f)) else {
+            return;
+        };
+        let Some(page) = &self.page else { return };
+        let Some(seg) = page
+            .rendered
+            .srcmap
+            .segments
+            .iter()
+            .find(|s| s.link == Some(i))
+        else {
+            return;
+        };
+        let (row, col) = (seg.span.row, seg.span.col_start);
+        self.jump_to_row(row);
+        self.set_col(col);
+    }
+
+    /// Index of the first link on the current page whose target is the
+    /// canonical path `target`: the documentLink target when the server
+    /// gave one, else local resolution.
+    fn first_link_to(&self, target: &Path) -> Option<usize> {
+        let page = self.page.as_ref()?;
+        let dir = self.link_dir();
+        page.doc.links.iter().enumerate().position(|(i, link)| {
+            let path = match self.link_target(i) {
+                Some(p) => p.to_path_buf(),
+                None => match nav::resolve(&link.dest, &link.kind, &dir) {
+                    Target::File { path, .. } => path,
+                    _ => return false,
+                },
+            };
+            canonical(&path) == target
+        })
     }
 
     /// Move the cursor onto link `i` and follow it like `gd`.
