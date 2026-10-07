@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher as _};
 
+use super::sidebar::Tree;
 use super::{App, AppEvent};
 
 /// Quiet period before a burst of raw events becomes one [`FsEvent`].
@@ -225,20 +226,19 @@ impl App {
     /// terminal. A status set by the reload (binary, not UTF-8) or the
     /// deleted-file banner is kept.
     pub fn refresh(&mut self) {
-        let selected = self
-            .tree()
-            .and_then(|t| t.selected())
-            .map(Path::to_path_buf);
+        let view = self.tree().map(Tree::view);
         let file = self.page.as_ref().is_some_and(|p| p.path.is_some());
         if file {
             self.status.clear();
             self.reload();
         }
-        // reload() reveals the current file in the tree; the user's
-        // selection wins.
+        // reload() reveals the current file in the tree, expanding its
+        // ancestors and selecting it; the user's expansion and selection win.
         let tree = match self.tree_mut() {
             Some(t) => {
-                t.select(selected);
+                if let Some(v) = view {
+                    t.restore_view(v);
+                }
                 t.refresh();
                 true
             }

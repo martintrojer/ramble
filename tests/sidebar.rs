@@ -696,14 +696,35 @@ fn ctrl_l_refreshes_the_tree_keeping_expansion_and_selection() {
 #[test]
 fn refresh_rewalks_collapsed_but_walked_dirs() {
     let (_d, root) = fixture();
+    write(&root, "notes/n.md", "# N\n");
     let mut tree = Tree::new(&root, false);
-    tree.expand(&root.join("img"));
-    tree.collapse(&root.join("img"));
-    assert_eq!(names(&tree), ["docs", "a.md"], "img/ has no markdown");
-    write(&root, "img/notes.md", "# N\n");
+    tree.expand(&root.join("notes"));
+    tree.collapse(&root.join("notes"));
+    assert_eq!(names(&tree), ["docs", "img", "notes", "a.md"]);
+    // An unwalked dir counts as holding markdown, so only a re-walk of the
+    // collapsed dir can find it empty and hide it.
+    std::fs::remove_file(root.join("notes/n.md")).unwrap();
     tree.refresh();
     assert_eq!(names(&tree), ["docs", "img", "a.md"]);
-    assert!(!tree.is_expanded(&root.join("img")));
+    assert!(!tree.is_expanded(&root.join("notes")));
+}
+
+#[test]
+fn ctrl_l_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("docs/deep/x.md")),
+        config(SidebarMode::Files),
+    );
+    win(&mut app, 'h');
+    keys(&mut app, "ggh");
+    let docs = root.join("docs");
+    assert!(!app.tree().unwrap().is_expanded(&docs));
+    app.handle_key(ctrl('l'));
+    let tree = app.tree().unwrap();
+    assert!(!tree.is_expanded(&docs), "refresh re-expanded docs/");
+    assert_eq!(tree.selected(), Some(docs.as_path()));
 }
 
 #[test]

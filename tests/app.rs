@@ -2716,6 +2716,17 @@ fn ctrl_l_on_a_deleted_file_keeps_the_banner_and_content() {
 }
 
 #[test]
+fn ctrl_l_keeps_binary_and_lossy_statuses() {
+    let (dir, mut app) = app_with(b"# One\n");
+    std::fs::write(dir.path().join("doc.md"), b"# a\0b\n").unwrap();
+    app.handle_key(ctrl('l'));
+    assert_eq!(app.status(), "looks binary");
+    std::fs::write(dir.path().join("doc.md"), b"# a\xffb\n").unwrap();
+    app.handle_key(ctrl('l'));
+    assert_eq!(app.status(), "not valid UTF-8");
+}
+
+#[test]
 fn ctrl_l_on_stdin_does_not_reread() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(

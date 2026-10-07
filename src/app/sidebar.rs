@@ -283,6 +283,20 @@ impl Tree {
         }
     }
 
+    /// The expansion and selection, for [`Tree::restore_view`].
+    pub(super) fn view(&self) -> (HashSet<PathBuf>, Option<PathBuf>) {
+        (self.expanded.clone(), self.selected.clone())
+    }
+
+    /// Undo a [`Tree::reveal`] that should not stick (`C-l`).
+    pub(super) fn restore_view(
+        &mut self,
+        (expanded, selected): (HashSet<PathBuf>, Option<PathBuf>),
+    ) {
+        self.expanded = expanded;
+        self.selected = selected;
+    }
+
     pub fn collapse(&mut self, dir: &Path) {
         self.expanded.remove(dir);
     }
