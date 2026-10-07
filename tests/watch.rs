@@ -1,0 +1,62 @@
+//! Live reload with the real `notify` watcher (spec § Testing "live
+//! reload, real watcher"): write to a temp file and wait up to 2s.
+
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
+
+use ramble::app::{App, AppEvent, FileWatcher, FsEvent, StartOptions, StartTarget};
+use ramble::config::Config;
+
+const WAIT: Duration = Duration::from_secs(2);
+
+#[test]
+fn watcher_reports_change_then_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "one\n").unwrap();
+    let (tx, rx) = mpsc::channel::<(PathBuf, FsEvent)>();
+    let mut w = FileWatcher::new(move |p, e| {
+        let _ = tx.send((p, e));
+    })
+    .unwrap();
+    w.watch(Some(&file));
+    // A sibling file does not count.
+    std::fs::write(dir.path().join("other.md"), "x\n").unwrap();
+    std::fs::write(&file, "two\n").unwrap();
+    let (path, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
+    assert_eq!(ev, FsEvent::Changed);
+    assert_eq!(path.file_name(), file.file_name());
+    // Drain any trailing burst, then delete.
+    while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+    std::fs::remove_file(&file).unwrap();
+    let (_, ev) = rx.recv_timeout(WAIT).expect("remove event within 2s");
+    assert_eq!(ev, FsEvent::Removed);
+}
+
+#[test]
+fn app_reloads_through_real_watcher() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "# A\n\nbefore\n").unwrap();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::File(file.clone()),
+            tree_root: dir.path().to_path_buf(),
+            config: Config::default(),
+        },
+        (40, 10),
+    )
+    .unwrap();
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+    app.set_sender(tx);
+    app.start_watcher().unwrap();
+    std::fs::write(&file, "# A\n\nafter\n").unwrap();
+    let ev = rx.recv_timeout(WAIT).expect("fs event within 2s");
+    assert!(
+        matches!(ev, AppEvent::FsWatch(_, FsEvent::Changed)),
+        "{ev:?}"
+    );
+    app.event(ev);
+    assert!(app.page().unwrap().doc.source.contains("after"));
+}

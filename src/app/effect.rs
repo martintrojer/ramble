@@ -1,18 +1,20 @@
 //! Side effects that need the real terminal: queued by actions as an
-//! [`Effect`], drained by `run` outside the TUI. Later units add variants
-//! (e.g. `Launch`).
+//! [`Effect`], drained by `run` outside the TUI.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
 use super::App;
+use super::launch::LaunchCommand;
 
 /// A side effect to run with the TUI suspended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Open this (non-markdown) file in the editor.
     Edit(PathBuf),
+    /// Run a launcher, then reload the page.
+    Launch(LaunchCommand),
 }
 
 impl App {
@@ -30,6 +32,7 @@ impl App {
                     self.set_status(format!("editor: {e:#}"));
                 }
             }
+            Some(Effect::Launch(cmd)) => self.run_launch(&cmd),
             None => {}
         }
     }
@@ -38,7 +41,7 @@ impl App {
     pub fn pending_editor(&self) -> Option<&Path> {
         match &self.pending_effect {
             Some(Effect::Edit(path)) => Some(path),
-            None => None,
+            _ => None,
         }
     }
 
@@ -115,6 +118,50 @@ pub(super) fn system_edit(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Copies text to the system clipboard.
+pub trait Clipboard {
+    fn copy(&mut self, text: &str) -> anyhow::Result<()>;
+}
+
+/// Default clipboard: an OSC 52 sequence queued for the terminal. `run`
+/// writes the queue to stdout (which ratatui owns) after each event.
+pub(super) struct Osc52 {
+    pub(super) out: std::rc::Rc<std::cell::RefCell<Vec<u8>>>,
+}
+
+impl Clipboard for Osc52 {
+    fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+        self.out.borrow_mut().extend(osc52(text).into_bytes());
+        Ok(())
+    }
+}
+
+/// The OSC 52 "set clipboard" sequence for `text`.
+pub fn osc52(text: &str) -> String {
+    format!("\x1b]52;c;{}\x07", base64(text.as_bytes()))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +170,19 @@ mod tests {
     fn editor_stdin_is_tty_when_stdin_is_a_pipe() {
         assert_eq!(editor_stdin(false), EditorStdin::Tty);
         assert_eq!(editor_stdin(true), EditorStdin::Inherit);
+    }
+
+    #[test]
+    fn base64_matches_rfc4648_vectors() {
+        for (i, o) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64(i.as_bytes()), o);
+        }
+        assert_eq!(osc52("hi"), "\x1b]52;c;aGk=\x07");
     }
 }

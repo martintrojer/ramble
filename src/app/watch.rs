@@ -1,0 +1,225 @@
+//! Live reload: a `notify` watcher on the current file's folder, debounced
+//! into [`FsEvent`]s, plus the app's reload and deleted-file banner.
+
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use notify::{RecursiveMode, Watcher as _};
+
+use super::{App, AppEvent};
+
+/// Quiet period before a burst of raw events becomes one [`FsEvent`].
+pub const DEBOUNCE: Duration = Duration::from_millis(100);
+
+/// Watcher events for this long after a launcher's own reload are ignored.
+const LAUNCH_QUIET: Duration = Duration::from_millis(500);
+
+/// Banner shown while the current file is gone.
+pub const DELETED_BANNER: &str = "File deleted; showing last version";
+
+/// What happened to the watched file (decided by re-statting it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FsEvent {
+    Changed,
+    Removed,
+}
+
+/// The watched file: its canonical folder and its name.
+type Target = Arc<Mutex<Option<(PathBuf, std::ffi::OsString)>>>;
+
+/// Watches one file at a time through its parent folder (non-recursive),
+/// so editors that replace the file by rename still trigger a reload.
+pub struct FileWatcher {
+    inner: notify::RecommendedWatcher,
+    target: Target,
+    /// The folder currently watched.
+    dir: Option<PathBuf>,
+    /// The file as given (reported back in events).
+    file: Option<PathBuf>,
+}
+
+impl FileWatcher {
+    /// Start a watcher; `emit` gets `(file, event)` after each debounced
+    /// burst of changes to the watched file.
+    pub fn new(emit: impl Fn(PathBuf, FsEvent) + Send + 'static) -> notify::Result<Self> {
+        let target: Target = Arc::new(Mutex::new(None));
+        let (raw_tx, raw_rx) = mpsc::channel::<Vec<PathBuf>>();
+        let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if let Ok(ev) = res {
+                let _ = raw_tx.send(ev.paths);
+            }
+        })?;
+        let shared = target.clone();
+        std::thread::spawn(move || debounce(raw_rx, shared, emit));
+        Ok(Self {
+            inner,
+            target,
+            dir: None,
+            file: None,
+        })
+    }
+
+    /// Watch `file` instead of the current one; `None` stops watching.
+    pub fn watch(&mut self, file: Option<&Path>) {
+        if self.file.as_deref() == file {
+            return;
+        }
+        if let Some(dir) = self.dir.take() {
+            let _ = self.inner.unwatch(&dir);
+        }
+        *self.target.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.file = file.map(Path::to_path_buf);
+        let Some(file) = file else { return };
+        let Some(name) = file.file_name() else { return };
+        let parent = match file.parent() {
+            Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+            _ => PathBuf::from("."),
+        };
+        let Ok(dir) = parent.canonicalize() else {
+            return;
+        };
+        if self.inner.watch(&dir, RecursiveMode::NonRecursive).is_ok() {
+            *self.target.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((dir.clone(), name.to_os_string()));
+            self.dir = Some(dir);
+        }
+    }
+}
+
+/// Collect raw events touching the target, wait for a quiet period, then
+/// re-stat the file and emit Changed or Removed.
+fn debounce(rx: mpsc::Receiver<Vec<PathBuf>>, target: Target, emit: impl Fn(PathBuf, FsEvent)) {
+    let mut due: Option<Instant> = None;
+    loop {
+        let wait = due.map_or(Duration::from_secs(3600), |d| {
+            d.saturating_duration_since(Instant::now())
+        });
+        match rx.recv_timeout(wait) {
+            Ok(paths) => {
+                let t = target.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let Some((_, name)) = t else { continue };
+                // Compare names only: macOS reports /private/... paths.
+                if paths
+                    .iter()
+                    .any(|p| p.file_name() == Some(name.as_os_str()))
+                {
+                    due = Some(Instant::now() + DEBOUNCE);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                due = None;
+                let t = target.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let Some((dir, name)) = t else { continue };
+                let file = dir.join(&name);
+                let ev = if file.exists() {
+                    FsEvent::Changed
+                } else {
+                    FsEvent::Removed
+                };
+                emit(file, ev);
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(x), Ok(y)) => x == y,
+        // A deleted file cannot be canonicalized: compare folder + name.
+        _ => {
+            let parent = |p: &Path| {
+                p.parent()
+                    .and_then(|d| d.canonicalize().ok())
+                    .map(|d| d.join(p.file_name().unwrap_or_default()))
+            };
+            parent(a).is_some() && parent(a) == parent(b)
+        }
+    }
+}
+
+impl App {
+    /// Start watching the current file; events arrive as
+    /// [`AppEvent::FsWatch`] through the sender. Needs a sender (set by
+    /// `run`, or by tests).
+    pub fn start_watcher(&mut self) -> anyhow::Result<()> {
+        let Some(tx) = self.sender.clone() else {
+            anyhow::bail!("no event sender");
+        };
+        let w = FileWatcher::new(move |path, ev| {
+            let _ = tx.send(AppEvent::FsWatch(path, ev));
+        })?;
+        self.watcher = Some(w);
+        self.retarget_watch();
+        Ok(())
+    }
+
+    /// Point the watcher at the current page's file (none for stdin).
+    pub(super) fn retarget_watch(&mut self) {
+        let file = self.page.as_ref().and_then(|p| p.path.clone());
+        if let Some(w) = &mut self.watcher {
+            w.watch(file.as_deref());
+        }
+    }
+
+    /// A watcher event for `path`.
+    pub(super) fn fs_event(&mut self, path: &Path, ev: FsEvent) {
+        let Some(current) = self.page.as_ref().and_then(|p| p.path.clone()) else {
+            return;
+        };
+        if !same_file(path, &current) {
+            return;
+        }
+        match ev {
+            FsEvent::Changed => {
+                let quiet = self
+                    .launch_reloaded_at
+                    .is_some_and(|t| t.elapsed() < LAUNCH_QUIET);
+                if !quiet {
+                    self.reload();
+                }
+            }
+            FsEvent::Removed => self.banner = Some(DELETED_BANNER.into()),
+        }
+    }
+
+    /// Banner over the content (e.g. the file was deleted).
+    pub fn banner(&self) -> Option<&str> {
+        self.banner.as_deref()
+    }
+
+    /// Re-read the current file, keeping the cursor on the same source
+    /// byte and the scroll offset. A missing file shows the banner and
+    /// keeps the content. Stdin pages do not reload.
+    pub fn reload(&mut self) {
+        let Some(path) = self.page.as_ref().and_then(|p| p.path.clone()) else {
+            return;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            self.banner = Some(DELETED_BANNER.into());
+            return;
+        };
+        let anchor = self.cursor_anchor();
+        let (scroll, status) = (self.scroll, self.status.clone());
+        if !self.open_bytes(&path, &bytes) {
+            return;
+        }
+        self.banner = None;
+        if self.status.is_empty() {
+            self.status = status;
+        }
+        self.scroll = scroll.min(self.max_scroll());
+        self.restore_anchor(anchor);
+        self.keep_visible();
+        self.on_reloaded();
+    }
+
+    /// Called after every reload of the current page. The LSP unit fills
+    /// this in (bump the version, re-send `didOpen`).
+    pub fn on_reloaded(&mut self) {}
+}

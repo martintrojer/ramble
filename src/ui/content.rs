@@ -11,6 +11,8 @@ use crate::render::palette;
 
 /// Background of the cursorline (Catppuccin Mocha surface0).
 const CURSORLINE_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
+/// Background of the deleted-file banner (Catppuccin Mocha red on base).
+const BANNER_BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let Some(page) = app.page() else {
@@ -39,6 +41,23 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
     frame.render_widget(Paragraph::new(lines), area);
 
+    let top = app.scroll();
+    let bottom = top + area.height as usize;
+    let buf = frame.buffer_mut();
+    for s in app.search_highlights() {
+        if s.row < top || s.row >= bottom || s.col_start as u16 >= area.width {
+            continue;
+        }
+        let w = (s.col_end.min(area.width as usize) - s.col_start) as u16;
+        let rect = Rect::new(
+            area.x + s.col_start as u16,
+            area.y + (s.row - top) as u16,
+            w,
+            1,
+        );
+        buf.set_style(rect, Style::new().fg(CURSORLINE_BG).bg(palette::YELLOW));
+    }
+
     if cursor.row >= app.scroll() && cursor.row < app.scroll() + area.height as usize {
         let y = area.y + (cursor.row - app.scroll()) as u16;
         let buf = frame.buffer_mut();
@@ -51,5 +70,18 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 Style::new().add_modifier(Modifier::REVERSED),
             );
         }
+    }
+
+    if let Some(banner) = app.banner() {
+        let rect = Rect::new(area.x, area.y, area.width, 1.min(area.height));
+        frame.render_widget(
+            Paragraph::new(format!(" {banner}")).style(
+                Style::new()
+                    .fg(palette::RED)
+                    .bg(BANNER_BG)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            rect,
+        );
     }
 }

@@ -3,18 +3,26 @@
 //!
 //! Layout: `keys` (key → [`Action`] table and dispatch), `motion` (cursor
 //! motions), `follow` (links and history), `page` (loading and layout),
-//! `effect` (side effects run outside the TUI), `run` (terminal and loop).
+//! `effect` (side effects run outside the TUI), `run` (terminal and loop),
+//! `search` (`/ ? n N * #`), `marks` (marks and yank), `launch`
+//! (launchers), `watch` (live reload).
 //! Later units add a file and register in the tables here and in `keys`.
 
 mod effect;
 mod follow;
 mod keys;
+mod launch;
+mod marks;
 mod motion;
 mod page;
 mod run;
 mod scroll;
+mod search;
+mod watch;
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
@@ -26,9 +34,12 @@ use crate::doc::Document;
 use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
 
-pub use effect::Effect;
+pub use effect::{Clipboard, Effect, osc52};
 pub use keys::{Action, KeyResult};
+pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
 pub use run::{run, suspend_and_run};
+pub use search::find_all;
+pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent};
 
 use motion::Cell;
 
@@ -77,6 +88,8 @@ pub struct Page {
 pub enum Mode {
     #[default]
     Normal,
+    /// Typing a `/` or `?` pattern.
+    Search,
 }
 
 /// Everything the event loop feeds the app. Later units add variants
@@ -86,6 +99,8 @@ pub enum AppEvent {
     Key(KeyEvent),
     Resize(u16, u16),
     Tick(Instant),
+    /// The watched file changed or disappeared (debounced).
+    FsWatch(PathBuf, FsEvent),
 }
 
 /// Runs an editor on a file outside the TUI.
@@ -122,12 +137,31 @@ pub struct App {
     pending_effect: Option<Effect>,
     /// Feeds [`AppEvent`]s back into the loop; set by `run`.
     sender: Option<Sender<AppEvent>>,
+    search: search::Search,
+    marks: marks::Marks,
+    clipboard: Box<dyn Clipboard>,
+    /// Bytes for the terminal (OSC 52) that `run` writes to stdout.
+    term_out: Rc<RefCell<Vec<u8>>>,
+    /// Runs launcher commands (`launch::system_run` by default).
+    runner: Box<launch::Runner>,
+    /// Environment lookup for `${editor}`.
+    env: Box<launch::EnvLookup>,
+    /// Launcher key sequences after the leader, with indices into
+    /// `config.launch`.
+    leader_bindings: Vec<(Vec<char>, usize)>,
+    /// When a launcher last reloaded the page (its own fs event is ignored).
+    launch_reloaded_at: Option<Instant>,
+    watcher: Option<FileWatcher>,
+    /// Banner over the content, e.g. the file was deleted.
+    banner: Option<String>,
 }
 
 impl App {
     /// Load the start target and lay it out for a terminal of `size`
     /// (cols, rows).
     pub fn new(opts: StartOptions, size: (u16, u16)) -> anyhow::Result<App> {
+        let term_out = Rc::new(RefCell::new(Vec::new()));
+        let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
         let mut app = App {
             config: opts.config,
             tree_root: opts.tree_root,
@@ -150,13 +184,54 @@ impl App {
             editor: Box::new(effect::system_edit),
             pending_effect: None,
             sender: None,
+            search: search::Search::default(),
+            marks: marks::Marks::new(),
+            clipboard: Box::new(effect::Osc52 {
+                out: term_out.clone(),
+            }),
+            term_out,
+            runner: Box::new(launch::system_run),
+            env: Box::new(|k| std::env::var(k).ok()),
+            leader_bindings,
+            launch_reloaded_at: None,
+            watcher: None,
+            banner: None,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
             StartTarget::Dir(_) => app.placeholder = Some(NO_FILE_MESSAGE),
             StartTarget::Stdin(text) => app.open_stdin(Arc::new(text)),
         }
+        if !key_errors.is_empty() {
+            app.set_status(key_errors.join("; "));
+        }
         Ok(app)
+    }
+
+    /// Replace the clipboard sink (tests record).
+    pub fn with_clipboard(mut self, clipboard: impl Clipboard + 'static) -> Self {
+        self.clipboard = Box::new(clipboard);
+        self
+    }
+
+    /// Replace the launcher runner (tests record argv and cwd).
+    pub fn with_runner(
+        mut self,
+        runner: impl FnMut(&LaunchCommand) -> anyhow::Result<Exit> + 'static,
+    ) -> Self {
+        self.runner = Box::new(runner);
+        self
+    }
+
+    /// Replace the environment lookup used for `${editor}`.
+    pub fn with_env(mut self, env: impl Fn(&str) -> Option<String> + 'static) -> Self {
+        self.env = Box::new(env);
+        self
+    }
+
+    /// Take the bytes queued for the terminal (OSC 52 clipboard writes).
+    pub fn take_terminal_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.term_out.borrow_mut())
     }
 
     /// Replace the side effects: `opener` gets external URLs, `editor`
@@ -187,6 +262,7 @@ impl App {
             AppEvent::Key(key) => self.handle_key(key),
             AppEvent::Resize(cols, rows) => self.resize(cols, rows),
             AppEvent::Tick(now) => self.tick(now),
+            AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
         }
     }
 

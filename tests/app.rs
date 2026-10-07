@@ -925,3 +925,216 @@ fn stdin_relative_link_resolves_against_cwd() {
     assert_eq!(page_path(&app), cwd.join(rel), "status: {}", app.status());
     assert_eq!(app.history_depth(), 1);
 }
+
+// -------------------------------------------------------------------------
+// Search, marks, yank, live reload (step 7)
+
+use ramble::app::{AppEvent, Clipboard, DELETED_BANNER, FsEvent, Mode};
+
+fn type_search(app: &mut App, prefix: char, pat: &str) {
+    keys(app, &prefix.to_string());
+    assert_eq!(app.mode(), Mode::Search);
+    for c in pat.chars() {
+        app.handle_key(key(KeyCode::Char(c)));
+    }
+}
+
+#[test]
+fn slash_search_highlights_incrementally_and_n_wraps() {
+    let (_d, mut app) = app();
+    type_search(&mut app, '/', "para 2");
+    assert_eq!(app.search_prompt().as_deref(), Some("/para 2"));
+    // Smartcase: lowercase matches "Para 2" and "Para 20".
+    assert_eq!(app.search_hits().len(), 2);
+    assert!(screen(&app).contains("/para 2"));
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.mode(), Mode::Normal);
+    assert_eq!(app.cursor(), at(para_row(2), 0));
+    keys(&mut app, "n");
+    assert_eq!(app.cursor(), at(para_row(20), 0));
+    keys(&mut app, "n");
+    assert_eq!(app.cursor(), at(para_row(2), 0));
+    assert_eq!(app.status(), "search hit BOTTOM, continuing at TOP");
+    keys(&mut app, "N");
+    assert_eq!(app.cursor(), at(para_row(20), 0));
+    assert_eq!(app.status(), "search hit TOP, continuing at BOTTOM");
+}
+
+#[test]
+fn uppercase_pattern_is_case_sensitive_and_question_searches_back() {
+    let (_d, mut app) = app();
+    type_search(&mut app, '/', "PARA");
+    assert!(app.search_hits().is_empty());
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.status(), "Pattern not found: PARA");
+    keys(&mut app, "G");
+    type_search(&mut app, '?', "Para 1");
+    send(&mut app, key(KeyCode::Enter));
+    // Backwards from the bottom: Para 19 is the last "Para 1" prefix.
+    assert_eq!(app.cursor(), at(para_row(19), 0));
+    keys(&mut app, "n");
+    assert_eq!(app.cursor(), at(para_row(18), 0));
+}
+
+#[test]
+fn esc_cancels_prompt_then_clears_highlights() {
+    let (_d, mut app) = app();
+    type_search(&mut app, '/', "foo");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.search_hits().len(), 20);
+    type_search(&mut app, '/', "words");
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.mode(), Mode::Normal);
+    assert_eq!(app.search_hits().len(), 20, "previous pattern restored");
+    send(&mut app, key(KeyCode::Esc));
+    assert!(app.search_hits().is_empty());
+    assert!(app.search_highlights().is_empty());
+}
+
+#[test]
+fn star_and_hash_search_whole_word_under_cursor() {
+    let (_d, mut app) = app();
+    goto_row_text(&mut app, "Para 3 has foo.bar words");
+    keys(&mut app, "ww"); // on "has"
+    keys(&mut app, "*");
+    assert_eq!(app.search_hits().len(), 20);
+    assert_eq!(app.cursor().row, para_row(4));
+    keys(&mut app, "#");
+    assert_eq!(app.cursor().row, para_row(3));
+    // Whole word, ignoring case (as vim's `*`): not "Paragraph".
+    let (_d, mut app) = app_with(b"Para Paragraph para\n");
+    keys(&mut app, "*");
+    assert_eq!(app.search_hits().len(), 2);
+    assert_eq!(app.cursor(), at(0, 15));
+}
+
+fn goto_row_text(app: &mut App, text: &str) {
+    let row = (0..total(app)).find(|&r| row_text(app, r) == text).unwrap();
+    keys(app, "gg");
+    for _ in 0..row {
+        keys(app, "j");
+    }
+}
+
+#[test]
+fn hit_across_a_wrap_highlights_both_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("w.md");
+    std::fs::write(&path, "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii\n").unwrap();
+    let app = App::new(opts(dir.path(), StartTarget::File(path)), (20, ROWS)).unwrap();
+    let mut app = app;
+    type_search(&mut app, '/', "dddd eeee");
+    let rows: std::collections::BTreeSet<usize> =
+        app.search_highlights().iter().map(|s| s.row).collect();
+    assert_eq!(rows.len(), 2, "{:?}", app.search_highlights());
+}
+
+#[test]
+fn search_hits_survive_resize() {
+    let (_d, mut app) = app();
+    type_search(&mut app, '/', "Para 7 ");
+    send(&mut app, key(KeyCode::Enter));
+    app.resize(20, ROWS);
+    let hl = app.search_highlights();
+    assert!(!hl.is_empty());
+    assert!(row_text(&app, hl[0].row).contains("Para 7"));
+}
+
+#[test]
+fn marks_set_and_jump_and_are_per_page() {
+    let (_d, mut app) = app();
+    keys(&mut app, "5j");
+    let r = app.cursor().row;
+    keys(&mut app, "maG'a");
+    assert_eq!(app.cursor(), at(r, 0));
+    keys(&mut app, "'b");
+    assert_eq!(app.status(), "Mark not set: b");
+    app.resize(20, ROWS);
+    keys(&mut app, "G'a");
+    assert!(row_text(&app, app.cursor().row).starts_with("Para"));
+}
+
+#[derive(Clone, Default)]
+struct RecClip(Rc<RefCell<Vec<String>>>);
+
+impl Clipboard for RecClip {
+    fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+        self.0.borrow_mut().push(text.to_string());
+        Ok(())
+    }
+}
+
+#[test]
+fn y_copies_link_dest_else_file_path() {
+    let (dir, app, _fx) = nav_app();
+    let clip = RecClip::default();
+    let mut app = app.with_clipboard(clip.clone());
+    goto_text(&mut app, "w");
+    keys(&mut app, "y");
+    assert_eq!(app.status(), "Copied b.md#deep");
+    keys(&mut app, "gg");
+    keys(&mut app, "y");
+    let path = dir.path().join("a.md").display().to_string();
+    assert_eq!(
+        *clip.0.borrow(),
+        vec!["b.md#deep".to_string(), path.clone()]
+    );
+    assert_eq!(app.status(), format!("Copied {path}"));
+}
+
+#[test]
+fn default_clipboard_queues_osc52_for_the_terminal() {
+    let (_d, mut app, _fx) = nav_app();
+    goto_text(&mut app, "u");
+    keys(&mut app, "y");
+    let out = String::from_utf8(app.take_terminal_output()).unwrap();
+    assert_eq!(out, ramble::app::osc52("https://example.com"));
+    assert!(app.take_terminal_output().is_empty());
+}
+
+#[test]
+fn fs_watch_change_reloads_keeping_cursor_on_same_text() {
+    let (dir, mut app) = app();
+    goto_row_text(&mut app, "Para 5 has foo.bar words");
+    keys(&mut app, "w");
+    let path = dir.path().join("doc.md");
+    let scroll = app.scroll();
+    let edited = source().replace("Para 9 has", "Para 9 now has") + "New tail\n";
+    std::fs::write(&path, edited).unwrap();
+    app.event(AppEvent::FsWatch(path, FsEvent::Changed));
+    assert_eq!(row_text(&app, app.cursor().row), "Para 5 has foo.bar words");
+    assert_eq!(app.cursor().col, 5);
+    assert_eq!(app.scroll(), scroll);
+    assert!((0..total(&app)).any(|r| row_text(&app, r) == "New tail"));
+    assert!((0..total(&app)).any(|r| row_text(&app, r).starts_with("Para 9 now")));
+}
+
+#[test]
+fn fs_watch_event_for_other_file_is_ignored() {
+    let (dir, mut app) = app();
+    std::fs::write(dir.path().join("doc.md"), "# Changed\n").unwrap();
+    app.event(AppEvent::FsWatch(
+        dir.path().join("other.md"),
+        FsEvent::Changed,
+    ));
+    assert_eq!(row_text(&app, 0), "Title");
+}
+
+#[test]
+fn fs_watch_delete_shows_banner_and_keeps_content() {
+    let (dir, mut app) = app();
+    let path = dir.path().join("doc.md");
+    std::fs::remove_file(&path).unwrap();
+    app.event(AppEvent::FsWatch(path.clone(), FsEvent::Removed));
+    assert_eq!(app.banner(), Some(DELETED_BANNER));
+    assert_eq!(row_text(&app, 0), "Title");
+    assert!(screen(&app).contains(DELETED_BANNER));
+    // A Changed for the missing file keeps the banner and content too.
+    app.event(AppEvent::FsWatch(path.clone(), FsEvent::Changed));
+    assert_eq!(app.banner(), Some(DELETED_BANNER));
+    // Recreated: reload clears the banner.
+    std::fs::write(&path, "# Back\n").unwrap();
+    app.event(AppEvent::FsWatch(path, FsEvent::Changed));
+    assert_eq!(app.banner(), None);
+    assert_eq!(row_text(&app, 0), "Back");
+}

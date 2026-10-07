@@ -5,6 +5,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use super::launch::{LeaderMatch, match_leader};
 use super::{App, Mode};
 
 /// Cap on a typed count, so `n as isize` never wraps negative.
@@ -54,6 +55,29 @@ pub enum Action {
     OpenExternal,
     Back,
     Forward,
+    // Search.
+    /// `/` (true) or `?`: open the search prompt.
+    SearchStart(bool),
+    /// `n` (true) / `N`.
+    SearchNext(bool, Option<usize>),
+    /// `*` (true) / `#`.
+    SearchWord(bool),
+    /// `Esc` in normal mode: clear highlights.
+    SearchClear,
+    /// A character typed into the search prompt.
+    SearchInput(char),
+    SearchBackspace,
+    SearchCommit,
+    SearchCancel,
+    // Marks and yank.
+    SetMark(char),
+    GotoMark(char),
+    Yank,
+    // Launchers.
+    /// Run `config.launch[i]`.
+    Launch(usize),
+    /// `<leader>` followed by keys bound to nothing.
+    NoMapping,
 }
 
 /// What a key sequence means so far.
@@ -108,12 +132,33 @@ impl App {
     pub fn keymap(&self, keys: &[KeyEvent]) -> KeyResult {
         match self.mode {
             Mode::Normal => self.normal_keymap(keys),
+            Mode::Search => search_keymap(keys),
         }
+    }
+
+    /// `<leader>` sequences, resolved against the launcher keys.
+    fn leader_keymap(&self, keys: &[KeyEvent]) -> Option<KeyResult> {
+        let leader = self.config.keys.leader;
+        let (first, rest) = keys.split_first()?;
+        if plain(first) != Some(leader) {
+            return None;
+        }
+        let Some(typed) = rest.iter().map(plain).collect::<Option<Vec<char>>>() else {
+            return Some(KeyResult::Action(Action::NoMapping));
+        };
+        Some(match match_leader(&self.leader_bindings, &typed) {
+            LeaderMatch::Launch(i) => KeyResult::Action(Action::Launch(i)),
+            LeaderMatch::Pending => KeyResult::Pending,
+            LeaderMatch::NoMapping => KeyResult::Action(Action::NoMapping),
+        })
     }
 
     fn normal_keymap(&self, keys: &[KeyEvent]) -> KeyResult {
         use Action as A;
         let count = self.count;
+        if let Some(r) = self.leader_keymap(keys) {
+            return r;
+        }
         let [key] = keys else {
             let (Some(prefix), Some(c)) =
                 (keys.first().and_then(plain), keys.get(1).and_then(plain))
@@ -121,6 +166,8 @@ impl App {
                 return KeyResult::None;
             };
             return match (prefix, c) {
+                ('m', 'a'..='z') => KeyResult::Action(A::SetMark(c)),
+                ('\'', 'a'..='z') => KeyResult::Action(A::GotoMark(c)),
                 ('g', 'g') => KeyResult::Action(A::GotoTop(count)),
                 ('g', 'd') => KeyResult::Action(A::Follow),
                 ('g', 'x') => KeyResult::Action(A::OpenExternal),
@@ -151,7 +198,15 @@ impl App {
             KeyCode::Char(c @ '0'..='9') if c != '0' || count.is_some() => {
                 return KeyResult::Count(c as usize - '0' as usize);
             }
-            KeyCode::Char('g' | 'z' | 'Z') => return KeyResult::Pending,
+            KeyCode::Char('g' | 'z' | 'Z' | 'm' | '\'') => return KeyResult::Pending,
+            KeyCode::Char('/') => A::SearchStart(true),
+            KeyCode::Char('?') => A::SearchStart(false),
+            KeyCode::Char('n') => A::SearchNext(true, count),
+            KeyCode::Char('N') => A::SearchNext(false, count),
+            KeyCode::Char('*') => A::SearchWord(true),
+            KeyCode::Char('#') => A::SearchWord(false),
+            KeyCode::Esc => A::SearchClear,
+            KeyCode::Char('y') => A::Yank,
             KeyCode::Enter => A::Follow,
             KeyCode::Tab => A::Forward,
             KeyCode::Char('q') => A::Quit,
@@ -212,6 +267,37 @@ impl App {
             A::OpenExternal => self.open_external(),
             A::Back => self.back(),
             A::Forward => self.forward(),
+            A::SearchStart(fwd) => self.search_start(fwd),
+            A::SearchNext(same, c) => self.search_next(same, n(c)),
+            A::SearchWord(fwd) => self.search_word(fwd),
+            A::SearchClear => self.search_clear(),
+            A::SearchInput(c) => self.search_edit(Some(c)),
+            A::SearchBackspace => self.search_edit(None),
+            A::SearchCommit => self.search_commit(),
+            A::SearchCancel => self.search_cancel(),
+            A::SetMark(c) => self.set_mark(c),
+            A::GotoMark(c) => self.goto_mark(c),
+            A::Yank => self.yank(),
+            A::Launch(i) => self.launch_index(i),
+            A::NoMapping => self.set_status("No mapping"),
         }
     }
+}
+
+/// Keys in the search prompt. Typed text, not commands: no counts or
+/// multi-key sequences.
+fn search_keymap(keys: &[KeyEvent]) -> KeyResult {
+    let Some(key) = keys.last() else {
+        return KeyResult::None;
+    };
+    let action = match key.code {
+        KeyCode::Enter => Action::SearchCommit,
+        KeyCode::Esc => Action::SearchCancel,
+        KeyCode::Backspace => Action::SearchBackspace,
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            Action::SearchInput(c)
+        }
+        _ => return KeyResult::None,
+    };
+    KeyResult::Action(action)
 }

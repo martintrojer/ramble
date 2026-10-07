@@ -53,6 +53,9 @@ impl App {
         self.scroll = 0;
         self.status.clear();
         self.stdin = None;
+        self.banner = None;
+        self.refresh_search();
+        self.retarget_watch();
     }
 
     fn render_width(&self) -> u16 {
@@ -66,27 +69,25 @@ impl App {
         };
     }
 
-    /// Re-render for a new terminal size, keeping the cursor on the same
-    /// source byte.
-    pub fn resize(&mut self, cols: u16, rows: u16) {
-        let anchor = self.page.as_ref().and_then(|p| {
-            let map = &p.rendered.srcmap;
-            if let Some(b) = map.source_at(self.cursor.row, self.cursor.col) {
-                return Some((b, false));
-            }
-            let n = p.rendered.lines.len();
-            (0..self.cursor.row)
-                .rev()
-                .chain(self.cursor.row + 1..n)
-                .find_map(|r| map.source_at(r, 0))
-                .map(|b| (b, true))
-        });
-        self.size = (cols, rows);
-        let width = self.render_width();
-        if let Some(p) = &mut self.page {
-            p.rendered = render::render(&p.doc, width, &self.theme);
+    /// Where the cursor is, as a source byte: `(byte, fallback)` where
+    /// `fallback` means the cursor was on a blank row and `byte` comes from
+    /// the nearest row with text.
+    pub(super) fn cursor_anchor(&self) -> Option<(usize, bool)> {
+        let p = self.page.as_ref()?;
+        let map = &p.rendered.srcmap;
+        if let Some(b) = map.source_at(self.cursor.row, self.cursor.col) {
+            return Some((b, false));
         }
-        self.rebuild_rows();
+        let n = p.rendered.lines.len();
+        (0..self.cursor.row)
+            .rev()
+            .chain(self.cursor.row + 1..n)
+            .find_map(|r| map.source_at(r, 0))
+            .map(|b| (b, true))
+    }
+
+    /// Put the cursor back on an anchor from [`App::cursor_anchor`].
+    pub(super) fn restore_anchor(&mut self, anchor: Option<(usize, bool)>) {
         if let (Some((byte, fallback)), Some(p)) = (anchor, &self.page) {
             let map = &p.rendered.srcmap;
             if let Some(row) = map.row_for(byte) {
@@ -96,6 +97,20 @@ impl App {
             }
         }
         self.set_col(self.want_col);
+    }
+
+    /// Re-render for a new terminal size, keeping the cursor on the same
+    /// source byte.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        let anchor = self.cursor_anchor();
+        self.size = (cols, rows);
+        let width = self.render_width();
+        if let Some(p) = &mut self.page {
+            p.rendered = render::render(&p.doc, width, &self.theme);
+        }
+        self.rebuild_rows();
+        self.refresh_search();
+        self.restore_anchor(anchor);
         self.keep_visible();
     }
 }

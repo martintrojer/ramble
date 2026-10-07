@@ -14,6 +14,12 @@ const STATUS_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
 
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let base = Style::new().fg(palette::TEXT).bg(STATUS_BG);
+    if let Some(prompt) = app.search_prompt() {
+        let x = area.x + Span::raw(prompt.as_str()).width() as u16;
+        frame.render_widget(Paragraph::new(prompt).style(base), area);
+        frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
+        return;
+    }
     let right = format!(
         " {}  {}  ← {} ",
         app.lsp_label(),

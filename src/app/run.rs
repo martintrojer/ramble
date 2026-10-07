@@ -27,6 +27,9 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<AppEvent>();
     app.set_sender(tx);
+    if let Err(e) = app.start_watcher() {
+        app.set_status(format!("live reload off: {e:#}"));
+    }
     while !app.should_quit() {
         if app.pending_effect().is_some() {
             suspend_and_run(terminal, || app.run_pending_effect())?;
@@ -43,6 +46,13 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             app.event(ev);
         }
         app.tick(Instant::now());
+        let out = app.take_terminal_output();
+        if !out.is_empty() {
+            use std::io::Write;
+            let mut stdout = std::io::stdout();
+            stdout.write_all(&out)?;
+            stdout.flush()?;
+        }
     }
     Ok(())
 }
