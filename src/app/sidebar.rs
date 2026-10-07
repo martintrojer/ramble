@@ -761,7 +761,10 @@ impl App {
                         }
                     }
                 } else if !item.markdown {
-                    self.pending_effect = Some(super::Effect::Edit(item.path));
+                    self.pending_effect = Some(super::Effect::Edit {
+                        path: item.path,
+                        line: None,
+                    });
                 } else {
                     self.open_from_tree(&item.path);
                 }

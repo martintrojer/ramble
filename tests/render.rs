@@ -34,6 +34,7 @@ fn doc(source: &str, blocks: Vec<Block>, links: Vec<Link>) -> Document {
         blocks,
         headings: Vec::new(),
         links,
+        code_spans: Vec::new(),
         lossy: false,
     }
 }
@@ -87,7 +88,10 @@ fn walk(d: &Document, range: Range<usize>) -> Vec<Inline> {
         } else if let Some(code) = rest.strip_prefix('`') {
             flush(&mut out, text_start, i, strong);
             let end = i + 1 + code.find('`').expect("closing backtick");
-            out.push(Inline::Code { range: i + 1..end });
+            out.push(Inline::Code {
+                range: i + 1..end,
+                link: None,
+            });
             i = end + 1;
             text_start = i;
         } else if rest.starts_with("[^") {
@@ -237,6 +241,8 @@ fn fixture() -> Document {
         dest: "https://example.com".into(),
         range: link_range,
         text_range: link_text,
+        resolved: None,
+        line: None,
     }];
     let p = rng(s, "A paragraph");
     let p = p.start..rng(s, "Footnote[^1].").end;
@@ -527,12 +533,16 @@ fn touching_links_get_separate_segments() {
             dest: "x".into(),
             range: 0..1,
             text_range: 0..1,
+            resolved: None,
+            line: None,
         },
         Link {
             kind: LinkKind::Markdown,
             dest: "y".into(),
             range: 1..2,
             text_range: 1..2,
+            resolved: None,
+            line: None,
         },
     ];
     let d = doc(src, vec![para(src, "ab")], links);
@@ -634,6 +644,8 @@ fn build(paras: &[GenPara]) -> Document {
                         dest: "dest".into(),
                         range: start..src.len(),
                         text_range: text_start..text_end,
+                        resolved: None,
+                        line: None,
                     });
                 }
             }

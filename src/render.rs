@@ -644,7 +644,16 @@ impl<'a> Renderer<'a> {
                     }
                     (range, style, s.link)
                 }
-                Inline::Code { range } => (range, base.fg(palette::GREEN), None),
+                Inline::Code { range, link } => {
+                    let mut style = base.fg(palette::GREEN);
+                    if link.is_some() {
+                        // Code colour stays; the link colour goes on the underline.
+                        style = style
+                            .add_modifier(Modifier::UNDERLINED)
+                            .underline_color(palette::BLUE);
+                    }
+                    (range, style, link)
+                }
                 Inline::SoftBreak => {
                     flush(&mut word, &mut toks);
                     space(&mut toks, None);

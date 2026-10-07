@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{App, Effect};
+use crate::doc::LinkKind;
 use crate::nav::{self, Entry, PageRef, Target};
 
 impl App {
@@ -62,6 +63,15 @@ impl App {
 
     /// Follow the link under the cursor using only the local parse.
     pub(super) fn follow_local(&mut self) {
+        let code_path = self
+            .link_under_cursor()
+            .and_then(|i| self.page.as_ref()?.doc.links.get(i))
+            .filter(|l| l.kind == LinkKind::CodePath)
+            .cloned();
+        if let Some(link) = code_path {
+            self.follow_code_path(&link);
+            return;
+        }
         let Some((target, dest)) = self.target_under_cursor() else {
             return;
         };
@@ -101,7 +111,7 @@ impl App {
             return;
         }
         if !nav::is_markdown(&path) {
-            self.pending_effect = Some(Effect::Edit(path));
+            self.pending_effect = Some(Effect::Edit { path, line: None });
             return;
         }
         let Ok(bytes) = std::fs::read(&path) else {

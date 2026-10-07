@@ -9,6 +9,7 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ops::Range;
+use std::path::PathBuf;
 
 use pulldown_cmark::{
     BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd,
@@ -27,6 +28,10 @@ pub struct Document {
     pub headings: Vec<Heading>,
     /// Every link (inline, reference, autolink, wikilink), in order.
     pub links: Vec<Link>,
+    /// Inline code spans outside any link, in order: candidates for
+    /// code-path links. The app keeps those naming an existing file
+    /// ([`Document::add_links`]); `doc` itself does no I/O.
+    pub code_spans: Vec<CodeSpan>,
     /// True when the input had invalid UTF-8 that was replaced with U+FFFD.
     pub lossy: bool,
 }
@@ -51,6 +56,20 @@ pub enum LinkKind {
     Markdown,
     /// `[[target]]` or `[[target|label]]`.
     Wiki,
+    /// An inline code span naming an existing file (added by the app, not
+    /// by [`parse`]). Language-server results never apply to these.
+    CodePath,
+}
+
+/// An inline code span outside any link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeSpan {
+    /// Full span, including the backticks.
+    pub range: Range<usize>,
+    /// The code text (what the renderer draws).
+    pub text_range: Range<usize>,
+    /// The code text as CommonMark reads it.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +85,10 @@ pub struct Link {
     /// text crosses lines inside a container it spans the `> ` / indent
     /// prefixes too; the drawn, prefix-free pieces come from [`inlines`].
     pub text_range: Range<usize>,
+    /// [`LinkKind::CodePath`] only: the existing file the text names.
+    pub resolved: Option<PathBuf>,
+    /// [`LinkKind::CodePath`] only: the `:LINE` suffix, if any.
+    pub line: Option<usize>,
 }
 
 /// Block-level structure. Inline content is kept as a source range and
@@ -152,7 +175,12 @@ pub enum Inline {
         style: InlineStyle,
     },
     /// Inline code; `range` covers the code text without backticks.
-    Code { range: Range<usize> },
+    /// `link` indexes `Document::links` when the code is link text (inside
+    /// a link, or a code-path link).
+    Code {
+        range: Range<usize>,
+        link: Option<usize>,
+    },
     /// Soft line break (reflowed to a space).
     SoftBreak,
     /// Hard line break.
@@ -178,12 +206,24 @@ pub fn parse(source: String) -> Document {
     let blocks = parse_blocks(&source, &events, &mut i);
     let headings = collect_headings(&events);
     let links = collect_links(&events);
+    let code_spans = collect_code_spans(&source, &events);
     Document {
         source,
         blocks,
         headings,
         links,
+        code_spans,
         lossy: false,
+    }
+}
+
+impl Document {
+    /// Merge `extra` into `links`, keeping them sorted by source position.
+    /// Link indices shift; call before rendering. [`inlines`] finds a
+    /// link by its range, so nothing else needs rebuilding.
+    pub fn add_links(&mut self, extra: Vec<Link>) {
+        self.links.extend(extra);
+        self.links.sort_by_key(|l| l.range.start);
     }
 }
 
@@ -244,12 +284,15 @@ pub fn inlines(doc: &Document, inline: Range<usize>) -> Vec<Inline> {
                     range,
                     style,
                 }),
-                Ev::Code => push_lines(
-                    &mut out,
-                    &doc.source,
-                    code_content(&doc.source, range),
-                    |range| Inline::Code { range },
-                ),
+                Ev::Code => {
+                    let link = style.link.or_else(|| link_index(doc, &range));
+                    push_lines(
+                        &mut out,
+                        &doc.source,
+                        code_content(&doc.source, range),
+                        |range| Inline::Code { range, link },
+                    )
+                }
                 Ev::SoftBreak => out.push(Inline::SoftBreak),
                 Ev::HardBreak => out.push(Inline::HardBreak),
                 Ev::FootnoteRef(label) => out.push(Inline::FootnoteRef {
@@ -697,6 +740,8 @@ fn collect_links(events: &Events<'_>) -> Vec<Link> {
                     dest: dest_url.to_string(),
                     range: range.clone(),
                     text_range: range.start..range.start,
+                    resolved: None,
+                    line: None,
                 });
             }
             Event::End(TagEnd::Link) => {
@@ -721,6 +766,25 @@ fn collect_links(events: &Events<'_>) -> Vec<Link> {
         }
     }
     links
+}
+
+fn collect_code_spans(src: &str, events: &Events<'_>) -> Vec<CodeSpan> {
+    let mut spans = Vec::new();
+    // Open links and images: code inside them is not a candidate.
+    let mut depth = 0usize;
+    for (event, range) in events {
+        match event {
+            Event::Start(Tag::Link { .. } | Tag::Image { .. }) => depth += 1,
+            Event::End(TagEnd::Link | TagEnd::Image) => depth = depth.saturating_sub(1),
+            Event::Code(text) if depth == 0 => spans.push(CodeSpan {
+                range: range.clone(),
+                text_range: code_content(src, range.clone()),
+                text: text.to_string(),
+            }),
+            _ => {}
+        }
+    }
+    spans
 }
 
 fn collect_headings(events: &Events<'_>) -> Vec<Heading> {

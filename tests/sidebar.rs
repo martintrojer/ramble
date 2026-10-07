@@ -296,7 +296,10 @@ fn non_markdown_from_tree_goes_to_editor() {
     keys(&mut app, "o");
     assert_eq!(
         app.pending_effect(),
-        Some(&Effect::Edit(root.join("b.txt")))
+        Some(&Effect::Edit {
+            path: root.join("b.txt"),
+            line: None
+        })
     );
     assert!(app.page().is_none());
 }

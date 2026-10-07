@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::App;
 use crate::config::{PositionEncoding, ServerConfig, ServerKind};
+use crate::doc::LinkKind;
 use crate::lsp::{
     Client, Encoding, Kind, LspEvent, ServerSpec, byte_to_position, canonical_uri,
     position_to_byte, select_server, uri_to_path,
@@ -341,6 +342,7 @@ impl App {
                     .links
                     .iter()
                     .enumerate()
+                    .filter(|(_, link)| link.kind != LinkKind::CodePath)
                     .filter(|(_, link)| {
                         self.lsp
                             .diagnostics
@@ -430,7 +432,12 @@ impl App {
                 continue;
             };
             let r = position_to_byte(src, range.start, enc)..position_to_byte(src, range.end, enc);
-            if let Some(i) = page.doc.links.iter().position(|l| overlaps(&r, &l.range)) {
+            let matched = page
+                .doc
+                .links
+                .iter()
+                .position(|l| l.kind != LinkKind::CodePath && overlaps(&r, &l.range));
+            if let Some(i) = matched {
                 self.lsp.targets.insert(i, path);
             }
         }
@@ -458,6 +465,10 @@ impl App {
         let Some(link) = self.page.as_ref().and_then(|p| p.doc.links.get(i)).cloned() else {
             return false;
         };
+        // Code paths are resolved locally (no language server knows them).
+        if link.kind == LinkKind::CodePath {
+            return false;
+        }
         // Anchors and URLs always come from the local parse.
         if !matches!(
             nav::resolve(&link.dest, &link.kind, &self.link_dir()),

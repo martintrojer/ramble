@@ -39,7 +39,8 @@ impl App {
         self.stdin = Some(text);
     }
 
-    fn set_page(&mut self, path: Option<PathBuf>, doc: Document) {
+    fn set_page(&mut self, path: Option<PathBuf>, mut doc: Document) {
+        self.add_code_path_links(path.as_deref(), &mut doc);
         let rendered = render::render(&doc, self.render_width(), &self.theme);
         self.page = Some(Page {
             path,

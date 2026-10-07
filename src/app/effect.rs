@@ -11,8 +11,8 @@ use super::launch::LaunchCommand;
 /// A side effect to run with the TUI suspended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Open this (non-markdown) file in the editor.
-    Edit(PathBuf),
+    /// Open this (non-markdown) file in the editor, at `line` if given.
+    Edit { path: PathBuf, line: Option<usize> },
     /// Run a launcher, then reload the page.
     Launch(LaunchCommand),
 }
@@ -27,8 +27,8 @@ impl App {
     /// TUI first; `run` does this.
     pub fn run_pending_effect(&mut self) {
         match self.pending_effect.take() {
-            Some(Effect::Edit(path)) => {
-                if let Err(e) = (self.editor)(&path) {
+            Some(Effect::Edit { path, line }) => {
+                if let Err(e) = (self.editor)(&path, line) {
                     self.set_status(format!("editor: {e:#}"));
                 }
             }
@@ -40,7 +40,7 @@ impl App {
     /// A non-markdown file waiting for the editor.
     pub fn pending_editor(&self) -> Option<&Path> {
         match &self.pending_effect {
-            Some(Effect::Edit(path)) => Some(path),
+            Some(Effect::Edit { path, .. }) => Some(path),
             _ => None,
         }
     }
@@ -108,8 +108,9 @@ pub(crate) fn open_tty() -> std::io::Result<std::fs::File> {
     std::fs::File::open("/dev/tty")
 }
 
-/// Default editor: `$VISUAL`, else `$EDITOR`, else `vi`, in the terminal.
-pub(super) fn system_edit(path: &Path) -> anyhow::Result<()> {
+/// Default editor: `$VISUAL`, else `$EDITOR`, else `vi`, in the terminal,
+/// given `+LINE` before the file when `line` is set.
+pub(super) fn system_edit(path: &Path, line: Option<usize>) -> anyhow::Result<()> {
     use std::io::IsTerminal;
     let cmd = ["VISUAL", "EDITOR"]
         .iter()
@@ -120,6 +121,7 @@ pub(super) fn system_edit(path: &Path) -> anyhow::Result<()> {
     let prog = words.next().unwrap_or("vi");
     let status = std::process::Command::new(prog)
         .args(words)
+        .args(line.map(|n| format!("+{n}")))
         .arg(path)
         .stdin(child_stdin(std::io::stdin().is_terminal(), open_tty))
         .status()

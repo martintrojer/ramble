@@ -22,7 +22,7 @@ fn drawn(doc: &Document, range: std::ops::Range<usize>) -> String {
     inlines(doc, range)
         .iter()
         .map(|i| match i {
-            Inline::Text { range, .. } | Inline::Code { range } => s(doc, range),
+            Inline::Text { range, .. } | Inline::Code { range, .. } => s(doc, range),
             Inline::SoftBreak => " ".into(),
             Inline::HardBreak => "\n".into(),
             Inline::FootnoteRef { label, .. } => format!("[{label}]"),
@@ -175,7 +175,7 @@ fn inlines_escapes_entities_code_html_breaks() {
         .iter()
         .map(|i| match i {
             Inline::Text { range, .. } => s(&doc, range),
-            Inline::Code { range } => format!("`{}`", s(&doc, range)),
+            Inline::Code { range, .. } => format!("`{}`", s(&doc, range)),
             Inline::SoftBreak => "<soft>".into(),
             Inline::HardBreak => "<hard>".into(),
             Inline::FootnoteRef { .. } => "<fn>".into(),
@@ -364,7 +364,7 @@ fn seg_strings(doc: &Document, inline: std::ops::Range<usize>) -> Vec<String> {
         .map(|i| {
             let out = match i {
                 Inline::Text { range, .. } => s(doc, range),
-                Inline::Code { range } => format!("`{}`", s(doc, range)),
+                Inline::Code { range, .. } => format!("`{}`", s(doc, range)),
                 Inline::SoftBreak => "<soft>".into(),
                 Inline::HardBreak => "<hard>".into(),
                 Inline::FootnoteRef { label, .. } => format!("[^{label}]"),
@@ -524,4 +524,45 @@ proptest! {
             prop_assert_eq!(drawn, text.as_str());
         }
     }
+}
+
+#[test]
+fn code_spans_outside_links_and_add_links_reindexes_inline_code() {
+    use ramble::doc::Link;
+    let src = "`a.rs` [`in`](x) `` b c `` ![`img`](i.png)\n";
+    let mut doc = parse(src.into());
+    let texts: Vec<_> = doc.code_spans.iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(texts, ["a.rs", "b c"]);
+    let first = doc.code_spans[0].clone();
+    assert_eq!(s(&doc, &first.range), "`a.rs`");
+    assert_eq!(s(&doc, &first.text_range), "a.rs");
+    // Inside a link the code carries that link's index.
+    let all = inlines(&doc, 0..src.len() - 1);
+    let code_links: Vec<_> = all
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Code { link, .. } => Some(*link),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(code_links, [None, Some(0), None, None]);
+
+    doc.add_links(vec![Link {
+        kind: LinkKind::CodePath,
+        dest: "a.rs".into(),
+        range: first.range.clone(),
+        text_range: first.text_range.clone(),
+        resolved: Some("/a.rs".into()),
+        line: None,
+    }]);
+    assert_eq!(doc.links[0].kind, LinkKind::CodePath);
+    assert_eq!(doc.links[1].dest, "x");
+    let code_links: Vec<_> = inlines(&doc, 0..src.len() - 1)
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Code { link, .. } => Some(*link),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(code_links, [Some(0), Some(1), None, None]);
 }

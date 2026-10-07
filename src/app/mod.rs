@@ -8,6 +8,7 @@
 //! (launchers), `watch` (live reload).
 //! Later units add a file and register in the tables here and in `keys`.
 
+mod codepath;
 mod effect;
 mod follow;
 mod hints;
@@ -37,6 +38,7 @@ use crate::doc::Document;
 use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
 
+pub use codepath::resolve as resolve_code_path;
 pub use effect::{Clipboard, Effect, osc52};
 pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
@@ -116,8 +118,8 @@ pub enum AppEvent {
     Lsp(crate::lsp::LspEvent),
 }
 
-/// Runs an editor on a file outside the TUI.
-type Editor = dyn FnMut(&Path) -> anyhow::Result<()>;
+/// Runs an editor on a file (at a line, if given) outside the TUI.
+type Editor = dyn FnMut(&Path, Option<usize>) -> anyhow::Result<()>;
 
 pub struct App {
     config: Config,
@@ -266,9 +268,19 @@ impl App {
     pub fn with_effects(
         mut self,
         opener: impl FnMut(&str) + 'static,
-        editor: impl FnMut(&Path) -> anyhow::Result<()> + 'static,
+        mut editor: impl FnMut(&Path) -> anyhow::Result<()> + 'static,
     ) -> Self {
         self.opener = Box::new(opener);
+        self.editor = Box::new(move |path, _line| editor(path));
+        self
+    }
+
+    /// Replace the editor with one that also gets the line to open at
+    /// (code-path links with `:LINE`). Tests pass a recording closure.
+    pub fn with_editor(
+        mut self,
+        editor: impl FnMut(&Path, Option<usize>) -> anyhow::Result<()> + 'static,
+    ) -> Self {
         self.editor = Box::new(editor);
         self
     }
