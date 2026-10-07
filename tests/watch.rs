@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use ramble::app::{App, AppEvent, FileWatcher, FsEvent, StartOptions, StartTarget};
+use ramble::app::{App, AppEvent, FileWatcher, FsEvent, StartOptions, StartTarget, content_hash};
 use ramble::config::Config;
 
 const WAIT: Duration = Duration::from_secs(2);
@@ -27,7 +27,7 @@ fn watcher_reports_change_then_removal() {
         let _ = tx.send((p, e));
     })
     .unwrap();
-    w.watch(Some(&file));
+    w.watch(Some((&file, content_hash(b"one\n"))));
     // A sibling file alone does not count.
     std::fs::write(dir.path().join("other.md"), "x\n").unwrap();
     assert!(
@@ -58,7 +58,7 @@ fn events_that_leave_the_file_unchanged_are_not_reported() {
         let _ = tx.send((p, e));
     })
     .unwrap();
-    w.watch(Some(&file));
+    w.watch(Some((&file, content_hash(b"one\n"))));
     std::fs::write(&file, "one\n").unwrap();
     assert!(
         rx.recv_timeout(Duration::from_millis(500)).is_err(),
@@ -67,6 +67,76 @@ fn events_that_leave_the_file_unchanged_are_not_reported() {
     std::fs::write(&file, "two\n").unwrap();
     let (_, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
     assert_eq!(ev, FsEvent::Changed);
+}
+
+/// A watcher on `file` reporting into the returned channel.
+fn watcher() -> (FileWatcher, mpsc::Receiver<(PathBuf, FsEvent)>) {
+    let (tx, rx) = mpsc::channel();
+    let w = FileWatcher::new(move |p, e| {
+        let _ = tx.send((p, e));
+    })
+    .unwrap();
+    (w, rx)
+}
+
+#[test]
+fn a_write_between_load_and_watch_is_reported() {
+    // The page was built from A; B landed before the watch started, so no
+    // watcher event covers it. The baseline is A, so it still counts.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "A\n").unwrap();
+    let loaded = std::fs::read(&file).unwrap();
+    std::fs::write(&file, "B\n").unwrap();
+    let (mut w, rx) = watcher();
+    w.watch(Some((&file, content_hash(&loaded))));
+    let (_, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
+    assert_eq!(ev, FsEvent::Changed);
+}
+
+#[test]
+fn rewatching_the_same_file_reseeds_the_baseline() {
+    // A reload of the same path built from older bytes than the file now
+    // holds must be followed by a change, not swallowed.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "B\n").unwrap();
+    let (mut w, rx) = watcher();
+    w.watch(Some((&file, content_hash(b"B\n"))));
+    assert!(
+        rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "unchanged file reported"
+    );
+    w.watch(Some((&file, content_hash(b"A\n"))));
+    let (_, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
+    assert_eq!(ev, FsEvent::Changed);
+}
+
+#[test]
+fn app_sees_a_write_that_lands_before_the_watcher_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.md");
+    std::fs::write(&file, "# A\n\nbefore\n").unwrap();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::File(file.clone()),
+            tree_root: dir.path().to_path_buf(),
+            config: no_lsp(),
+        },
+        (40, 10),
+    )
+    .unwrap();
+    std::fs::write(&file, "# A\n\nafter\n").unwrap();
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+    app.set_sender(tx);
+    app.start_watcher().unwrap();
+    let ev = rx.recv_timeout(WAIT).expect("fs event within 2s");
+    assert!(
+        matches!(ev, AppEvent::FsWatch(_, FsEvent::Changed)),
+        "{ev:?}"
+    );
+    app.event(ev);
+    assert!(app.page().unwrap().doc.source.contains("after"));
 }
 
 #[test]

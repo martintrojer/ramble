@@ -27,6 +27,7 @@ impl App {
             return false;
         };
         let lossy = doc.lossy;
+        self.loaded_hash = Some(super::watch::content_hash(bytes));
         self.set_page(Some(path.to_path_buf()), doc);
         if lossy {
             self.set_status("not valid UTF-8");
@@ -35,6 +36,7 @@ impl App {
     }
 
     pub(super) fn open_stdin(&mut self, text: Arc<String>) {
+        self.loaded_hash = None;
         self.set_page(None, doc::parse(text.as_ref().clone()));
         self.stdin = Some(text);
     }

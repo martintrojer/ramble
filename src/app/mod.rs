@@ -59,7 +59,7 @@ pub use run::{run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
 pub use visual::{VisualAction, VisualKind};
-pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent};
+pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent, content_hash};
 
 use motion::Cell;
 
@@ -193,6 +193,9 @@ pub struct App {
     /// When a launcher last reloaded the page (its own fs event is ignored).
     launch_reloaded_at: Option<Instant>,
     watcher: Option<FileWatcher>,
+    /// Hash of the bytes the current file page was built from: the
+    /// watcher's baseline.
+    loaded_hash: Option<u64>,
     /// Banner over the content, e.g. the file was deleted.
     banner: Option<String>,
     /// Language servers and per-page LSP state.
@@ -256,6 +259,7 @@ impl App {
             leader_bindings,
             launch_reloaded_at: None,
             watcher: None,
+            loaded_hash: None,
             banner: None,
             lsp,
             now: Instant::now(),

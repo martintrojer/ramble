@@ -28,18 +28,23 @@ pub enum FsEvent {
 }
 
 /// The watched file: its canonical folder, its name, and its state at the
-/// last emit (or at `watch`).
+/// last emit (or the loaded bytes given to `watch`).
 type Target = Arc<Mutex<Option<(PathBuf, std::ffi::OsString, FileState)>>>;
 
 /// A hash of the file's bytes; `None` while it does not exist.
 type FileState = Option<u64>;
 
-fn file_state(path: &Path) -> FileState {
+/// The hash the watcher compares file contents by; pass the hash of the
+/// bytes a page was built from to [`FileWatcher::watch`].
+pub fn content_hash(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
-    let bytes = std::fs::read(path).ok()?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut h);
-    Some(h.finish())
+    h.finish()
+}
+
+fn file_state(path: &Path) -> FileState {
+    std::fs::read(path).ok().map(|b| content_hash(&b))
 }
 
 /// Watches one file at a time through its parent folder (non-recursive),
@@ -47,6 +52,8 @@ fn file_state(path: &Path) -> FileState {
 pub struct FileWatcher {
     inner: notify::RecommendedWatcher,
     target: Target,
+    /// Feeds the debouncer a synthetic event (see `watch`).
+    kick: mpsc::Sender<Vec<PathBuf>>,
     /// The folder currently watched.
     dir: Option<PathBuf>,
     /// The file as given (reported back in events).
@@ -59,6 +66,7 @@ impl FileWatcher {
     pub fn new(emit: impl Fn(PathBuf, FsEvent) + Send + 'static) -> notify::Result<Self> {
         let target: Target = Arc::new(Mutex::new(None));
         let (raw_tx, raw_rx) = mpsc::channel::<Vec<PathBuf>>();
+        let kick = raw_tx.clone();
         let inner = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
                 let _ = raw_tx.send(ev.paths);
@@ -69,16 +77,34 @@ impl FileWatcher {
         Ok(Self {
             inner,
             target,
+            kick,
             dir: None,
             file: None,
         })
     }
 
-    /// Watch `file` instead of the current one; `None` stops watching.
-    pub fn watch(&mut self, file: Option<&Path>) {
-        if self.file.as_deref() == file {
-            return;
+    /// Watch `file`, whose page was built from bytes hashing to `loaded`
+    /// (see [`content_hash`]); `None` stops watching. Called again for the
+    /// same file (a reload), it only re-seeds the baseline.
+    ///
+    /// The baseline is the loaded bytes, not a fresh read: a write landing
+    /// between the page's read and this call must still count as a change.
+    /// Every call kicks the debouncer once, so such a write is reported even
+    /// when its event predates the watch (inotify never sees it).
+    pub fn watch(&mut self, file: Option<(&Path, u64)>) {
+        let (path, loaded) = file.unzip();
+        if self.file.as_deref() != path {
+            self.retarget(path);
         }
+        let mut t = self.target.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((dir, name, last)) = t.as_mut() else {
+            return;
+        };
+        *last = loaded;
+        let _ = self.kick.send(vec![dir.join(&*name)]);
+    }
+
+    fn retarget(&mut self, file: Option<&Path>) {
         if let Some(dir) = self.dir.take() {
             let _ = self.inner.unwatch(&dir);
         }
@@ -93,13 +119,12 @@ impl FileWatcher {
         let Ok(dir) = parent.canonicalize() else {
             return;
         };
-        // Taken before watching, so a write after this point is never lost.
-        // macOS FSEvents also replays writes from just before the watch
-        // started; the debouncer drops those since the state is unchanged.
-        let state = file_state(&dir.join(name));
         if self.inner.watch(&dir, RecursiveMode::NonRecursive).is_ok() {
+            // The baseline is set by `watch`. macOS FSEvents also replays
+            // writes from just before the watch started; the debouncer drops
+            // those when the bytes match the baseline.
             *self.target.lock().unwrap_or_else(|e| e.into_inner()) =
-                Some((dir.clone(), name.to_os_string(), state));
+                Some((dir.clone(), name.to_os_string(), None));
             self.dir = Some(dir);
         }
     }
@@ -188,8 +213,9 @@ impl App {
     /// Point the watcher at the current page's file (none for stdin).
     pub(super) fn retarget_watch(&mut self) {
         let file = self.page.as_ref().and_then(|p| p.path.clone());
+        let loaded = self.loaded_hash;
         if let Some(w) = &mut self.watcher {
-            w.watch(file.as_deref());
+            w.watch(file.as_deref().zip(loaded));
         }
     }
 
