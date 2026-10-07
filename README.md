@@ -9,42 +9,7 @@ vim keys. Point it at a [zk](https://github.com/zk-org/zk) notebook and it
 talks to zk's language server, so wikilinks, backlinks, hover previews,
 full-text search and tags all work, without opening an editor.
 
-With `sidebar.default = "split"`:
-
-```
-Files                   │Project notes
-▸ src                   │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  index.md              │
-  questions.md          │Start here. The plan lives in roadmap, open questions in questions, and
-  roadmap.md            │the entry point is src/main.rs:12.
-                        │
-                        │This week
-                        │───────────────────────────────────────────────────────────────────────
-                        │
-                        │• [x] Ship the reader
-                        │• [ ] Wire up backlinks
-                        │• [ ] Write the README
-                        │
-                        ││ Tip
-                        ││
-                        ││ Press gd on any link to follow it, C-o to come back.
-Outline                 │
-Project notes ◂         │Status
-  This week             │───────────────────────────────────────────────────────────────────────
-  Status                │
-                        │┌────────┬───────┬───────┐
-                        ││ Area   │ Owner │ State │
-                        │├────────┼───────┼───────┤
-                        ││ Render │ ana   │  done │
-                        ││ LSP    │ ben   │   80% │
-                        │└────────┴───────┴───────┘
-                        │
-                        │fn main() {
-                        │    println!("hello, notes");
-                        │}
-                        │
- index.md                                                                   g? help —  All  ← 0
-```
+![ramble reading its own README, with the file tree and outline in the sidebar](docs/images/ramble.png)
 
 ## Why
 
