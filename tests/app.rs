@@ -2662,3 +2662,74 @@ fn render_math_config_is_applied() {
     let app = App::new(o, (COLS, ROWS)).unwrap();
     assert_eq!(row_text(&app, 0), "A $x^2$ b");
 }
+
+fn page_text(app: &App) -> String {
+    (0..total(app))
+        .map(|r| row_text(app, r))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn ctrl_l_rereads_the_file_without_a_watcher_event() {
+    let (dir, mut app) = app();
+    goto_row_text(&mut app, "Para 5 has foo.bar words");
+    keys(&mut app, "w");
+    let cursor = app.cursor();
+    let edited = source() + "New tail\n";
+    std::fs::write(dir.path().join("doc.md"), edited).unwrap();
+    assert!(
+        !page_text(&app).contains("New tail"),
+        "no reload without C-l"
+    );
+    app.handle_key(ctrl('l'));
+    assert!(page_text(&app).contains("New tail"));
+    assert_eq!(app.cursor(), cursor, "cursor kept");
+    assert_eq!(app.status(), "Refreshed");
+    assert!(app.take_clear_request(), "terminal clear requested");
+    assert!(!app.take_clear_request(), "request taken once");
+}
+
+#[test]
+fn colon_e_without_a_path_and_refresh_reread_the_file() {
+    let (dir, mut app) = app_with(b"# One\n");
+    for (i, cmd) in ["e", "Refresh", "edit"].into_iter().enumerate() {
+        let body = format!("# Body{i}\n");
+        std::fs::write(dir.path().join("doc.md"), &body).unwrap();
+        app.handle_key(key(KeyCode::Char(':')));
+        keys(&mut app, cmd);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(page_text(&app).contains(&format!("Body{i}")), ":{cmd}");
+        assert_eq!(app.status(), "Refreshed");
+        assert!(app.take_clear_request());
+    }
+}
+
+#[test]
+fn ctrl_l_on_a_deleted_file_keeps_the_banner_and_content() {
+    let (dir, mut app) = app_with(b"# Kept\n");
+    std::fs::remove_file(dir.path().join("doc.md")).unwrap();
+    app.handle_key(ctrl('l'));
+    assert!(page_text(&app).contains("Kept"));
+    assert_eq!(app.banner(), Some(ramble::app::DELETED_BANNER));
+    assert_ne!(app.status(), "Refreshed");
+}
+
+#[test]
+fn ctrl_l_on_stdin_does_not_reread() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(
+        opts(dir.path(), StartTarget::Stdin("# Hi\n".into())),
+        (COLS, ROWS),
+    )
+    .unwrap();
+    app.handle_key(ctrl('l'));
+    assert!(page_text(&app).contains("Hi"));
+    assert_eq!(app.status(), "Nothing to refresh (stdin)");
+    assert!(app.take_clear_request());
+    let mut o = opts(dir.path(), StartTarget::Stdin("# Hi\n".into()));
+    o.config.sidebar.default = SidebarMode::Files;
+    let mut app = App::new(o, (COLS * 2, ROWS)).unwrap();
+    app.handle_key(ctrl('l'));
+    assert_eq!(app.status(), "Refreshed tree; stdin page unchanged");
+}

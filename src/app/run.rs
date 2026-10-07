@@ -78,6 +78,9 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             suspend_and_run(terminal, || app.run_pending_effect())?;
             title = None; // the command may have set its own title
         }
+        if app.take_clear_request() {
+            terminal.clear()?;
+        }
         terminal.draw(|f| ui::draw(f, app))?;
         if event::poll(POLL)? {
             match event::read()? {

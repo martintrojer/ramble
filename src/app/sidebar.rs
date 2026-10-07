@@ -254,6 +254,35 @@ impl Tree {
         self.expanded.insert(dir.to_path_buf());
     }
 
+    /// Re-read the root and every directory walked so far (expanded or
+    /// not), keeping expansion state, the filter, `outside` and the
+    /// selection. Vanished entries and directories drop out; a vanished
+    /// selection moves to its nearest surviving ancestor, else row 0.
+    /// [`Tree::entries_read`] keeps counting across refreshes.
+    pub fn refresh(&mut self) {
+        let walked: Vec<PathBuf> = self.children.drain().map(|(d, _)| d).collect();
+        self.expanded.retain(|d| d.is_dir());
+        for dir in walked {
+            if dir == self.root || dir.is_dir() {
+                self.walk(&dir);
+            }
+        }
+        let had = self.selected.is_some();
+        let mut sel = self.selected.take();
+        while let Some(p) = &sel
+            && !p.exists()
+        {
+            sel = p
+                .parent()
+                .filter(|d| d.starts_with(&self.root) && *d != self.root)
+                .map(Path::to_path_buf);
+        }
+        self.selected = sel;
+        if had && self.selected.is_none() {
+            self.select_index(0);
+        }
+    }
+
     pub fn collapse(&mut self, dir: &Path) {
         self.expanded.remove(dir);
     }
@@ -608,6 +637,11 @@ impl App {
         if let Some(path) = self.page.as_ref().and_then(|p| p.path.as_deref()) {
             tree.reveal(path);
         }
+    }
+
+    /// The file tree, for the refresh in `watch.rs`.
+    pub(super) fn tree_mut(&mut self) -> Option<&mut Tree> {
+        self.sidebar.tree.as_mut()
     }
 
     /// After a mode change or resize: give focus back to the content when

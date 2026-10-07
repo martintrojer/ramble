@@ -1,6 +1,7 @@
 //! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
-//! `:Launch <name>`, `:Sidebar <off|files|outline|split>`, `:Raw`.
+//! `:Launch <name>`, `:Sidebar <off|files|outline|split>`, `:Raw`, and
+//! `:e` / `:Refresh` without an argument (refresh, as `C-l`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -13,6 +14,8 @@ use crate::notebook::Op;
 /// with [`App::execute`].
 pub(crate) const COMMANDS: &[(&str, &str)] = &[
     (":e <path>", "open a file (relative to this one)"),
+    (":e", "re-read this file and the tree (as C-l)"),
+    (":Refresh", "re-read this file and the tree (as C-l)"),
     (":q", "quit"),
     (":Notes", "notes picker"),
     (":Search <query>", "search notes"),
@@ -99,7 +102,7 @@ impl App {
         match cmd {
             "" => {}
             "q" | "q!" | "qa" | "quit" => self.quit = true,
-            "e" | "edit" if arg.is_empty() => self.set_status(":e needs a path"),
+            "e" | "edit" | "Refresh" if arg.is_empty() => self.refresh(),
             "e" | "edit" => {
                 let path = self.link_dir().join(arg);
                 self.open_path_at(&path, None);

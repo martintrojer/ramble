@@ -122,6 +122,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("q", Any, G::General, "quit", always),
     b("ZZ", N, G::General, "quit", always),
     b(
+        "C-l",
+        Any,
+        G::General,
+        "refresh: re-read file and tree, redraw",
+        always,
+    ),
+    b(
         "gR",
         N,
         G::General,
@@ -820,6 +827,7 @@ mod tests {
         let any = [
             "q",
             "g?",
+            "C-l",
             "<leader>e",
             "C-w h",
             "C-w w",

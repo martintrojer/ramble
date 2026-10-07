@@ -110,6 +110,8 @@ pub enum Action {
     ToggleRaw,
     /// `g?` opens the help overlay; its own keys.
     Help(super::HelpAction),
+    /// `C-l`: re-read the file and the tree, redraw the terminal.
+    Refresh,
 }
 
 /// What a key sequence means so far.
@@ -130,6 +132,10 @@ fn plain(key: &KeyEvent) -> Option<char> {
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => Some(c),
         _ => None,
     }
+}
+
+fn is_ctrl_l(key: &KeyEvent) -> bool {
+    key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
 impl App {
@@ -163,6 +169,10 @@ impl App {
     /// typed count.
     pub fn keymap(&self, keys: &[KeyEvent]) -> KeyResult {
         match self.mode {
+            // `C-l` refreshes from the content and from a sidebar pane.
+            Mode::Normal if matches!(keys, [k] if is_ctrl_l(k)) => {
+                KeyResult::Action(Action::Refresh)
+            }
             Mode::Normal if self.focus() != Focus::Content => self.sidebar_keymap(keys),
             Mode::Normal => self.normal_keymap(keys),
             Mode::Search => search_keymap(keys),
@@ -360,6 +370,7 @@ impl App {
             A::ReviewJump(fwd) => self.review_jump(fwd),
             A::ToggleRaw => self.toggle_raw(),
             A::Help(a) => self.help_action(a),
+            A::Refresh => self.refresh(),
         }
     }
 }

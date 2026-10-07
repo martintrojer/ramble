@@ -662,3 +662,61 @@ fn snapshot_split_mode() {
     term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
     insta::assert_snapshot!(term.backend().to_string());
 }
+
+#[test]
+fn ctrl_l_refreshes_the_tree_keeping_expansion_and_selection() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Files),
+    );
+    win(&mut app, 'h');
+    keys(&mut app, "ggl"); // expand docs
+    keys(&mut app, "j"); // docs/deep
+    let deep = root.join("docs/deep");
+    assert_eq!(app.tree().unwrap().selected(), Some(deep.as_path()));
+    write(&root, "docs/new.md", "# N\n");
+    std::fs::remove_file(root.join("docs/guide.md")).unwrap();
+    app.handle_key(ctrl('l'));
+    let tree = app.tree().unwrap();
+    assert_eq!(names(tree), ["docs", "  deep", "  new.md", "img", "a.md"]);
+    assert!(tree.is_expanded(&root.join("docs")));
+    assert_eq!(tree.selected(), Some(deep.as_path()), "selection kept");
+    assert_eq!(app.focus(), Focus::Files);
+    assert_eq!(app.status(), "Refreshed");
+    // A vanished selection moves to its nearest surviving ancestor.
+    std::fs::remove_dir_all(&deep).unwrap();
+    app.execute("Refresh");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.selected(), Some(root.join("docs").as_path()));
+    assert!(!tree.is_expanded(&deep));
+}
+
+#[test]
+fn refresh_rewalks_collapsed_but_walked_dirs() {
+    let (_d, root) = fixture();
+    let mut tree = Tree::new(&root, false);
+    tree.expand(&root.join("img"));
+    tree.collapse(&root.join("img"));
+    assert_eq!(names(&tree), ["docs", "a.md"], "img/ has no markdown");
+    write(&root, "img/notes.md", "# N\n");
+    tree.refresh();
+    assert_eq!(names(&tree), ["docs", "img", "a.md"]);
+    assert!(!tree.is_expanded(&root.join("img")));
+}
+
+#[test]
+fn ctrl_l_with_no_page_refreshes_the_tree_only() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Files),
+    );
+    write(&root, "c.md", "# C\n");
+    app.handle_key(ctrl('l'));
+    assert_eq!(names(app.tree().unwrap()), ["docs", "img", "a.md", "c.md"]);
+    assert_eq!(app.status(), "Refreshed tree");
+    assert!(app.take_clear_request());
+}

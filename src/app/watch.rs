@@ -220,6 +220,49 @@ impl App {
         self.on_reloaded();
     }
 
+    /// `C-l` / `:e` / `:Refresh`: re-read the current file (not stdin),
+    /// re-read the file tree if built, and ask `run` to clear the
+    /// terminal. A status set by the reload (binary, not UTF-8) or the
+    /// deleted-file banner is kept.
+    pub fn refresh(&mut self) {
+        let selected = self
+            .tree()
+            .and_then(|t| t.selected())
+            .map(Path::to_path_buf);
+        let file = self.page.as_ref().is_some_and(|p| p.path.is_some());
+        if file {
+            self.status.clear();
+            self.reload();
+        }
+        // reload() reveals the current file in the tree; the user's
+        // selection wins.
+        let tree = match self.tree_mut() {
+            Some(t) => {
+                t.select(selected);
+                t.refresh();
+                true
+            }
+            None => false,
+        };
+        self.clear_request = true;
+        let stdin = self.page.as_ref().is_some_and(|p| p.path.is_none());
+        let msg = match (file, stdin, tree) {
+            (true, ..) if !self.status.is_empty() || self.banner.is_some() => return,
+            (true, ..) => "Refreshed",
+            (false, true, true) => "Refreshed tree; stdin page unchanged",
+            (false, true, false) => "Nothing to refresh (stdin)",
+            (false, false, true) => "Refreshed tree",
+            (false, false, false) => "Nothing to refresh",
+        };
+        self.set_status(msg);
+    }
+
+    /// Whether the terminal should be cleared before the next draw (set by
+    /// [`App::refresh`]); taking it resets it.
+    pub fn take_clear_request(&mut self) -> bool {
+        std::mem::take(&mut self.clear_request)
+    }
+
     /// Called after every reload of the current page. LSP needs nothing
     /// here: reload goes through `open_bytes` -> `set_page` ->
     /// `lsp_page_changed`, which already re-sends `didOpen` at the next

@@ -199,6 +199,8 @@ pub struct App {
     hints: hints::Hints,
     review: review_glue::ReviewState,
     help: help::HelpState,
+    /// `C-l` asked `run` to clear the terminal before the next draw.
+    clear_request: bool,
 }
 
 impl App {
@@ -255,6 +257,7 @@ impl App {
             hints: hints::Hints::default(),
             review: Default::default(),
             help: Default::default(),
+            clear_request: false,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
