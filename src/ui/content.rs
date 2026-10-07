@@ -11,6 +11,10 @@ use crate::render::palette;
 
 /// Background of the cursorline (Catppuccin Mocha surface0).
 const CURSORLINE_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
+/// A search hit, and the hit under the cursor (Catppuccin Mocha base on
+/// yellow / peach).
+const HIT: Style = Style::new().fg(BANNER_BG).bg(palette::YELLOW);
+const CURRENT_HIT: Style = Style::new().fg(BANNER_BG).bg(palette::PEACH);
 /// Background of the deleted-file banner (Catppuccin Mocha red on base).
 const BANNER_BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 
@@ -43,9 +47,18 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let top = app.scroll();
     let bottom = top + area.height as usize;
+    let on_screen = |row: usize| row >= top && row < bottom;
     let buf = frame.buffer_mut();
+    // Cursorline first, so search hits on the cursor row keep their colours.
+    if on_screen(cursor.row) {
+        let y = area.y + (cursor.row - top) as u16;
+        buf.set_style(
+            Rect::new(area.x, y, area.width, 1),
+            Style::new().bg(CURSORLINE_BG),
+        );
+    }
     for s in app.search_highlights() {
-        if s.row < top || s.row >= bottom || s.col_start as u16 >= area.width {
+        if !on_screen(s.row) || s.col_start as u16 >= area.width {
             continue;
         }
         let w = (s.col_end.min(area.width as usize) - s.col_start) as u16;
@@ -55,21 +68,18 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
             w,
             1,
         );
-        buf.set_style(rect, Style::new().fg(CURSORLINE_BG).bg(palette::YELLOW));
+        let current = s.row == cursor.row && (s.col_start..s.col_end).contains(&cursor.col);
+        buf.set_style(rect, if current { CURRENT_HIT } else { HIT });
     }
-
-    if cursor.row >= app.scroll() && cursor.row < app.scroll() + area.height as usize {
-        let y = area.y + (cursor.row - app.scroll()) as u16;
-        let buf = frame.buffer_mut();
-        let line_rect = Rect::new(area.x, y, area.width, 1);
-        buf.set_style(line_rect, Style::new().bg(CURSORLINE_BG));
-        if (cursor.col as u16) < area.width {
-            let x = area.x + cursor.col as u16;
-            buf.set_style(
-                Rect::new(x, y, 1, 1),
-                Style::new().add_modifier(Modifier::REVERSED),
-            );
-        }
+    if on_screen(cursor.row) && (cursor.col as u16) < area.width {
+        let (x, y) = (
+            area.x + cursor.col as u16,
+            area.y + (cursor.row - top) as u16,
+        );
+        buf.set_style(
+            Rect::new(x, y, 1, 1),
+            Style::new().add_modifier(Modifier::REVERSED),
+        );
     }
 
     if let Some(banner) = app.banner() {

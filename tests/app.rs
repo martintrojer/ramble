@@ -1075,6 +1075,45 @@ fn hit_across_a_wrap_highlights_both_rows() {
 }
 
 #[test]
+fn hits_stay_visible_on_the_cursor_row_and_the_current_hit_stands_out() {
+    use ramble::render::palette;
+    let (_d, mut app) = app();
+    // "Para 1 has ...": hits at cols 1 and 3 of every paragraph row.
+    type_search(&mut app, '/', "a");
+    send(&mut app, key(KeyCode::Enter));
+    let row = para_row(1);
+    assert_eq!(app.cursor(), at(row, 1));
+    let mut term = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    let buf = term.backend().buffer();
+    let y = row as u16;
+    let other_row = buf[(3, y + 2)].clone();
+    let current = buf[(1, y)].clone();
+    let other_on_cursor_row = buf[(3, y)].clone();
+    let plain_on_cursor_row = buf[(2, y)].clone();
+    assert_eq!(other_row.bg, palette::YELLOW, "hit off the cursor row");
+    assert_eq!(
+        other_on_cursor_row.bg,
+        palette::YELLOW,
+        "hit on the cursor row"
+    );
+    assert_ne!(other_on_cursor_row.fg, other_on_cursor_row.bg);
+    assert_ne!(
+        plain_on_cursor_row.bg,
+        palette::YELLOW,
+        "cursorline between hits"
+    );
+    // The current hit: its own colour, drawn reversed under the cursor.
+    assert_eq!(current.bg, palette::PEACH, "current hit");
+    assert_ne!(current.fg, current.bg);
+    assert!(
+        current
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED)
+    );
+}
+
+#[test]
 fn search_hits_survive_resize() {
     let (_d, mut app) = app();
     type_search(&mut app, '/', "Para 7 ");
