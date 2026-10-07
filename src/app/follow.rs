@@ -23,6 +23,7 @@ impl App {
             cursor_row: self.cursor.row,
             cursor_col: self.cursor.col,
             scroll: self.scroll,
+            sidebar: Some(self.sidebar_mode()),
         })
     }
 
@@ -187,6 +188,11 @@ impl App {
                 }
             }
             PageRef::Stdin(text) => self.open_stdin(text.clone()),
+        }
+        if let Some(m) = e.sidebar
+            && m != self.sidebar_mode()
+        {
+            self.set_sidebar_mode(m);
         }
         self.cursor.row = e.cursor_row.min(self.last_row());
         self.set_col(e.cursor_col);

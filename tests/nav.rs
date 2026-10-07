@@ -78,6 +78,7 @@ fn e(name: &str, row: usize) -> Entry {
         cursor_row: row,
         cursor_col: 0,
         scroll: 0,
+        sidebar: None,
     }
 }
 
@@ -131,6 +132,7 @@ fn stdin_entries_keep_text() {
         cursor_row: 0,
         cursor_col: 0,
         scroll: 0,
+        sidebar: None,
     });
     let back = h.back(e("b", 0)).unwrap();
     assert_eq!(back.page, PageRef::Stdin(text));

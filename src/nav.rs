@@ -20,6 +20,8 @@ pub struct Entry {
     pub cursor_row: usize,
     pub cursor_col: usize,
     pub scroll: usize,
+    /// Sidebar mode when the page was left (`None`: keep the current one).
+    pub sidebar: Option<crate::config::SidebarMode>,
 }
 
 /// Browser-style history. The current page is not stored; callers pass it

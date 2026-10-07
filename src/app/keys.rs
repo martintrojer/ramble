@@ -6,7 +6,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::launch::{LeaderMatch, match_leader};
-use super::{App, Mode};
+use super::sidebar::{self, SidebarAction};
+use super::{App, Focus, Mode};
 
 /// Cap on a typed count, so `n as isize` never wraps negative.
 const MAX_COUNT: usize = 1_000_000;
@@ -83,6 +84,8 @@ pub enum Action {
     Hover,
     /// `Esc` while the hover popup is open.
     HoverClose,
+    // Sidebar.
+    Sidebar(SidebarAction),
 }
 
 /// What a key sequence means so far.
@@ -136,13 +139,15 @@ impl App {
     /// typed count.
     pub fn keymap(&self, keys: &[KeyEvent]) -> KeyResult {
         match self.mode {
+            Mode::Normal if self.focus() != Focus::Content => self.sidebar_keymap(keys),
             Mode::Normal => self.normal_keymap(keys),
             Mode::Search => search_keymap(keys),
+            Mode::Filter => sidebar::filter_keymap(keys),
         }
     }
 
     /// `<leader>` sequences, resolved against the launcher keys.
-    fn leader_keymap(&self, keys: &[KeyEvent]) -> Option<KeyResult> {
+    pub(super) fn leader_keymap(&self, keys: &[KeyEvent]) -> Option<KeyResult> {
         let leader = self.config.keys.leader;
         let (first, rest) = keys.split_first()?;
         if plain(first) != Some(leader) {
@@ -154,6 +159,10 @@ impl App {
         Some(match match_leader(&self.leader_bindings, &typed) {
             LeaderMatch::Launch(i) => KeyResult::Action(Action::Launch(i)),
             LeaderMatch::Pending => KeyResult::Pending,
+            // Built-in, unless a launcher took the key.
+            LeaderMatch::NoMapping if typed == ['e'] => {
+                KeyResult::Action(Action::Sidebar(SidebarAction::Cycle))
+            }
             LeaderMatch::NoMapping => KeyResult::Action(Action::NoMapping),
         })
     }
@@ -162,6 +171,9 @@ impl App {
         use Action as A;
         let count = self.count;
         if let Some(r) = self.leader_keymap(keys) {
+            return r;
+        }
+        if let Some(r) = sidebar::window_keymap(keys) {
             return r;
         }
         let [key] = keys else {
@@ -289,6 +301,7 @@ impl App {
             A::NoMapping => self.set_status("No mapping"),
             A::Hover => self.hover(),
             A::HoverClose => self.hover_close(),
+            A::Sidebar(a) => self.sidebar_action(a),
         }
     }
 }

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Cursor, StartOptions, StartTarget};
-use ramble::config::Config;
+use ramble::config::{Config, SidebarMode};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -29,9 +29,12 @@ fn para_row(i: usize) -> usize {
     1 + 2 * i
 }
 
-/// Options with no language servers configured, so no test starts a real one.
+/// Options with no language servers configured, so no test starts a real
+/// one, and the sidebar off, so the content gets the full width these tests
+/// assume.
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
+    config.sidebar.default = SidebarMode::Off;
     config.lsp.server = vec![];
     StartOptions {
         target,
@@ -1717,4 +1720,9 @@ fn injected_lsp_event_for_another_server_is_ignored() {
         }],
     }));
     assert!(app.broken_links().is_empty());
+}
+
+#[test]
+fn dir_placeholder_points_at_the_file_tree() {
+    assert!(ramble::app::NO_FILE_MESSAGE.contains("file tree"));
 }

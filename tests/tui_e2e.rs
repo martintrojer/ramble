@@ -47,8 +47,10 @@ impl Drop for Tmux {
     }
 }
 
+/// The content part of the first row (right of the sidebar border, if any).
 fn first_line(screen: &str) -> &str {
-    screen.lines().next().unwrap_or("").trim_end()
+    let line = screen.lines().next().unwrap_or("");
+    line.rsplit_once('│').map_or(line, |(_, c)| c).trim_end()
 }
 
 #[test]

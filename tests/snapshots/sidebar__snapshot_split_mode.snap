@@ -1,0 +1,20 @@
+---
+source: tests/sidebar.rs
+expression: term.backend().to_string()
+---
+"Files                   │Guide                                                  "
+"▾ docs                  │━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+"  ▸ deep                │                                                       "
+"    guide.md            │See a.                                                 "
+"▸ img                   │                                                       "
+"  a.md                  │                                                       "
+"                        │                                                       "
+"                        │                                                       "
+"Outline                 │                                                       "
+"Guide ◂                 │                                                       "
+"                        │                                                       "
+"                        │                                                       "
+"                        │                                                       "
+"                        │                                                       "
+"                        │                                                       "
+" docs/guide.md                                                      —  All  ← 0 "

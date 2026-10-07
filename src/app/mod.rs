@@ -19,6 +19,7 @@ mod page;
 mod run;
 mod scroll;
 mod search;
+pub mod sidebar;
 mod watch;
 
 use std::cell::RefCell;
@@ -41,6 +42,7 @@ pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run,
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use run::{run, suspend_and_run};
 pub use search::find_all;
+pub use sidebar::Focus;
 pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent};
 
 use motion::Cell;
@@ -66,7 +68,7 @@ pub struct StartOptions {
 
 /// Message shown in the content area when no file is loaded.
 pub const NO_FILE_MESSAGE: &str =
-    "No file loaded. The file tree arrives with the sidebar (step 8). Run: ramble <file.md>";
+    "No file loaded. Pick one in the file tree (C-w h, then Enter; <leader>e shows it).";
 
 /// Cursor position in rendered-row coordinates (display columns).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -92,6 +94,8 @@ pub enum Mode {
     Normal,
     /// Typing a `/` or `?` pattern.
     Search,
+    /// Typing a sidebar filter (`/` in a sidebar pane).
+    Filter,
 }
 
 /// Everything the event loop feeds the app. Later units add variants
@@ -163,6 +167,7 @@ pub struct App {
     lsp: lsp_glue::LspState,
     /// The clock, advanced by [`App::tick`].
     now: Instant,
+    sidebar: sidebar::Sidebar,
 }
 
 impl App {
@@ -171,6 +176,7 @@ impl App {
     pub fn new(opts: StartOptions, size: (u16, u16)) -> anyhow::Result<App> {
         let term_out = Rc::new(RefCell::new(Vec::new()));
         let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
+        let sidebar = sidebar::Sidebar::new(&opts.config.sidebar, &opts.target);
         let lsp = lsp_glue::LspState::new(&opts.config.lsp.server);
         let mut app = App {
             config: opts.config,
@@ -208,12 +214,15 @@ impl App {
             banner: None,
             lsp,
             now: Instant::now(),
+            sidebar,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
             StartTarget::Dir(_) => app.placeholder = Some(NO_FILE_MESSAGE),
             StartTarget::Stdin(text) => app.open_stdin(Arc::new(text)),
         }
+        app.sync_tree();
+        app.sidebar_fit();
         if !key_errors.is_empty() {
             app.set_status(key_errors.join("; "));
         }
@@ -272,7 +281,10 @@ impl App {
     pub fn event(&mut self, ev: AppEvent) {
         match ev {
             AppEvent::Key(key) => self.handle_key(key),
-            AppEvent::Resize(cols, rows) => self.resize(cols, rows),
+            AppEvent::Resize(cols, rows) => {
+                self.resize(cols, rows);
+                self.sidebar_fit();
+            }
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),

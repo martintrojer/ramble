@@ -57,10 +57,12 @@ impl App {
         self.refresh_search();
         self.retarget_watch();
         self.lsp_page_changed();
+        self.sync_tree();
     }
 
     fn render_width(&self) -> u16 {
-        self.size.0.min(self.config.render.max_width).max(1)
+        let cols = self.size.0.saturating_sub(self.sidebar_cols());
+        cols.min(self.config.render.max_width).max(1)
     }
 
     fn rebuild_rows(&mut self) {

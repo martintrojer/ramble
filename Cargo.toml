@@ -25,6 +25,7 @@ unicode-general-category = "1.1.0"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 url = "2"
+ignore = "0.4"
 
 # Scripted fake language server for tests/lsp.rs. Not a test target itself.
 [[bin]]
