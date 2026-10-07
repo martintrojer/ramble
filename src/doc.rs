@@ -110,11 +110,14 @@ pub enum Block {
     /// `lang` is the fence info string's first token, cut at the first `,`
     /// or whitespace, with surrounding `{`/`}` and a leading `.` stripped,
     /// lowercased (`rust,ignore` -> `rust`, `{.python}` -> `python`). None
-    /// for indented blocks and empty info strings.
+    /// for indented blocks and empty info strings. `lines` are the code's
+    /// text pieces with container prefixes (`> `, list indentation) already
+    /// skipped; `code` spans the first to the last piece.
     CodeBlock {
         lang: Option<String>,
         range: Range<usize>,
         code: Range<usize>,
+        lines: Vec<Range<usize>>,
     },
     BlockQuote {
         range: Range<usize>,
@@ -684,7 +687,9 @@ fn parse_blocks(src: &str, events: &Events<'_>, i: &mut usize) -> Vec<Block> {
                     CodeBlockKind::Indented => None,
                 };
                 let mut code: Option<Range<usize>> = None;
+                let mut lines = Vec::new();
                 while let Some((Event::Text(_), r)) = events.get(*i) {
+                    lines.push(r.clone());
                     code = Some(match code {
                         None => r.clone(),
                         Some(c) => c.start..r.end,
@@ -701,7 +706,12 @@ fn parse_blocks(src: &str, events: &Events<'_>, i: &mut usize) -> Vec<Block> {
                     };
                     at..at
                 });
-                blocks.push(Block::CodeBlock { lang, range, code });
+                blocks.push(Block::CodeBlock {
+                    lang,
+                    range,
+                    code,
+                    lines,
+                });
             }
             Tag::BlockQuote(kind) => {
                 let alert = kind.map(|k| match k {

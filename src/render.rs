@@ -820,9 +820,9 @@ impl<'a> Renderer<'a> {
                     self.emit(row, Some(range.start));
                 }
             }
-            Block::CodeBlock { lang, code, .. } if self.math && lang.as_deref() == Some("math") => {
-                self.math_fence(code)
-            }
+            Block::CodeBlock {
+                lang, code, lines, ..
+            } if self.math && lang.as_deref() == Some("math") => self.math_fence(code, lines),
             Block::CodeBlock { lang, code, .. } => self.code_block(lang.as_deref(), code),
             Block::BlockQuote {
                 range,
@@ -1252,20 +1252,26 @@ impl Renderer<'_> {
     }
 
     /// A fenced ```` ```math ```` block, drawn like a standalone `$$` block.
-    fn math_fence(&mut self, code: &Range<usize>) {
+    fn math_fence(&mut self, code: &Range<usize>, pieces: &[Range<usize>]) {
+        // The pieces already skip container prefixes, so a `>` left in them
+        // is LaTeX. A top-level piece may hold several lines.
         let mut tex = String::new();
         let mut first: Option<Range<usize>> = None;
-        let mut offset = code.start;
-        for line in self.slice(code).split_inclusive('\n') {
-            let body = line.trim_end_matches(['\n', '\r']);
-            let text = body.trim_start_matches([' ', '\t', '>']).trim_end();
-            if first.is_none() && !text.is_empty() {
-                let start = offset + body.len() - body.trim_start_matches([' ', '\t', '>']).len();
-                first = Some(start..start + text.len());
+        for piece in pieces {
+            let mut offset = piece.start;
+            for line in self.slice(piece).split_inclusive('\n') {
+                let body = line.trim_end_matches(['\n', '\r']);
+                let text = body.trim();
+                if first.is_none() && !text.is_empty() {
+                    let start = offset + body.len() - body.trim_start().len();
+                    first = Some(start..start + text.len());
+                }
+                tex.push_str(text);
+                if line.ends_with('\n') {
+                    tex.push('\n');
+                }
+                offset += line.len();
             }
-            tex.push_str(text);
-            tex.push('\n');
-            offset += line.len();
         }
         let range = first.unwrap_or(code.start..code.start);
         let m = Inline::Math {

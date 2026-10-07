@@ -333,6 +333,7 @@ fn fixture() -> Document {
             lang: Some("rust".into()),
             range: code_fence.start..code_end.end,
             code: code_fence.end + 1..code_end.start,
+            lines: std::iter::once(code_fence.end + 1..code_end.start).collect(),
         },
         Block::Table {
             range: table.clone(),
@@ -902,4 +903,35 @@ fn math_off_shows_raw_source() {
     let spans = page.srcmap.spans_for(rng(src, "$x^2$"));
     assert_eq!((spans[0].col_start, spans[0].col_end), (0, 9));
     assert_eq!(page.srcmap.source_at(0, 4), Some(4));
+}
+
+#[test]
+fn math_fence_keeps_gt_in_latex() {
+    // A fence line starting with `>` is LaTeX, not a quote prefix.
+    let (_, page) = render_md("```math\nx\n> 0\n```\n", 40, true);
+    let rows = all_rows(&page);
+    assert!(rows.iter().any(|r| r.contains('>')), "{rows:#?}");
+}
+
+#[test]
+fn math_fence_in_quote_skips_only_the_prefix() {
+    let src = "> ```math\n> a\n> > b\n> ```\n";
+    let (d, page) = render_md(src, 40, true);
+    let rows = all_rows(&page);
+    assert!(rows.iter().all(|r| r.starts_with("│ ")), "{rows:#?}");
+    let body: String = rows.iter().map(|r| &r["│ ".len()..]).collect();
+    assert_eq!(body.matches('>').count(), 1, "{rows:#?}");
+    // No segment covers a `> ` container prefix.
+    let prefixes = [rng(src, "> a"), rng_from(src, 13, "> > b")];
+    for seg in &page.srcmap.segments {
+        for p in &prefixes {
+            let p = p.start..p.start + 2;
+            assert!(
+                seg.src.end <= p.start || seg.src.start >= p.end,
+                "{:?} covers prefix {p:?} ({:?})",
+                seg.src,
+                &d.source[seg.src.clone()]
+            );
+        }
+    }
 }
