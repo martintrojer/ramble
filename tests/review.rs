@@ -10,13 +10,14 @@ use std::time::{Duration, Instant};
 use ramble::app::{App, AppEvent, NO_MORE_REVIEW, NO_REVIEW, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarMode};
 use ramble::review::{
-    self, FileMarks, Intervals, Markers, Poller, Tuicr, canonical, discovery_dir,
+    self, FileMarks, Intervals, Markers, Poller, Tuicr, canonical, discovery_dirs,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 /// A fake `tuicr` in `dir/bin`: `review list` prints `dir/list.json`;
 /// `review comments --session S` prints `dir/comments-<S with / @ ~ as _>.json`.
+/// With [`Fake::only`], both print `[]` for any other `--repo`.
 /// Every call appends its argv to `dir/log`.
 struct Fake {
     dir: PathBuf,
@@ -31,6 +32,12 @@ impl Fake {
                 r#"#!/bin/sh
 D='{d}'
 echo "$*" >> "$D/log"
+case "$2" in
+  list) repo=$4 ;;
+  comments) repo=$6 ;;
+  *) exit 2 ;;
+esac
+if [ -f "$D/only" ] && [ "$repo" != "$(cat "$D/only")" ]; then echo '[]'; exit 0; fi
 case "$2" in
   list) cat "$D/list.json" ;;
   comments) s=$(printf %s "$4" | tr '/@~' '___'); cat "$D/comments-$s.json" 2>/dev/null || echo '[]' ;;
@@ -83,6 +90,11 @@ esac
         std::fs::write(self.dir.join(format!("comments-{name}.json")), json).unwrap();
     }
 
+    /// Sessions exist only under `--repo dir`, as tuicr keys them.
+    fn only(&self, dir: &Path) {
+        std::fs::write(self.dir.join("only"), dir.display().to_string()).unwrap();
+    }
+
     fn log(&self) -> Vec<String> {
         std::fs::read_to_string(self.dir.join("log"))
             .unwrap_or_default()
@@ -126,7 +138,9 @@ fn only_active_sessions_are_read_and_paths_map_to_the_repo() {
     );
     fake.comments("old", &format!("[{}]", line("b.md", 1, 1, "new")));
     let mut p = Poller::new(fake.tuicr(), SLOW);
-    let m = p.step(Some(&repo), Instant::now(), false).unwrap();
+    let m = p
+        .step(std::slice::from_ref(&repo), Instant::now(), false)
+        .unwrap();
     assert_eq!(m.files.len(), 1, "{m:?}");
     assert_eq!(m.get(&repo.join("sub/a.md")), Some(&marks(1, &[(3, 4)])));
     let log = fake.log();
@@ -149,18 +163,26 @@ fn polls_on_schedule_and_reports_only_changes() {
     fake.comments("s", &format!("[{}]", line("a.md", 1, 1, "new")));
     let mut p = Poller::new(fake.tuicr(), SLOW);
     let t0 = Instant::now();
-    assert!(p.step(Some(&repo), t0, false).is_some());
+    assert!(p.step(std::slice::from_ref(&repo), t0, false).is_some());
     assert_eq!(fake.log().len(), 2);
     // Nothing due before 2 s.
     assert!(
-        p.step(Some(&repo), t0 + Duration::from_secs(1), false)
-            .is_none()
+        p.step(
+            std::slice::from_ref(&repo),
+            t0 + Duration::from_secs(1),
+            false
+        )
+        .is_none()
     );
     assert_eq!(fake.log().len(), 2);
     // Comments at 2 s; unchanged, so no event.
     assert!(
-        p.step(Some(&repo), t0 + Duration::from_secs(2), false)
-            .is_none()
+        p.step(
+            std::slice::from_ref(&repo),
+            t0 + Duration::from_secs(2),
+            false
+        )
+        .is_none()
     );
     let log = fake.log();
     assert_eq!(log.len(), 3);
@@ -168,11 +190,19 @@ fn polls_on_schedule_and_reports_only_changes() {
     // Changed comments are reported.
     fake.comments("s", &format!("[{}]", line("a.md", 2, 2, "new")));
     let m = p
-        .step(Some(&repo), t0 + Duration::from_secs(4), false)
+        .step(
+            std::slice::from_ref(&repo),
+            t0 + Duration::from_secs(4),
+            false,
+        )
         .unwrap();
     assert_eq!(m.get(&repo.join("a.md")), Some(&marks(1, &[(2, 2)])));
     // Discovery again at 5 s.
-    p.step(Some(&repo), t0 + Duration::from_secs(5), false);
+    p.step(
+        std::slice::from_ref(&repo),
+        t0 + Duration::from_secs(5),
+        false,
+    );
     assert!(fake.log()[4].starts_with("review list"), "{:?}", fake.log());
 }
 
@@ -182,8 +212,12 @@ fn no_session_means_no_comment_calls() {
     let fake = Fake::new(tmp.path());
     let mut p = Poller::new(fake.tuicr(), SLOW);
     let t0 = Instant::now();
-    assert!(p.step(Some(tmp.path()), t0, false).is_none());
-    p.step(Some(tmp.path()), t0 + Duration::from_secs(3), false);
+    assert!(p.step(&[tmp.path().to_path_buf()], t0, false).is_none());
+    p.step(
+        &[tmp.path().to_path_buf()],
+        t0 + Duration::from_secs(3),
+        false,
+    );
     assert_eq!(fake.log().len(), 1, "{:?}", fake.log());
 }
 
@@ -197,20 +231,20 @@ fn last_active_session_stays_after_it_ends_until_another_starts() {
     fake.comments("two", &format!("[{}]", line("b.md", 1, 1, "new")));
     let mut p = Poller::new(fake.tuicr(), SLOW);
     let t0 = Instant::now();
-    p.step(Some(&repo), t0, false).unwrap();
+    p.step(std::slice::from_ref(&repo), t0, false).unwrap();
     // tuicr quit: the session is inactive, but stays sticky.
     fake.sessions(&[("one", false)]);
-    p.step(Some(&repo), t0, true);
-    assert_eq!(p.sessions(), vec!["one".to_string()]);
+    p.step(std::slice::from_ref(&repo), t0, true);
+    assert_eq!(p.sessions(), vec![(repo.clone(), "one".to_string())]);
     // A different session becomes active and replaces it.
     fake.sessions(&[("one", false), ("two", true)]);
-    let m = p.step(Some(&repo), t0, true).unwrap();
-    assert_eq!(p.sessions(), vec!["two".to_string()]);
+    let m = p.step(std::slice::from_ref(&repo), t0, true).unwrap();
+    assert_eq!(p.sessions(), vec![(repo.clone(), "two".to_string())]);
     assert!(m.get(&repo.join("a.md")).is_none());
     assert!(m.get(&repo.join("b.md")).is_some());
     fake.sessions(&[("two", false)]);
-    p.step(Some(&repo), t0, true);
-    assert_eq!(p.sessions(), vec!["two".to_string()]);
+    p.step(std::slice::from_ref(&repo), t0, true);
+    assert_eq!(p.sessions(), vec![(repo.clone(), "two".to_string())]);
 }
 
 #[test]
@@ -222,7 +256,9 @@ fn several_active_sessions_are_unioned() {
     fake.comments("a/x@~file", &format!("[{}]", line("a.md", 1, 1, "new")));
     fake.comments("b", &format!("[{}]", line("a.md", 5, 6, "new")));
     let mut p = Poller::new(fake.tuicr(), SLOW);
-    let m = p.step(Some(&repo), Instant::now(), false).unwrap();
+    let m = p
+        .step(std::slice::from_ref(&repo), Instant::now(), false)
+        .unwrap();
     assert_eq!(
         m.get(&repo.join("a.md")),
         Some(&marks(2, &[(1, 1), (5, 6)]))
@@ -230,15 +266,47 @@ fn several_active_sessions_are_unioned() {
 }
 
 #[test]
-fn discovery_dir_is_the_vcs_root_else_the_folder() {
+fn discovery_dirs_walk_from_the_folder_to_the_vcs_root() {
     let tmp = tempfile::tempdir().unwrap();
     let plain = tmp.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();
-    assert_eq!(discovery_dir(&plain.join("a.md")), plain);
+    assert_eq!(discovery_dirs(&plain.join("a.md")), vec![plain]);
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(repo.join(".jj")).unwrap();
-    std::fs::create_dir_all(repo.join("notes")).unwrap();
-    assert_eq!(discovery_dir(&repo.join("notes/a.md")), repo);
+    std::fs::create_dir_all(repo.join("notes/x")).unwrap();
+    assert_eq!(discovery_dirs(&repo.join("a.md")), vec![repo.clone()]);
+    assert_eq!(
+        discovery_dirs(&repo.join("notes/x/a.md")),
+        vec![repo.join("notes/x"), repo.join("notes"), repo.clone()]
+    );
+    // The walk stops after 8 ancestors; the root is still queried.
+    let deep = repo.join("1/2/3/4/5/6/7/8/9/10");
+    let dirs = discovery_dirs(&deep.join("a.md"));
+    assert_eq!(dirs.len(), 10, "{dirs:?}");
+    assert_eq!(dirs[0], deep);
+    assert_eq!(dirs[8], repo.join("1/2"));
+    assert_eq!(dirs[9], repo);
+}
+
+#[test]
+fn sessions_are_listed_per_dir_and_paths_resolve_against_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Fake::new(tmp.path());
+    let repo = tmp.path().join("repo");
+    let notes = repo.join("notes");
+    fake.only(&notes);
+    fake.sessions(&[("s", true)]);
+    fake.comments("s", &format!("[{}]", line("a.md", 2, 2, "new")));
+    let mut p = Poller::new(fake.tuicr(), SLOW);
+    let t0 = Instant::now();
+    let m = p.step(&[notes.clone(), repo.clone()], t0, false).unwrap();
+    assert_eq!(m.get(&notes.join("a.md")), Some(&marks(1, &[(2, 2)])));
+    assert_eq!(m.files.len(), 1, "{m:?}");
+    assert_eq!(p.sessions(), vec![(notes.clone(), "s".to_string())]);
+    // Sticky per directory: inactive now, still counted under notes only.
+    fake.sessions(&[("s", false)]);
+    p.step(&[notes.clone(), repo.clone()], t0, true);
+    assert_eq!(p.sessions(), vec![(notes.clone(), "s".to_string())]);
 }
 
 fn recv_review(rx: &mpsc::Receiver<AppEvent>, within: Duration) -> Option<Markers> {
@@ -269,7 +337,7 @@ fn thread_skips_polls_while_paused_and_polls_at_once_on_resume() {
     let h = review::spawn(fake.tuicr(), long, move |m| {
         let _ = tx.send(AppEvent::Review(m));
     });
-    h.control.set_dir(Some(repo.clone()));
+    h.control.set_dirs(vec![repo.clone()]);
     assert!(recv_review(&rx, Duration::from_secs(5)).is_some());
     h.control.set_paused(true);
     // Let a poll already in flight finish.
@@ -469,7 +537,7 @@ fn app_tracks_the_discovery_dir_and_stdin_has_none() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
     let app = app_in(&dir, config(None, SidebarMode::Off));
-    assert_eq!(app.review_dir(), Some(std::path::absolute(&dir).unwrap()));
+    assert_eq!(app.review_dirs(), vec![std::path::absolute(&dir).unwrap()]);
     let s = App::new(
         StartOptions {
             target: StartTarget::Stdin("# S\n".into()),
@@ -479,7 +547,7 @@ fn app_tracks_the_discovery_dir_and_stdin_has_none() {
         (COLS, ROWS),
     )
     .unwrap();
-    assert_eq!(s.review_dir(), None);
+    assert!(s.review_dirs().is_empty());
 }
 
 #[test]
@@ -538,6 +606,59 @@ fn a_launcher_pauses_the_thread_and_it_polls_on_return() {
     assert_eq!(app.review_count(), 1);
 }
 
+#[test]
+fn a_session_keyed_to_the_files_folder_below_the_repo_root_is_found() {
+    // `tuicr --file notes/doc.md` keys its session to `<repo>/notes`, not
+    // the repo root (tuicr 0.25.0).
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_dir = tmp.path().join("fake");
+    std::fs::create_dir_all(&fake_dir).unwrap();
+    let fake = Fake::new(&fake_dir);
+    let repo = canonical(&{
+        let r = tmp.path().join("repo");
+        std::fs::create_dir_all(r.join(".git")).unwrap();
+        r
+    });
+    let notes = repo.join("notes");
+    fake.only(&notes);
+    fake.sessions(&[("rr", true)]);
+    fake.comments("rr", &format!("[{}]", line("doc.md", 5, 5, "new")));
+    let mut app = app_in(&notes, config(Some(&fake.command()), SidebarMode::Off));
+    let (tx, rx) = mpsc::channel();
+    app.set_sender(tx);
+    let short = Intervals {
+        discovery: Duration::from_millis(50),
+        comments: Duration::from_millis(50),
+    };
+    assert!(app.start_review_with(short));
+    let m = recv_review(&rx, Duration::from_secs(5))
+        .unwrap_or_else(|| panic!("no markers; tuicr calls: {:?}", fake.log()));
+    app.event(AppEvent::Review(m));
+    assert_eq!(app.review_count(), 1);
+}
+
+#[test]
+fn back_jump_goes_to_the_nearest_previous_comment() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("nb");
+    let mut app = app_in(&dir, config(None, SidebarMode::Off));
+    let (alpha, beta, gamma) = (
+        row_of(&app, "alpha"),
+        row_of(&app, "beta"),
+        row_of(&app, "gamma"),
+    );
+    app.event(AppEvent::Review(markers(
+        &dir,
+        &[("doc.md", marks(3, &[(3, 3), (5, 5), (7, 7)]))],
+    )));
+    keys(&mut app, "]r]r]r");
+    assert_eq!(app.cursor().row, gamma);
+    keys(&mut app, "[r");
+    assert_eq!(app.cursor().row, beta);
+    keys(&mut app, "[r");
+    assert_eq!(app.cursor().row, alpha);
+}
+
 fn wait_until(what: &str, pred: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !pred() {
@@ -571,14 +692,41 @@ fn quote(p: &Path) -> String {
 
 #[test]
 fn real_tuicr_comment_shows_in_ramble() {
+    real_tuicr_e2e("real_tuicr_comment_shows_in_ramble", false);
+}
+
+/// The default `<leader>rr` on a file below the repo root: tuicr runs in
+/// the repo root with `--file notes/a.md` and keys the session to `notes`.
+#[test]
+fn real_tuicr_comment_in_a_repo_subfolder_shows_in_ramble() {
+    if !has("git", "--version") {
+        eprintln!("skipping: git not found on PATH");
+        return;
+    }
+    real_tuicr_e2e(
+        "real_tuicr_comment_in_a_repo_subfolder_shows_in_ramble",
+        true,
+    );
+}
+
+/// Start tuicr on `a.md` in tmux (from the notebook folder, or with `repo`
+/// from the root of a git repo holding `notes/a.md`), add a comment with
+/// `tuicr review add`, then wait for ramble to show it. HOME and XDG dirs
+/// point into a temp dir.
+fn real_tuicr_e2e(name: &str, repo: bool) {
     if !has("tuicr", "--version") || !has("tmux", "-V") {
-        eprintln!("skipping real_tuicr_comment_shows_in_ramble: tuicr or tmux not found on PATH");
+        eprintln!("skipping {name}: tuicr or tmux not found on PATH");
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
     let root = canonical(tmp.path());
     let home = root.join("home");
-    let nb = root.join("nb");
+    let (cwd, nb) = if repo {
+        let r = root.join("repo");
+        (r.clone(), r.join("notes"))
+    } else {
+        (root.join("nb"), root.join("nb"))
+    };
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&nb).unwrap();
     let doc = nb.join("a.md");
@@ -596,6 +744,16 @@ fn real_tuicr_comment_shows_in_ramble() {
         .iter()
         .map(|(k, v)| format!("{k}={} ", quote(v)))
         .collect();
+    if repo {
+        let o = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&cwd)
+            .envs(envs.iter().map(|(k, v)| (*k, v)))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git init: {o:?}");
+    }
+    let file_arg = doc.strip_prefix(&cwd).unwrap().to_path_buf();
     let sock = root.join("sock");
     let tmux = |args: &[&str]| {
         Command::new("tmux")
@@ -635,8 +793,8 @@ fn real_tuicr_comment_shows_in_ramble() {
         "-y",
         "24",
         "-c",
-        nb.to_str().unwrap(),
-        &format!("env {env_prefix}tuicr --file {}", quote(&doc)),
+        cwd.to_str().unwrap(),
+        &format!("env {env_prefix}tuicr --file {}", quote(&file_arg)),
     ]);
     assert!(out.status.success(), "tmux: {out:?}");
 

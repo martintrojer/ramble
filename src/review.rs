@@ -2,7 +2,7 @@
 //! (spec § Review markers).
 //!
 //! Only the `tuicr review` CLI is used. A background thread ([`spawn`])
-//! polls it for the discovery directory the app sets in [`Control`], and
+//! polls it for the discovery directories the app sets in [`Control`], and
 //! emits a new [`Markers`] whenever the comment set changes. No dependency
 //! on rendering or the LSP.
 
@@ -110,14 +110,32 @@ pub fn add_comments(markers: &mut Markers, dir: &Path, comments: &[Comment]) {
     }
 }
 
-/// The discovery directory for a file: its VCS root, else its folder (the
-/// rule launchers use for their working directory).
-pub fn discovery_dir(file: &Path) -> PathBuf {
+/// Most ancestors of the file's folder [`discovery_dirs`] walks.
+pub const MAX_ANCESTORS: usize = 8;
+
+/// The directories whose tuicr sessions belong to a file, in order: its
+/// folder, then each ancestor up to and including its VCS root (at most
+/// [`MAX_ANCESTORS`] above the folder), then the VCS root itself. Outside a
+/// VCS repository, just the folder. `tuicr --file` keys a session to the
+/// file's folder (or the folder passed to it); `tuicr -w -p` to the repo.
+pub fn discovery_dirs(file: &Path) -> Vec<PathBuf> {
     let file = absolute(file);
-    crate::app::vcs_root(&file).unwrap_or_else(|| {
-        file.parent()
-            .map_or_else(|| file.clone(), Path::to_path_buf)
-    })
+    let Some(folder) = file.parent() else {
+        return vec![file];
+    };
+    let Some(root) = crate::app::vcs_root(folder) else {
+        return vec![folder.to_path_buf()];
+    };
+    let mut dirs: Vec<PathBuf> = folder
+        .ancestors()
+        .take(MAX_ANCESTORS + 1)
+        .take_while(|d| d.starts_with(&root))
+        .map(Path::to_path_buf)
+        .collect();
+    if !dirs.contains(&root) {
+        dirs.push(root);
+    }
+    dirs
 }
 
 /// `command` as an executable path: itself if it names a path that exists,
@@ -185,10 +203,10 @@ impl Default for Intervals {
 pub struct Poller {
     tuicr: Tuicr,
     every: Intervals,
-    dir: Option<PathBuf>,
-    /// Active session slugs for `dir` at the last discovery.
-    active: Vec<String>,
-    /// Per directory: the last session seen active.
+    dirs: Vec<PathBuf>,
+    /// Active `(dir, slug)` sessions at the last discovery, in `dirs` order.
+    active: Vec<(PathBuf, String)>,
+    /// Per directory: the last session seen active there.
     sticky: HashMap<PathBuf, String>,
     discovered_at: Option<Instant>,
     fetched_at: Option<Instant>,
@@ -200,7 +218,7 @@ impl Poller {
         Poller {
             tuicr,
             every,
-            dir: None,
+            dirs: Vec::new(),
             active: Vec::new(),
             sticky: HashMap::new(),
             discovered_at: None,
@@ -209,46 +227,61 @@ impl Poller {
         }
     }
 
-    /// Sessions whose comments count: the active ones plus the sticky one.
-    pub fn sessions(&self) -> Vec<String> {
-        let mut out = self.active.clone();
-        if let Some(s) = self.dir.as_ref().and_then(|d| self.sticky.get(d))
-            && !out.contains(s)
-        {
-            out.push(s.clone());
+    /// Sessions whose comments count, as `(dir listed under, slug)`: per
+    /// directory, the active ones plus the sticky one.
+    pub fn sessions(&self) -> Vec<(PathBuf, String)> {
+        let mut out = Vec::new();
+        for d in &self.dirs {
+            out.extend(self.active.iter().filter(|(ad, _)| ad == d).cloned());
+            if let Some(s) = self.sticky.get(d) {
+                let pair = (d.clone(), s.clone());
+                if !out.contains(&pair) {
+                    out.push(pair);
+                }
+            }
         }
         out
     }
 
-    /// Poll what is due at `now` for `dir`; `force` polls everything now.
+    /// List sessions under `dir`, updating `active` and the sticky session.
+    /// Returns whether the listing succeeded.
+    fn discover(&mut self, dir: &Path) -> bool {
+        let Ok(sessions) = self.tuicr.list(dir) else {
+            return false;
+        };
+        let active: Vec<String> = sessions
+            .into_iter()
+            .filter(|s| s.active)
+            .map(|s| s.slug)
+            .collect();
+        let keep = self.sticky.get(dir).is_some_and(|s| active.contains(s));
+        if let (false, Some(first)) = (keep, active.first()) {
+            self.sticky.insert(dir.to_path_buf(), first.clone());
+        }
+        self.active.retain(|(d, _)| d != dir);
+        self.active
+            .extend(active.into_iter().map(|s| (dir.to_path_buf(), s)));
+        true
+    }
+
+    /// Poll what is due at `now` for `dirs`; `force` polls everything now.
     /// Returns the markers when they changed.
-    pub fn step(&mut self, dir: Option<&Path>, now: Instant, force: bool) -> Option<Markers> {
-        let force = force || self.dir.as_deref() != dir;
-        if self.dir.as_deref() != dir {
-            self.dir = dir.map(Path::to_path_buf);
+    pub fn step(&mut self, dirs: &[PathBuf], now: Instant, force: bool) -> Option<Markers> {
+        let changed = self.dirs != dirs;
+        let force = force || changed;
+        if changed {
+            self.dirs = dirs.to_vec();
             self.active.clear();
         }
-        let Some(dir) = self.dir.clone() else {
+        if self.dirs.is_empty() {
             return self.publish(Markers::default());
-        };
+        }
         let due = |at: Option<Instant>, every: Duration| at.is_none_or(|t| now >= t + every);
         let mut fetch = force || due(self.fetched_at, self.every.comments);
         if force || due(self.discovered_at, self.every.discovery) {
             self.discovered_at = Some(now);
-            if let Ok(sessions) = self.tuicr.list(&dir) {
-                self.active = sessions
-                    .into_iter()
-                    .filter(|s| s.active)
-                    .map(|s| s.slug)
-                    .collect();
-                let keep = self
-                    .sticky
-                    .get(&dir)
-                    .is_some_and(|s| self.active.contains(s));
-                if let (false, Some(first)) = (keep, self.active.first()) {
-                    self.sticky.insert(dir.clone(), first.clone());
-                }
-                fetch = true;
+            for dir in self.dirs.clone() {
+                fetch |= self.discover(&dir);
             }
         }
         let sessions = self.sessions();
@@ -260,9 +293,9 @@ impl Poller {
         }
         self.fetched_at = Some(now);
         let mut markers = Markers::default();
-        for slug in &sessions {
-            if let Ok(cs) = self.tuicr.comments(slug, &dir) {
-                add_comments(&mut markers, &dir, &cs);
+        for (dir, slug) in &sessions {
+            if let Ok(cs) = self.tuicr.comments(slug, dir) {
+                add_comments(&mut markers, dir, &cs);
             }
         }
         self.publish(markers)
@@ -286,18 +319,18 @@ pub struct Control {
     /// Bumped on every resume, so a pause shorter than one thread step
     /// still forces a poll.
     resumed: AtomicU64,
-    /// The discovery directory (none for stdin or no page).
-    dir: Mutex<Option<PathBuf>>,
+    /// The discovery directories (empty for stdin or no page).
+    dirs: Mutex<Vec<PathBuf>>,
     stop: AtomicBool,
 }
 
 impl Control {
-    pub fn set_dir(&self, dir: Option<PathBuf>) {
-        *self.dir.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    pub fn set_dirs(&self, dirs: Vec<PathBuf>) {
+        *self.dirs.lock().unwrap_or_else(|e| e.into_inner()) = dirs;
     }
 
-    pub fn dir(&self) -> Option<PathBuf> {
-        self.dir.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    pub fn dirs(&self) -> Vec<PathBuf> {
+        self.dirs.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -336,7 +369,7 @@ pub fn spawn(tuicr: Tuicr, every: Intervals, emit: impl Fn(Markers) + Send + 'st
                 let resumed = c.resumed.load(Ordering::SeqCst);
                 let force = resumed != seen;
                 seen = resumed;
-                if let Some(m) = poller.step(c.dir().as_deref(), Instant::now(), force) {
+                if let Some(m) = poller.step(&c.dirs(), Instant::now(), force) {
                     emit(m);
                 }
             }

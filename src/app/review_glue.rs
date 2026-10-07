@@ -1,5 +1,5 @@
 //! Review markers in the app (spec § Review markers): starts the review
-//! thread, keeps its discovery directory on the current file, pauses it
+//! thread, keeps its discovery directories on the current file, pauses it
 //! around launchers, and maps comment lines to rendered rows for the
 //! gutter, the file tree, the status line and `]r` / `[r`.
 
@@ -45,7 +45,7 @@ impl App {
         let handle = review::spawn(Tuicr { command }, every, move |m| {
             let _ = tx.send(AppEvent::Review(m));
         });
-        handle.control.set_dir(self.review_dir());
+        handle.control.set_dirs(self.review_dirs());
         self.review.handle = Some(handle);
         true
     }
@@ -55,10 +55,10 @@ impl App {
         self.review.handle.is_some()
     }
 
-    /// The discovery directory for the current page (none for stdin).
-    pub fn review_dir(&self) -> Option<PathBuf> {
-        let path = self.page.as_ref()?.path.as_deref()?;
-        Some(review::discovery_dir(path))
+    /// The discovery directories for the current page (none for stdin).
+    pub fn review_dirs(&self) -> Vec<PathBuf> {
+        let path = self.page.as_ref().and_then(|p| p.path.as_deref());
+        path.map(review::discovery_dirs).unwrap_or_default()
     }
 
     /// Pause (true) or resume the review thread; resuming polls at once.
@@ -71,7 +71,7 @@ impl App {
     /// Called for every page shown.
     pub(super) fn review_page_changed(&mut self) {
         if let Some(h) = &self.review.handle {
-            h.control.set_dir(self.review_dir());
+            h.control.set_dirs(self.review_dirs());
         }
         self.review_relayout();
     }
