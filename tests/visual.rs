@@ -387,3 +387,14 @@ fn reload_while_y_is_pending_cancels_it() {
         "j after reload is a motion, not yj"
     );
 }
+
+/// vim `:help exclusive-linewise` (nvim -u NONE: `gg0y}` -> V register).
+#[test]
+fn exclusive_motion_ending_in_column_0_is_linewise_from_the_first_non_blank() {
+    let (_d, mut app, clip) = app_src("one two\nthree\n\nfour\n");
+    keys(&mut app, "y}");
+    assert_eq!(last(&clip), "one two\nthree\n");
+    // Past the first non-blank: charwise, end moved to the previous row.
+    keys(&mut app, "wy}");
+    assert_eq!(last(&clip), "two\nthree");
+}
