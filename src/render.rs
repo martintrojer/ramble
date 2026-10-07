@@ -5,10 +5,17 @@
 //! `render` unit (t03) implements [`render`] and the [`SrcMap`] methods.
 
 use std::ops::Range;
+use std::sync::OnceLock;
 
-use ratatui::text::Line;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use syntect::easy::HighlightLines;
+use syntect::highlighting::FontStyle;
+use syntect::parsing::SyntaxSet;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-use crate::doc::Document;
+use crate::doc::{self, AlertKind, Alignment, Block, Document, Inline, ListItem};
 
 /// Colours and styles. `Theme::catppuccin_mocha()` is the default.
 #[derive(Debug, Clone)]
@@ -57,21 +64,58 @@ impl SrcMap {
     /// Screen spans drawn from any byte in `src`. Empty when none of
     /// those bytes is drawn.
     pub fn spans_for(&self, src: Range<usize>) -> Vec<ScreenSpan> {
-        let _ = src;
-        todo!("t03_render")
+        self.segments
+            .iter()
+            .filter(|s| {
+                if src.is_empty() {
+                    s.src.contains(&src.start)
+                } else {
+                    s.src.start < src.end && src.start < s.src.end
+                }
+            })
+            .map(|s| s.span)
+            .collect()
     }
 
     /// The source byte drawn at (row, col), or the nearest drawn byte on
     /// that row, or `None` for an empty row.
     pub fn source_at(&self, row: usize, col: usize) -> Option<usize> {
-        let _ = (row, col);
-        todo!("t03_render")
+        let lo = self.segments.partition_point(|s| s.span.row < row);
+        let hi = self.segments.partition_point(|s| s.span.row <= row);
+        let on_row = &self.segments[lo..hi];
+        if let Some(s) = on_row
+            .iter()
+            .find(|s| (s.span.col_start..s.span.col_end).contains(&col))
+        {
+            let cols = s.span.col_end - s.span.col_start;
+            let len = s.src.end - s.src.start;
+            let off = (col - s.span.col_start) * len / cols.max(1);
+            return Some((s.src.start + off).min(s.src.end - 1));
+        }
+        on_row
+            .iter()
+            .min_by_key(|s| {
+                if col < s.span.col_start {
+                    s.span.col_start - col
+                } else {
+                    col + 1 - s.span.col_end
+                }
+            })
+            .map(|s| {
+                if col < s.span.col_start {
+                    s.src.start
+                } else {
+                    s.src.end - 1
+                }
+            })
     }
 
     /// The first screen row drawn from a byte at or after `byte`.
     pub fn row_for(&self, byte: usize) -> Option<usize> {
-        let _ = byte;
-        todo!("t03_render")
+        self.segments
+            .iter()
+            .find(|s| s.src.end > byte)
+            .map(|s| s.span.row)
     }
 }
 
@@ -87,13 +131,824 @@ pub struct RenderedPage {
 
 /// Lay out `doc` at `width` columns.
 pub fn render(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
-    let _ = (doc, width, theme);
-    todo!("t03_render")
+    render_with(doc, width, theme, &|r| doc::inlines(doc, r))
+}
+
+/// [`render`] with the inline walker injected, so layout can be tested
+/// with hand-built inlines.
+#[doc(hidden)]
+pub fn render_with(
+    doc: &Document,
+    width: u16,
+    theme: &Theme,
+    inlines: &dyn Fn(Range<usize>) -> Vec<Inline>,
+) -> RenderedPage {
+    // v1 always uses the embedded Catppuccin Mocha code theme.
+    let _ = theme;
+    let mut r = Renderer::new(doc, width, inlines);
+    r.blocks(&doc.blocks, true);
+    RenderedPage {
+        lines: r.lines,
+        srcmap: SrcMap {
+            segments: r.segments,
+        },
+        source_lines: r.source_lines,
+    }
 }
 
 /// Write `page` as ANSI-coloured text (truecolor) with a trailing newline
 /// per row. Used by print mode.
 pub fn to_ansi(page: &RenderedPage) -> String {
-    let _ = page;
-    todo!("t03_render")
+    let mut out = String::new();
+    for line in &page.lines {
+        let mut styled = false;
+        for span in &line.spans {
+            let codes = sgr_codes(line.style.patch(span.style));
+            if styled {
+                out.push_str("\x1b[0m");
+            }
+            styled = !codes.is_empty();
+            if styled {
+                out.push_str("\x1b[");
+                out.push_str(&codes.join(";"));
+                out.push('m');
+            }
+            out.push_str(&span.content);
+        }
+        out.push_str("\x1b[0m\n");
+    }
+    out
+}
+
+fn sgr_codes(style: Style) -> Vec<String> {
+    let mut codes = Vec::new();
+    for (color, base) in [(style.fg, 38), (style.bg, 48)] {
+        match color {
+            Some(Color::Rgb(r, g, b)) => codes.push(format!("{base};2;{r};{g};{b}")),
+            Some(Color::Indexed(i)) => codes.push(format!("{base};5;{i}")),
+            _ => {}
+        }
+    }
+    let m = style.add_modifier;
+    for (flag, code) in [
+        (Modifier::BOLD, "1"),
+        (Modifier::DIM, "2"),
+        (Modifier::ITALIC, "3"),
+        (Modifier::UNDERLINED, "4"),
+        (Modifier::CROSSED_OUT, "9"),
+    ] {
+        if m.contains(flag) {
+            codes.push(code.to_string());
+        }
+    }
+    codes
+}
+
+/// Catppuccin Mocha palette used by the renderer.
+pub mod palette {
+    use ratatui::style::Color;
+
+    pub const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
+    pub const MAUVE: Color = Color::Rgb(0xcb, 0xa6, 0xf7);
+    pub const BLUE: Color = Color::Rgb(0x89, 0xb4, 0xfa);
+    pub const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
+    pub const OVERLAY: Color = Color::Rgb(0x6c, 0x70, 0x86);
+    pub const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
+    pub const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
+    pub const PEACH: Color = Color::Rgb(0xfa, 0xb3, 0x87);
+    pub const TEAL: Color = Color::Rgb(0x94, 0xe2, 0xd5);
+}
+
+// ---------------------------------------------------------------------------
+// Layout internals
+
+/// One drawn grapheme.
+#[derive(Debug, Clone)]
+struct Cell {
+    text: String,
+    w: usize,
+    style: Style,
+    src: Option<Range<usize>>,
+    link: Option<usize>,
+}
+
+impl Cell {
+    fn deco(text: &str, style: Style) -> Self {
+        Self {
+            text: text.to_string(),
+            w: UnicodeWidthStr::width(text),
+            style,
+            src: None,
+            link: None,
+        }
+    }
+}
+
+fn deco_cells(text: &str, style: Style) -> Vec<Cell> {
+    text.graphemes(true).map(|g| Cell::deco(g, style)).collect()
+}
+
+fn width_of(cells: &[Cell]) -> usize {
+    cells.iter().map(|c| c.w).sum()
+}
+
+/// Drawn text and width of a grapheme. Control characters become `?`.
+fn sanitize(g: &str) -> (String, usize) {
+    if g.chars().any(char::is_control) {
+        ("?".to_string(), 1)
+    } else {
+        (g.to_string(), UnicodeWidthStr::width(g))
+    }
+}
+
+/// A word-wrap token.
+enum Tok {
+    Word(Vec<Cell>),
+    /// Collapsible whitespace; `src` is the first whitespace grapheme, if any.
+    Space(Option<Range<usize>>),
+    Break,
+}
+
+/// Greedy word wrap of `toks` to `avail` columns. Words longer than
+/// `avail` are broken by grapheme.
+fn wrap(toks: Vec<Tok>, avail: usize, base: Style) -> Vec<Vec<Cell>> {
+    let avail = avail.max(1);
+    let mut rows = Vec::new();
+    let mut row: Vec<Cell> = Vec::new();
+    let mut rw = 0;
+    let mut pending: Option<Option<Range<usize>>> = None;
+    for tok in toks {
+        match tok {
+            Tok::Space(src) => {
+                if !row.is_empty() {
+                    pending = Some(src);
+                }
+            }
+            Tok::Break => {
+                rows.push(std::mem::take(&mut row));
+                rw = 0;
+                pending = None;
+            }
+            Tok::Word(cells) => {
+                if cells.is_empty() {
+                    continue;
+                }
+                let ww = width_of(&cells);
+                let space = pending.take().filter(|_| !row.is_empty());
+                let sw = usize::from(space.is_some());
+                if rw + sw + ww <= avail {
+                    if let Some(src) = space {
+                        let prev = row.last().expect("row is non-empty");
+                        let (style, link) = if prev.link.is_some() && prev.link == cells[0].link {
+                            (prev.style, prev.link)
+                        } else {
+                            (base, None)
+                        };
+                        row.push(Cell {
+                            text: " ".into(),
+                            w: 1,
+                            style,
+                            src,
+                            link,
+                        });
+                        rw += 1;
+                    }
+                    rw += ww;
+                    row.extend(cells);
+                } else if ww <= avail {
+                    rows.push(std::mem::replace(&mut row, cells));
+                    rw = ww;
+                } else {
+                    if !row.is_empty() {
+                        rows.push(std::mem::take(&mut row));
+                        rw = 0;
+                    }
+                    for c in cells {
+                        if rw + c.w > avail && !row.is_empty() {
+                            rows.push(std::mem::take(&mut row));
+                            rw = 0;
+                        }
+                        rw += c.w;
+                        row.push(c);
+                    }
+                }
+            }
+        }
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+/// Split one row into rows no wider than `avail`, by grapheme.
+fn hard_break(cells: Vec<Cell>, avail: usize) -> Vec<Vec<Cell>> {
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut rw = 0;
+    for c in cells {
+        if rw + c.w > avail && !row.is_empty() {
+            rows.push(std::mem::take(&mut row));
+            rw = 0;
+        }
+        rw += c.w;
+        row.push(c);
+    }
+    if !row.is_empty() || rows.is_empty() {
+        rows.push(row);
+    }
+    rows
+}
+
+/// A per-row prefix (list marker, quote bar). `first` and `rest` have
+/// the same width.
+struct Prefix {
+    first: Vec<Cell>,
+    rest: Vec<Cell>,
+    used: bool,
+}
+
+fn base_style() -> Style {
+    Style::new().fg(palette::TEXT)
+}
+
+fn heading_style(level: u8) -> Style {
+    let fg = match level {
+        1 | 2 => palette::MAUVE,
+        3 => palette::PEACH,
+        4 => palette::YELLOW,
+        5 => palette::GREEN,
+        _ => palette::TEAL,
+    };
+    Style::new().fg(fg).add_modifier(Modifier::BOLD)
+}
+
+fn alert_info(kind: AlertKind) -> (&'static str, Color) {
+    match kind {
+        AlertKind::Note => ("Note", palette::BLUE),
+        AlertKind::Tip => ("Tip", palette::GREEN),
+        AlertKind::Important => ("Important", palette::MAUVE),
+        AlertKind::Warning => ("Warning", palette::YELLOW),
+        AlertKind::Caution => ("Caution", palette::RED),
+    }
+}
+
+fn syntaxes() -> &'static SyntaxSet {
+    static SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SET.get_or_init(two_face::syntax::extra_newlines)
+}
+
+fn code_theme() -> &'static syntect::highlighting::Theme {
+    static THEME: OnceLock<syntect::highlighting::Theme> = OnceLock::new();
+    THEME.get_or_init(|| {
+        two_face::theme::extra()
+            .get(two_face::theme::EmbeddedThemeName::CatppuccinMocha)
+            .clone()
+    })
+}
+
+fn syntect_style(st: syntect::highlighting::Style) -> Style {
+    let fg = st.foreground;
+    let mut style = Style::new().fg(Color::Rgb(fg.r, fg.g, fg.b));
+    if st.font_style.contains(FontStyle::BOLD) {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    if st.font_style.contains(FontStyle::ITALIC) {
+        style = style.add_modifier(Modifier::ITALIC);
+    }
+    if st.font_style.contains(FontStyle::UNDERLINE) {
+        style = style.add_modifier(Modifier::UNDERLINED);
+    }
+    style
+}
+
+struct Renderer<'a> {
+    src: &'a str,
+    width: usize,
+    inlines: &'a dyn Fn(Range<usize>) -> Vec<Inline>,
+    newlines: Vec<usize>,
+    prefixes: Vec<Prefix>,
+    list_depth: usize,
+    lines: Vec<Line<'static>>,
+    segments: Vec<Segment>,
+    source_lines: Vec<usize>,
+}
+
+impl<'a> Renderer<'a> {
+    fn new(
+        doc: &'a Document,
+        width: u16,
+        inlines: &'a dyn Fn(Range<usize>) -> Vec<Inline>,
+    ) -> Self {
+        let src = doc.source.as_str();
+        Self {
+            src,
+            width: usize::from(width.max(1)),
+            inlines,
+            newlines: src.match_indices('\n').map(|(i, _)| i).collect(),
+            prefixes: Vec::new(),
+            list_depth: 0,
+            lines: Vec::new(),
+            segments: Vec::new(),
+            source_lines: Vec::new(),
+        }
+    }
+
+    /// `range` as text, or "" when it is not a valid slice.
+    fn slice(&self, range: &Range<usize>) -> &'a str {
+        self.src.get(range.clone()).unwrap_or("")
+    }
+
+    fn line_of(&self, byte: usize) -> usize {
+        self.newlines.partition_point(|&n| n < byte) + 1
+    }
+
+    fn prefix_width(&self) -> usize {
+        self.prefixes.iter().map(|p| width_of(&p.first)).sum()
+    }
+
+    /// Prefixes are dropped when they leave no more than one column.
+    fn show_prefixes(&self) -> bool {
+        self.width > self.prefix_width() + 1
+    }
+
+    /// Content columns available on a row.
+    fn avail(&self) -> usize {
+        if self.show_prefixes() {
+            self.width - self.prefix_width()
+        } else {
+            self.width
+        }
+    }
+
+    /// Emit one logical row, hard-breaking it when wider than `avail`.
+    fn emit(&mut self, cells: Vec<Cell>, fallback: Option<usize>) {
+        for row in hard_break(cells, self.avail()) {
+            self.emit_row(row, fallback);
+        }
+    }
+
+    fn emit_row(&mut self, content: Vec<Cell>, fallback: Option<usize>) {
+        let show = self.show_prefixes();
+        let mut cells = Vec::new();
+        for p in &mut self.prefixes {
+            if show {
+                cells.extend(if p.used { &p.rest } else { &p.first }.iter().cloned());
+            }
+            p.used = true;
+        }
+        let byte = content
+            .iter()
+            .filter_map(|c| c.src.as_ref().map(|s| s.start))
+            .min()
+            .or(fallback);
+        cells.extend(content);
+
+        let row = self.lines.len();
+        let mut col = 0;
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut text = String::new();
+        let mut style = None;
+        for c in cells {
+            if style != Some(c.style) {
+                if let Some(s) = style
+                    && !text.is_empty()
+                {
+                    spans.push(Span::styled(std::mem::take(&mut text), s));
+                }
+                style = Some(c.style);
+            }
+            text.push_str(&c.text);
+            if let Some(src) = c.src.filter(|s| !s.is_empty() && c.w > 0) {
+                match self.segments.last_mut() {
+                    Some(last)
+                        if last.span.row == row
+                            && last.span.col_end == col
+                            && last.link == c.link
+                            && src.start >= last.src.start
+                            && src.start <= last.src.end =>
+                    {
+                        last.src.end = last.src.end.max(src.end);
+                        last.span.col_end += c.w;
+                    }
+                    _ => self.segments.push(Segment {
+                        src,
+                        span: ScreenSpan {
+                            row,
+                            col_start: col,
+                            col_end: col + c.w,
+                        },
+                        link: c.link,
+                    }),
+                }
+            }
+            col += c.w;
+        }
+        if let Some(s) = style
+            && !text.is_empty()
+        {
+            spans.push(Span::styled(text, s));
+        }
+        self.lines.push(Line::from(spans));
+        let prev = self.source_lines.last().copied().unwrap_or(1);
+        let line = byte.map_or(prev, |b| self.line_of(b).max(prev));
+        self.source_lines.push(line);
+    }
+
+    fn blank(&mut self) {
+        self.emit_row(Vec::new(), None);
+    }
+
+    fn with_prefix(&mut self, first: Vec<Cell>, rest: Vec<Cell>, f: impl FnOnce(&mut Self)) {
+        self.prefixes.push(Prefix {
+            first,
+            rest,
+            used: false,
+        });
+        f(self);
+        self.prefixes.pop();
+    }
+
+    /// Cells for the source text in `range`, one per grapheme.
+    fn text_cells(&self, range: &Range<usize>, style: Style, link: Option<usize>) -> Vec<Cell> {
+        let mut cells = Vec::new();
+        for (i, g) in self.slice(range).grapheme_indices(true) {
+            let b = range.start + i;
+            self.push_grapheme(&mut cells, g, b, style, link);
+        }
+        cells
+    }
+
+    fn push_grapheme(
+        &self,
+        cells: &mut Vec<Cell>,
+        g: &str,
+        b: usize,
+        style: Style,
+        link: Option<usize>,
+    ) {
+        let src = Some(b..b + g.len());
+        if g == "\t" {
+            for _ in 0..4 {
+                cells.push(Cell {
+                    text: " ".into(),
+                    w: 1,
+                    style,
+                    src: src.clone(),
+                    link,
+                });
+            }
+            return;
+        }
+        let (text, w) = sanitize(g);
+        if w > 0 {
+            cells.push(Cell {
+                text,
+                w,
+                style,
+                src,
+                link,
+            });
+        }
+    }
+
+    /// Turn inline content into wrap tokens.
+    fn tokens(&self, inlines: Vec<Inline>, base: Style) -> Vec<Tok> {
+        let mut toks = Vec::new();
+        let mut word: Vec<Cell> = Vec::new();
+        let flush = |word: &mut Vec<Cell>, toks: &mut Vec<Tok>| {
+            if !word.is_empty() {
+                toks.push(Tok::Word(std::mem::take(word)));
+            }
+        };
+        let space = |toks: &mut Vec<Tok>, src: Option<Range<usize>>| {
+            if !matches!(toks.last(), Some(Tok::Space(_))) {
+                toks.push(Tok::Space(src));
+            }
+        };
+        for inline in inlines {
+            let (range, style, link) = match inline {
+                Inline::Text { range, style: s } => {
+                    let mut style = base;
+                    if s.strong {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    if s.emphasis {
+                        style = style.add_modifier(Modifier::ITALIC);
+                    }
+                    if s.strikethrough {
+                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                    }
+                    if s.link.is_some() {
+                        style = style.fg(palette::BLUE).add_modifier(Modifier::UNDERLINED);
+                    }
+                    (range, style, s.link)
+                }
+                Inline::Code { range } => (range, base.fg(palette::GREEN), None),
+                Inline::SoftBreak => {
+                    flush(&mut word, &mut toks);
+                    space(&mut toks, None);
+                    continue;
+                }
+                Inline::HardBreak => {
+                    flush(&mut word, &mut toks);
+                    toks.push(Tok::Break);
+                    continue;
+                }
+                Inline::FootnoteRef { label, range } => {
+                    let style = Style::new().fg(palette::PEACH);
+                    word.push(Cell::deco("[", style));
+                    let cells = self.text_cells(&range, style, None);
+                    if cells.is_empty() {
+                        word.extend(deco_cells(&label, style));
+                    } else {
+                        word.extend(cells);
+                    }
+                    word.push(Cell::deco("]", style));
+                    continue;
+                }
+            };
+            for (i, g) in self.slice(&range).grapheme_indices(true) {
+                let b = range.start + i;
+                if g.chars().all(char::is_whitespace) {
+                    flush(&mut word, &mut toks);
+                    space(&mut toks, Some(b..b + g.len()));
+                } else {
+                    self.push_grapheme(&mut word, g, b, style, link);
+                }
+            }
+        }
+        flush(&mut word, &mut toks);
+        toks
+    }
+
+    fn wrapped_inline(&self, range: &Range<usize>, base: Style, avail: usize) -> Vec<Vec<Cell>> {
+        let inlines = (self.inlines)(range.clone());
+        wrap(self.tokens(inlines, base), avail, base)
+    }
+
+    fn blocks(&mut self, blocks: &[Block], separate: bool) {
+        for (i, block) in blocks.iter().enumerate() {
+            if i > 0 && separate {
+                self.blank();
+            }
+            self.block(block);
+        }
+    }
+
+    fn block(&mut self, block: &Block) {
+        match block {
+            Block::Heading {
+                level,
+                range,
+                inline,
+            } => {
+                let style = heading_style(*level);
+                let rows = self.wrapped_inline(inline, style, self.avail());
+                if rows.is_empty() {
+                    self.emit(Vec::new(), Some(range.start));
+                }
+                for row in rows {
+                    self.emit(row, Some(range.start));
+                }
+                if *level <= 2 {
+                    let ch = if *level == 1 { "━" } else { "─" };
+                    let rule = ch.repeat(self.avail());
+                    let style = Style::new().fg(if *level == 1 {
+                        palette::MAUVE
+                    } else {
+                        palette::OVERLAY
+                    });
+                    self.emit(deco_cells(&rule, style), Some(range.start));
+                }
+            }
+            Block::Paragraph { range, inline } => {
+                for row in self.wrapped_inline(inline, base_style(), self.avail()) {
+                    self.emit(row, Some(range.start));
+                }
+            }
+            Block::CodeBlock { lang, code, .. } => self.code_block(lang.as_deref(), code),
+            Block::BlockQuote {
+                range,
+                alert,
+                children,
+            } => {
+                let color = alert.map_or(palette::OVERLAY, |k| alert_info(k).1);
+                let bar = deco_cells("│ ", Style::new().fg(color));
+                self.with_prefix(bar.clone(), bar, |r| {
+                    if let Some(kind) = alert {
+                        let (label, color) = alert_info(*kind);
+                        let style = Style::new().fg(color).add_modifier(Modifier::BOLD);
+                        r.emit(deco_cells(label, style), Some(range.start));
+                        if !children.is_empty() {
+                            r.blank();
+                        }
+                    }
+                    r.blocks(children, true);
+                });
+            }
+            Block::List { start, items, .. } => self.list(*start, items),
+            Block::Table {
+                range,
+                alignments,
+                header,
+                rows,
+            } => self.table(range, alignments, header, rows),
+            Block::Rule { range } => {
+                let rule = "─".repeat(self.avail());
+                self.emit(
+                    deco_cells(&rule, Style::new().fg(palette::OVERLAY)),
+                    Some(range.start),
+                );
+            }
+            Block::Html { range } => {
+                let style = Style::new().fg(palette::OVERLAY);
+                let text = self.slice(range);
+                let mut offset = range.start;
+                for line in text.split_inclusive('\n') {
+                    let body = line.trim_end_matches(['\n', '\r']);
+                    let cells = self.text_cells(&(offset..offset + body.len()), style, None);
+                    self.emit(cells, Some(offset));
+                    offset += line.len();
+                }
+            }
+            Block::FootnoteDefinition {
+                label,
+                range,
+                children,
+            } => {
+                let style = Style::new().fg(palette::PEACH);
+                let tag = format!("[{label}]");
+                if UnicodeWidthStr::width(tag.as_str()) <= 6 {
+                    let first = deco_cells(&format!("{tag} "), style);
+                    let rest = deco_cells(&" ".repeat(width_of(&first)), style);
+                    self.with_prefix(first, rest, |r| {
+                        if children.is_empty() {
+                            r.emit(Vec::new(), Some(range.start));
+                        }
+                        r.blocks(children, true);
+                    });
+                } else {
+                    self.emit(deco_cells(&tag, style), Some(range.start));
+                    let pad = deco_cells("    ", style);
+                    self.with_prefix(pad.clone(), pad, |r| r.blocks(children, true));
+                }
+            }
+        }
+    }
+
+    fn list(&mut self, start: Option<u64>, items: &[ListItem]) {
+        self.list_depth += 1;
+        let bullet = ["•", "◦", "▪"][(self.list_depth - 1) % 3];
+        let numbers: Vec<String> = match start {
+            Some(n) => (0..items.len() as u64)
+                .map(|i| format!("{}.", n.saturating_add(i)))
+                .collect(),
+            None => vec![bullet.to_string(); items.len()],
+        };
+        let marker_w = numbers
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.as_str()))
+            .max()
+            .unwrap_or(1);
+        for (item, number) in items.iter().zip(numbers) {
+            let mstyle = Style::new().fg(palette::BLUE);
+            let pad = marker_w - UnicodeWidthStr::width(number.as_str());
+            let mut first = deco_cells(&format!("{}{number} ", " ".repeat(pad)), mstyle);
+            match item.task {
+                Some(true) => first.extend(deco_cells("[x] ", Style::new().fg(palette::GREEN))),
+                Some(false) => first.extend(deco_cells("[ ] ", Style::new().fg(palette::OVERLAY))),
+                None => {}
+            }
+            let rest = deco_cells(&" ".repeat(width_of(&first)), mstyle);
+            self.with_prefix(first, rest, |r| {
+                if item.children.is_empty() {
+                    r.emit(Vec::new(), Some(item.range.start));
+                }
+                r.blocks(&item.children, false);
+            });
+        }
+        self.list_depth -= 1;
+    }
+
+    fn code_block(&mut self, lang: Option<&str>, code: &Range<usize>) {
+        let ss = syntaxes();
+        let syntax = lang
+            .and_then(|l| ss.find_syntax_by_token(l))
+            .unwrap_or_else(|| ss.find_syntax_plain_text());
+        let mut hl = HighlightLines::new(syntax, code_theme());
+        let fallback = Style::new().fg(palette::GREEN);
+        let mut offset = code.start;
+        for line in self.slice(code).split_inclusive('\n') {
+            let mut cells = Vec::new();
+            let pieces = hl
+                .highlight_line(line, ss)
+                .map(|v| {
+                    v.into_iter()
+                        .map(|(st, s)| (syntect_style(st), s))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|_| vec![(fallback, line)]);
+            let mut b = offset;
+            for (style, piece) in pieces {
+                for (i, g) in piece.grapheme_indices(true) {
+                    if !matches!(g, "\n" | "\r\n" | "\r") {
+                        self.push_grapheme(&mut cells, g, b + i, style, None);
+                    }
+                }
+                b += piece.len();
+            }
+            self.emit(cells, Some(offset));
+            offset += line.len();
+        }
+    }
+
+    fn table(
+        &mut self,
+        range: &Range<usize>,
+        alignments: &[Alignment],
+        header: &[Range<usize>],
+        rows: &[Vec<Range<usize>>],
+    ) {
+        let ncol = rows
+            .iter()
+            .map(Vec::len)
+            .chain([alignments.len(), header.len()])
+            .max()
+            .unwrap_or(0);
+        if ncol == 0 {
+            return;
+        }
+        let header_style = base_style().add_modifier(Modifier::BOLD);
+        let all: Vec<(&[Range<usize>], Style)> = std::iter::once((header, header_style))
+            .chain(rows.iter().map(|r| (r.as_slice(), base_style())))
+            .collect();
+        let mut nat = vec![1; ncol];
+        for (cells, style) in &all {
+            for (c, r) in cells.iter().enumerate() {
+                let w = self
+                    .wrapped_inline(r, *style, usize::MAX)
+                    .iter()
+                    .map(|row| width_of(row))
+                    .max()
+                    .unwrap_or(0);
+                nat[c] = nat[c].max(w);
+            }
+        }
+        let overhead = 3 * ncol + 1;
+        let avail = self.avail();
+        let mut widths = nat.clone();
+        if nat.iter().sum::<usize>() + overhead > avail && avail >= overhead + ncol {
+            let mut remaining = avail - overhead;
+            let mut order: Vec<usize> = (0..ncol).collect();
+            order.sort_by_key(|&i| nat[i]);
+            for (k, &i) in order.iter().enumerate() {
+                let share = remaining / (ncol - k);
+                widths[i] = nat[i].min(share).max(1);
+                remaining = remaining.saturating_sub(widths[i]);
+            }
+        }
+
+        let border = Style::new().fg(palette::OVERLAY);
+        let rule = |l: &str, m: &str, r: &str| {
+            let mid: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+            deco_cells(&format!("{l}{}{r}", mid.join(m)), border)
+        };
+        let top = rule("┌", "┬", "┐");
+        let sep = rule("├", "┼", "┤");
+        let bottom = rule("└", "┴", "┘");
+        self.emit(top, Some(range.start));
+        for (n, (cells, style)) in all.iter().enumerate() {
+            let wrapped: Vec<Vec<Vec<Cell>>> = (0..ncol)
+                .map(|c| {
+                    cells
+                        .get(c)
+                        .map(|r| self.wrapped_inline(r, *style, widths[c]))
+                        .unwrap_or_default()
+                })
+                .collect();
+            let height = wrapped.iter().map(Vec::len).max().unwrap_or(0).max(1);
+            for j in 0..height {
+                let mut row = deco_cells("│", border);
+                for c in 0..ncol {
+                    let content = wrapped[c].get(j).cloned().unwrap_or_default();
+                    let slack = widths[c].saturating_sub(width_of(&content));
+                    let left = match alignments.get(c) {
+                        Some(Alignment::Right) => slack,
+                        Some(Alignment::Center) => slack / 2,
+                        _ => 0,
+                    };
+                    row.extend(deco_cells(&" ".repeat(left + 1), base_style()));
+                    row.extend(content);
+                    row.extend(deco_cells(&" ".repeat(slack - left + 1), base_style()));
+                    row.extend(deco_cells("│", border));
+                }
+                self.emit(row, Some(range.start));
+            }
+            if n == 0 {
+                self.emit(sep.clone(), Some(range.start));
+            }
+        }
+        self.emit(bottom, Some(range.start));
+    }
 }

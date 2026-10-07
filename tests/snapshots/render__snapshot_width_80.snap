@@ -1,0 +1,40 @@
+---
+source: tests/render.rs
+expression: "snapshot_text(&draw(&fixture(), 80))"
+---
+  1|{mauve,b}Ramble héading 😀{/}
+  1|{mauve}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{/}
+  1|
+  3|{mauve,b}Second level{/}
+  3|{overlay}────────────────────────────────────────────────────────────────────────────────{/}
+  3|
+  5|A paragraph with {text,b}strong{/} text, {green}code{/}, and a {blue,u}link{/} that should reflow across several
+  5|rows at narrow widths. 日本語のテキストも折り返す。Footnote{peach}[1]{/}.
+  5|
+  7|{blue}• {/}first item
+  8|{blue}• {/}{green}[x] {/}done task
+  9|{blue}• {/}{overlay}[ ] {/}open task
+ 10|{blue}      ◦ {/}nested item
+ 10|
+ 12|{overlay}│ {/}plain quote
+ 12|
+ 14|{yellow}│ {/}{yellow,b}Warning{/}
+ 14|{yellow}│ {/}
+ 15|{yellow}│ {/}alert body
+ 15|
+ 18|{mauve}fn{/} {blue,i}main{/}{#9399b2}(){/} {#9399b2}{{/}
+ 19|    {blue,i}println!{/}{#9399b2}({/}{green}"hi"{/}{#9399b2});{/}
+ 20|{#9399b2}}{/}
+ 20|
+ 23|{overlay}┌──────┬─────────────────────┐{/}
+ 23|{overlay}│{/} {text,b}Name{/} {overlay}│{/}               {text,b}Value{/} {overlay}│{/}
+ 23|{overlay}├──────┼─────────────────────┤{/}
+ 25|{overlay}│{/} é    {overlay}│{/}                  😀 {overlay}│{/}
+ 26|{overlay}│{/} 漢字 {overlay}│{/} long cell text here {overlay}│{/}
+ 26|{overlay}└──────┴─────────────────────┘{/}
+ 26|
+ 28|{overlay}────────────────────────────────────────────────────────────────────────────────{/}
+ 28|
+ 30|{overlay}<div>raw html</div>{/}
+ 30|
+ 32|{peach}[1] {/}The footnote.
