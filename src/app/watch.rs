@@ -207,8 +207,15 @@ impl App {
         };
         let anchor = self.cursor_anchor();
         let (scroll, status, raw) = (self.scroll, self.status.clone(), self.raw());
+        let view = self.tree().map(Tree::view);
         if !self.open_bytes(&path, &bytes) {
             return;
+        }
+        // open_bytes reveals the file in the tree, expanding its ancestors
+        // and selecting it; a reload is not navigation, so the user's
+        // expansion and selection win.
+        if let (Some(v), Some(t)) = (view, self.tree_mut()) {
+            t.restore_view(v);
         }
         self.relayout_raw(raw);
         self.banner = None;
@@ -226,19 +233,14 @@ impl App {
     /// terminal. A status set by the reload (binary, not UTF-8) or the
     /// deleted-file banner is kept.
     pub fn refresh(&mut self) {
-        let view = self.tree().map(Tree::view);
         let file = self.page.as_ref().is_some_and(|p| p.path.is_some());
         if file {
             self.status.clear();
             self.reload();
         }
-        // reload() reveals the current file in the tree, expanding its
-        // ancestors and selecting it; the user's expansion and selection win.
+        // reload() keeps the tree's expansion and selection.
         let tree = match self.tree_mut() {
             Some(t) => {
-                if let Some(v) = view {
-                    t.restore_view(v);
-                }
                 t.refresh();
                 true
             }

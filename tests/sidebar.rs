@@ -7,7 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::sidebar::{
     NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, OFF_MESSAGE, Tree, item_paths,
 };
-use ramble::app::{App, Effect, Focus, StartOptions, StartTarget};
+use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarMode, SidebarReading};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -725,6 +725,26 @@ fn ctrl_l_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
     let tree = app.tree().unwrap();
     assert!(!tree.is_expanded(&docs), "refresh re-expanded docs/");
     assert_eq!(tree.selected(), Some(docs.as_path()));
+}
+
+#[test]
+fn watcher_reload_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
+    let (_d, root) = fixture();
+    let file = root.join("docs/deep/x.md");
+    let mut app = app_on(
+        &root,
+        StartTarget::File(file.clone()),
+        config(SidebarMode::Files),
+    );
+    win(&mut app, 'h');
+    keys(&mut app, "ggjh");
+    let deep = root.join("docs/deep");
+    assert!(!app.tree().unwrap().is_expanded(&deep));
+    write(&root, "docs/deep/x.md", "# X changed\n");
+    app.event(AppEvent::FsWatch(file, FsEvent::Changed));
+    let tree = app.tree().unwrap();
+    assert!(!tree.is_expanded(&deep), "watcher reload re-expanded deep/");
+    assert_eq!(tree.selected(), Some(deep.as_path()));
 }
 
 #[test]

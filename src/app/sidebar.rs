@@ -288,7 +288,7 @@ impl Tree {
         (self.expanded.clone(), self.selected.clone())
     }
 
-    /// Undo a [`Tree::reveal`] that should not stick (`C-l`).
+    /// Undo a [`Tree::reveal`] that should not stick (a reload).
     pub(super) fn restore_view(
         &mut self,
         (expanded, selected): (HashSet<PathBuf>, Option<PathBuf>),
