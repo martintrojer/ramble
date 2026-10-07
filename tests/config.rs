@@ -43,13 +43,43 @@ fn defaults_match_spec() {
     assert_eq!(c.lsp.server[1].kind, ServerKind::Marksman);
     assert_eq!(c.lsp.server[1].command, ["marksman", "server"]);
     assert_eq!(c.lsp.server[1].root_markers, [".marksman.toml", ".git"]);
+    // Spec § Launchers, verbatim.
+    let launcher = |name: &str, key: &str, command: &[&str], needs_vcs: bool| Launcher {
+        name: name.into(),
+        key: Some(key.into()),
+        command: command.iter().map(|s| s.to_string()).collect(),
+        needs_vcs,
+        disabled: false,
+    };
     assert_eq!(
-        names(&c),
-        ["edit", "review", "review-changes", "review-dir"]
+        c.launch,
+        [
+            launcher(
+                "edit",
+                "<leader>o",
+                &["${editor}", "+${line}", "${file}"],
+                false
+            ),
+            launcher(
+                "review",
+                "<leader>rr",
+                &["tuicr", "--file", "${file}", "--line", "${line}"],
+                false
+            ),
+            launcher(
+                "review-changes",
+                "<leader>rw",
+                &["tuicr", "-w", "-p", "${file}", "--line", "${line}"],
+                true
+            ),
+            launcher(
+                "review-dir",
+                "<leader>rd",
+                &["tuicr", "--file", "${dir}"],
+                false
+            ),
+        ]
     );
-    assert_eq!(c.launch[0].key.as_deref(), Some("<leader>o"));
-    assert!(c.launch[2].needs_vcs);
-    assert!(!c.launch[3].needs_vcs);
     assert!(c.review.enabled);
     assert_eq!(c.review.command, "tuicr");
 }
@@ -137,6 +167,13 @@ fn unknown_key_is_an_error_naming_the_key() {
     assert!(e.contains("sidbar"), "{e}");
     let e = err_str("[[lsp.server]]\nkind = \"zk\"\ncommand = []\nroot = []\n");
     assert!(e.contains("root"), "{e}");
+}
+
+#[test]
+fn unknown_key_in_launch_entry_is_an_error_naming_the_key() {
+    let e = err_str("[[launch]]\nname = \"x\"\ncommand = [\"y\"]\nneeds_vsc = true\n");
+    assert!(e.contains("needs_vsc"), "{e}");
+    assert!(e.contains("line 4"), "{e}");
 }
 
 #[test]
