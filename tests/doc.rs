@@ -347,6 +347,71 @@ fn all_alert_kinds() {
     );
 }
 
+/// Renders segments as strings: Text verbatim, Code in backticks, breaks
+/// as markers. Panics if any drawn range contains a newline.
+fn seg_strings(doc: &Document, inline: std::ops::Range<usize>) -> Vec<String> {
+    inlines(doc, inline)
+        .iter()
+        .map(|i| {
+            let out = match i {
+                Inline::Text { range, .. } => s(doc, range),
+                Inline::Code { range } => format!("`{}`", s(doc, range)),
+                Inline::SoftBreak => "<soft>".into(),
+                Inline::HardBreak => "<hard>".into(),
+                Inline::FootnoteRef { label, .. } => format!("[^{label}]"),
+            };
+            assert!(!out.contains('\n'), "segment crosses a line: {out:?}");
+            out
+        })
+        .collect()
+}
+
+#[test]
+fn multiline_constructs_in_quote_exclude_prefix() {
+    let doc = parse("> `a\n> b` and <span\n> x> [c\n> d](x)\n".to_owned());
+    let Block::BlockQuote { children, .. } = &doc.blocks[0] else {
+        panic!()
+    };
+    let Block::Paragraph { inline, .. } = &children[0] else {
+        panic!()
+    };
+    assert_eq!(
+        seg_strings(&doc, inline.clone()),
+        [
+            "`a`", "<soft>", "`b`", " and ", "<span", "<soft>", "x>", " ", "c", "<soft>", "d"
+        ]
+    );
+    // text_range spans start..end of the visible text (prefix included).
+    assert_eq!(s(&doc, &doc.links[0].text_range), "c\n> d");
+}
+
+#[test]
+fn multiline_code_span_in_nested_list_excludes_indent() {
+    let doc = parse("> - item `one\n>   two  three`\n".to_owned());
+    let Block::BlockQuote { children, .. } = &doc.blocks[0] else {
+        panic!()
+    };
+    let Block::List { items, .. } = &children[0] else {
+        panic!()
+    };
+    let Block::Paragraph { inline, .. } = &items[0].children[0] else {
+        panic!()
+    };
+    assert_eq!(
+        seg_strings(&doc, inline.clone()),
+        ["item ", "`one`", "<soft>", "`two  three`"]
+    );
+}
+
+#[test]
+fn single_line_code_keeps_padding_rules() {
+    let doc = parse("`` `x` `` and `` ``\n".to_owned());
+    assert_eq!(
+        seg_strings(&doc, first_paragraph_inline(&doc)),
+        ["``x``", " and ", "` `"]
+    );
+}
+
 #[test]
 fn loose_list_task_items() {
     let doc = parse("- [ ] a\n\n- [x] b\n\n- c\n".to_owned());

@@ -61,7 +61,9 @@ pub struct Link {
     /// Full source span, including brackets and `(dest)`.
     pub range: Range<usize>,
     /// Source span of the visible text only (what the renderer draws).
-    /// For a wikilink without a label this is the target text.
+    /// For a wikilink without a label this is the target text. When the
+    /// text crosses lines inside a container it spans the `> ` / indent
+    /// prefixes too; the drawn, prefix-free pieces come from [`inlines`].
     pub text_range: Range<usize>,
 }
 
@@ -237,10 +239,16 @@ pub fn inlines(doc: &Document, inline: Range<usize>) -> Vec<Inline> {
                 Ev::End(Mark::Link) => {
                     link_stack.pop();
                 }
-                Ev::Text => out.push(Inline::Text { range, style }),
-                Ev::Code => out.push(Inline::Code {
-                    range: code_content(&doc.source, range),
+                Ev::Text => push_lines(&mut out, &doc.source, range, |range| Inline::Text {
+                    range,
+                    style,
                 }),
+                Ev::Code => push_lines(
+                    &mut out,
+                    &doc.source,
+                    code_content(&doc.source, range),
+                    |range| Inline::Code { range },
+                ),
                 Ev::SoftBreak => out.push(Inline::SoftBreak),
                 Ev::HardBreak => out.push(Inline::HardBreak),
                 Ev::FootnoteRef(label) => out.push(Inline::FootnoteRef {
@@ -357,6 +365,42 @@ fn link_index(doc: &Document, range: &Range<usize>) -> Option<usize> {
         .take_while(|l| l.range.start == range.start)
         .position(|l| l.range == *range)
         .map(|p| from + p)
+}
+
+/// Push `range` as one segment per source line, joined by soft breaks.
+/// Continuation lines skip their container prefix (`> ` of block quotes,
+/// list-item indentation), so no segment ever covers prefix bytes. A
+/// paragraph continuation line cannot start with `>` (that would open a
+/// block quote), so skipping leading whitespace and `>` is exact except
+/// for a lazy line indented 4+ spaces whose text starts with `>`.
+fn push_lines(
+    out: &mut Vec<Inline>,
+    src: &str,
+    range: Range<usize>,
+    make: impl Fn(Range<usize>) -> Inline,
+) {
+    let mut start = range.start;
+    let mut first = true;
+    loop {
+        if !first {
+            out.push(Inline::SoftBreak);
+            let rest = &src[start..range.end];
+            start += rest.len() - rest.trim_start_matches([' ', '\t', '>']).len();
+        }
+        first = false;
+        let nl = src[start..range.end].find('\n').map(|n| start + n);
+        let mut end = nl.unwrap_or(range.end);
+        if src[start..end].ends_with('\r') {
+            end -= 1;
+        }
+        if start < end || (nl.is_none() && start == range.start) {
+            out.push(make(start..end));
+        }
+        match nl {
+            Some(nl) => start = nl + 1,
+            None => break,
+        }
+    }
 }
 
 /// Inline code span without the backtick fences and the single padding
