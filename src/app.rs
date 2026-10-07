@@ -994,8 +994,27 @@ fn system_open(url: &str) {
     }
 }
 
+/// Where the editor child's stdin comes from.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum EditorStdin {
+    /// Inherit ours: stdin is the terminal.
+    Inherit,
+    /// Open `/dev/tty`: stdin is the (exhausted) document pipe.
+    Tty,
+}
+
+pub(crate) fn editor_stdin(stdin_is_tty: bool) -> EditorStdin {
+    if stdin_is_tty {
+        EditorStdin::Inherit
+    } else {
+        EditorStdin::Tty
+    }
+}
+
 /// Default editor: `$VISUAL`, else `$EDITOR`, else `vi`, in the terminal.
 fn system_edit(path: &Path) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    use std::process::Stdio;
     let cmd = ["VISUAL", "EDITOR"]
         .iter()
         .filter_map(|v| std::env::var(v).ok())
@@ -1003,9 +1022,16 @@ fn system_edit(path: &Path) -> anyhow::Result<()> {
         .unwrap_or_else(|| "vi".into());
     let mut words = cmd.split_whitespace();
     let prog = words.next().unwrap_or("vi");
+    let stdin = match editor_stdin(std::io::stdin().is_terminal()) {
+        EditorStdin::Tty => {
+            std::fs::File::open("/dev/tty").map_or_else(|_| Stdio::inherit(), Stdio::from)
+        }
+        EditorStdin::Inherit => Stdio::inherit(),
+    };
     let status = std::process::Command::new(prog)
         .args(words)
         .arg(path)
+        .stdin(stdin)
         .status()
         .with_context(|| format!("running {prog}"))?;
     anyhow::ensure!(status.success(), "{prog} exited with {status}");
@@ -1056,4 +1082,15 @@ fn resume() -> anyhow::Result<()> {
     crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     crossterm::terminal::enable_raw_mode()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn editor_stdin_is_tty_when_stdin_is_a_pipe() {
+        assert_eq!(editor_stdin(false), EditorStdin::Tty);
+        assert_eq!(editor_stdin(true), EditorStdin::Inherit);
+    }
 }
