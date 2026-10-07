@@ -219,7 +219,9 @@ impl App {
         self.on_reloaded();
     }
 
-    /// Called after every reload of the current page. The LSP unit fills
-    /// this in (bump the version, re-send `didOpen`).
+    /// Called after every reload of the current page. LSP needs nothing
+    /// here: reload goes through `open_bytes` -> `set_page` ->
+    /// `lsp_page_changed`, which already re-sends `didOpen` at the next
+    /// version and asks for documentLink. Do not re-open the document here.
     pub fn on_reloaded(&mut self) {}
 }

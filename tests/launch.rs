@@ -25,7 +25,8 @@ fn keys(app: &mut App, s: &str) {
 }
 
 /// An app on `dir/sub/a.md` with a recording runner that exits with `code`.
-fn launch_app(config: Config, vcs: bool, code: Exit) -> (TempDir, App, Calls) {
+fn launch_app(mut config: Config, vcs: bool, code: Exit) -> (TempDir, App, Calls) {
+    config.lsp.server = vec![]; // N5: tests never start a real server
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     if vcs {
@@ -51,6 +52,13 @@ fn launch_app(config: Config, vcs: bool, code: Exit) -> (TempDir, App, Calls) {
         Ok(code)
     });
     (dir, app, calls)
+}
+
+/// The default config without language servers (N5).
+fn no_lsp() -> Config {
+    let mut c = Config::default();
+    c.lsp.server = vec![];
+    c
 }
 
 fn root(dir: &TempDir) -> PathBuf {
@@ -168,7 +176,7 @@ fn stdin_page_cannot_launch_editor() {
         StartOptions {
             target: StartTarget::Stdin("# S\n".into()),
             tree_root: dir.path().to_path_buf(),
-            config: Config::default(),
+            config: no_lsp(),
         },
         SIZE,
     )

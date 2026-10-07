@@ -91,7 +91,10 @@ mod tests {
             StartOptions {
                 target: StartTarget::File(path.clone()),
                 tree_root: dir.path().to_path_buf(),
-                config: Default::default(),
+                config: crate::config::Config {
+                    lsp: crate::config::LspConfig { server: vec![] },
+                    ..Default::default()
+                },
             },
             (40, 10),
         )

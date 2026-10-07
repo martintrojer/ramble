@@ -1428,6 +1428,24 @@ fn diagnostics_for_an_older_version_are_ignored() {
 }
 
 #[test]
+fn diagnostics_for_another_file_are_ignored() {
+    // N3: b.md's diagnostics cover a range that holds a.md's link.
+    let (_dir, mut app, _log) = lsp_app("# A\n\n[gone](nowhere)\n", |root| {
+        json!([init_step(), {"expect": "textDocument/didOpen"}, {"send": {
+            "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri(&root.join("b.md")), "diagnostics": [{
+                "range": {"start": {"line": 2, "character": 0},
+                          "end": {"line": 2, "character": 15}},
+                "message": "dead link",
+            }]},
+        }}])
+    });
+    running(&mut app);
+    pump_for(&mut app, Duration::from_millis(300));
+    assert!(app.broken_links().is_empty());
+}
+
+#[test]
 fn reply_for_a_page_the_user_left_is_dropped() {
     let (dir, mut app, _log) = lsp_app("# A\n\n[b](b.md)\n", |root| {
         json!([init_step(),
@@ -1577,6 +1595,15 @@ fn start_failure_is_no_lsp_mode() {
         "{}",
         app.status()
     );
+    // N1: the failure is remembered; visiting another page under the same
+    // root, or coming back, must not respawn the server.
+    std::fs::write(root.join("b.md"), "# B\n").unwrap();
+    app.open_file(&root.join("b.md")).unwrap();
+    assert_eq!(app.lsp_label(), "—", "not respawned on another page");
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.lsp_label(), "—", "not respawned on revisit");
+    pump_for(&mut app, Duration::from_millis(200));
+    assert_eq!(app.lsp_label(), "—");
 }
 
 #[test]

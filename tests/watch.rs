@@ -10,6 +10,13 @@ use ramble::config::Config;
 
 const WAIT: Duration = Duration::from_secs(2);
 
+/// The default config without language servers (N5).
+fn no_lsp() -> Config {
+    let mut c = Config::default();
+    c.lsp.server = vec![];
+    c
+}
+
 #[test]
 fn watcher_reports_change_then_removal() {
     let dir = tempfile::tempdir().unwrap();
@@ -47,7 +54,7 @@ fn app_reloads_through_real_watcher() {
         StartOptions {
             target: StartTarget::File(file.clone()),
             tree_root: dir.path().to_path_buf(),
-            config: Config::default(),
+            config: no_lsp(),
         },
         (40, 10),
     )
@@ -76,7 +83,7 @@ fn opening_another_page_retargets_the_watcher() {
         StartOptions {
             target: StartTarget::File(a.clone()),
             tree_root: dir.path().to_path_buf(),
-            config: Config::default(),
+            config: no_lsp(),
         },
         (40, 10),
     )
