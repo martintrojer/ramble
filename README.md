@@ -38,6 +38,9 @@ can follow it.
   readable maximum).
 - Syntax-highlighted code blocks (catppuccin-mocha), including the language
   names people actually write (`py3`, `shell`, `jsx`, `rust,ignore`, `{.python}`).
+- LaTeX math drawn as Unicode: `$E = mc^2$` reads as E = mc², and `$$\frac{a+b}{c}$$`
+  becomes a real stacked fraction. Inline `$…$`, display `$$…$$` and ```` ```math ````
+  fences all work.
 - YAML front matter is treated as metadata, not drawn as a heading.
 - `gR` toggles the raw markdown source, highlighted, with every motion still
   working.
@@ -49,6 +52,17 @@ can follow it.
 - `]l` / `[l` jump between links, `;` / `,` repeat, `]]` / `[[` jump between
   headings, and `s` puts a hint label on every visible link so you can jump to
   one in two keystrokes.
+
+**Selecting and copying**
+- Visual mode the way your fingers expect: `v`, `V` and `C-v`, `o` to swap
+  ends, `gv` to reselect.
+- The yank operator with vim's rules: `yy`, `Y`, `3yy`, `yw`, `y}`, `yG`,
+  `y'a`. It copies the markdown source, not the rendered text, so a pasted
+  link is still a link.
+- `yf` / `yF` copy the file's absolute or relative path; `yu` copies the URL
+  of the link under the cursor.
+- Copies go to the system clipboard over OSC 52, so they work over SSH and
+  inside tmux.
 
 **Following links**
 - `gd`, `Enter` or `C-]` follows the link under the cursor: markdown files
@@ -80,7 +94,9 @@ can follow it.
   ramble tells you once at startup instead of showing an error on every page.
 
 **Around the edges**
-- Live reload when the file changes on disk.
+- Live reload when the file changes on disk, keeping your place and the
+  folders you collapsed. `C-l` (or `:e`) re-reads the page
+  and the file tree on demand.
 - Launchers: configurable keys that hand off to another program and come
   back. `<leader>o` opens your editor at the cursor line. `<leader>rr` opens
   the page in [tuicr](https://github.com/agavra/tuicr) for review.
@@ -127,6 +143,7 @@ most likely to change:
 ```toml
 [render]
 max_width = 100              # cap the reading width
+math = true                  # false shows LaTeX source as written
 
 [sidebar]
 default = "auto"             # auto | off | files | outline | split
