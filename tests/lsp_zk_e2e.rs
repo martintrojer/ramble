@@ -15,7 +15,7 @@ use ramble::lsp::{
 };
 use serde_json::{Value, json};
 
-const FIXTURE_NOTES: u64 = 4;
+const FIXTURE_NOTES: u64 = 5;
 
 fn zk_on_path() -> bool {
     Command::new("zk")
@@ -262,6 +262,52 @@ fn zk_end_to_end() {
     let d = &diagnostics[0];
     let at = position_to_byte(&src, d.range.start, client.encoding());
     assert_eq!(at, src.find("[nowhere]").unwrap(), "{diagnostics:?}");
+
+    // Backlinks of a.md: references at 0:0 (not on a link) list b.md and
+    // tagged.md, which link to it.
+    let refs = request(
+        &client,
+        &rx,
+        "textDocument/references",
+        ramble::notebook::references_params(&a, lsp_types::Position::new(0, 0)),
+    );
+    let items = ramble::notebook::location_items(&refs, &root);
+    let mut details: Vec<&str> = items.iter().map(|i| i.detail.as_str()).collect();
+    details.sort();
+    // zk counts lines in tagged.md from after its front matter (0.15.6).
+    assert_eq!(details, ["b.md:3", "tagged.md:2"], "{refs}");
+    assert!(items.iter().any(|i| i.label == "Tagged"), "{items:?}");
+
+    // Each zk adapter function, through the shared parsers.
+    use ramble::notebook::zk;
+    let exec = |params: Value| request(&client, &rx, zk::EXECUTE, params);
+    let titles = |items: Vec<ramble::notebook::Item>| {
+        let mut t: Vec<String> = items.into_iter().map(|i| i.label).collect();
+        t.sort();
+        t
+    };
+    let notes = zk::note_items(&exec(zk::notes(&root)), &root);
+    assert!(
+        notes
+            .iter()
+            .all(|i| i.path.as_ref().is_some_and(|p| p.is_file()))
+    );
+    assert_eq!(
+        titles(notes),
+        ["Broken", "Emoji", "Note A", "Note B", "Tagged"]
+    );
+    let found = zk::note_items(&exec(zk::search(&root, "details")), &root);
+    assert_eq!(titles(found), ["Note A"]);
+    let found = zk::note_items(&exec(zk::search(&root, "detail*")), &root);
+    assert_eq!(titles(found), ["Note A"], "prefix needs *");
+    let tags = zk::tag_items(&exec(zk::tags(&root)));
+    assert_eq!(tags.len(), 1, "{tags:?}");
+    assert_eq!(
+        (tags[0].label.as_str(), tags[0].detail.as_str()),
+        ("project", "1")
+    );
+    let tagged = zk::note_items(&exec(zk::notes_by_tag(&root, "project")), &root);
+    assert_eq!(titles(tagged), ["Tagged"]);
 
     client.shutdown();
     assert!(nb.join(".zk/notebook.db").exists(), "zk indexed the copy");

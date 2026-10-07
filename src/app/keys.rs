@@ -98,6 +98,10 @@ pub enum Action {
     /// A letter typed in hint mode.
     HintInput(char),
     HintCancel,
+    // Notebook pickers and the command line.
+    OpenOp(crate::notebook::Op),
+    Picker(super::PickerAction),
+    Cmd(super::CmdAction),
 }
 
 /// What a key sequence means so far.
@@ -155,6 +159,8 @@ impl App {
             Mode::Normal => self.normal_keymap(keys),
             Mode::Search => search_keymap(keys),
             Mode::Filter => sidebar::filter_keymap(keys),
+            Mode::Picker => super::picker::picker_keymap(keys),
+            Mode::Command => super::cmdline::cmdline_keymap(keys),
             Mode::Hint => super::hints::hint_keymap(keys),
         }
     }
@@ -176,7 +182,9 @@ impl App {
             LeaderMatch::NoMapping if typed == ['e'] => {
                 KeyResult::Action(Action::Sidebar(SidebarAction::Cycle))
             }
-            LeaderMatch::NoMapping => KeyResult::Action(Action::NoMapping),
+            LeaderMatch::NoMapping => {
+                super::picker::leader_op(&typed).unwrap_or(KeyResult::Action(Action::NoMapping))
+            }
         })
     }
 
@@ -187,6 +195,9 @@ impl App {
             return r;
         }
         if let Some(r) = sidebar::window_keymap(keys) {
+            return r;
+        }
+        if let Some(r) = super::picker::normal_keys(keys) {
             return r;
         }
         let [key] = keys else {
@@ -329,6 +340,9 @@ impl App {
             A::HintStart => self.hint_start(),
             A::HintInput(c) => self.hint_input(c),
             A::HintCancel => self.hint_cancel(),
+            A::OpenOp(op) => self.open_op(op, None),
+            A::Picker(a) => self.picker_action(a),
+            A::Cmd(a) => self.cmd_action(a),
         }
     }
 }

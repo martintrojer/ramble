@@ -4,6 +4,7 @@
 mod content;
 mod hints;
 mod hover;
+mod picker;
 mod sidebar;
 mod status;
 
@@ -27,4 +28,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hints::draw(frame, app, content);
     status::draw(frame, app, status);
     sidebar::draw_prompt(frame, app, status);
+    picker::draw(frame, app, main);
+    picker::draw_cmdline(frame, app, status);
 }

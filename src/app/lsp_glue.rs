@@ -371,6 +371,12 @@ impl App {
     }
 
     fn lsp_response(&mut self, server: &str, id: u64, t: u64, result: Result<Value, String>) {
+        if t & super::picker::PICKER_TAG_BASE != 0 {
+            if self.is_current_instance(server) {
+                self.picker_response(t, result);
+            }
+            return;
+        }
         let current = self
             .lsp
             .version
@@ -533,6 +539,13 @@ impl App {
             sent_at: self.now,
         });
         true
+    }
+
+    /// The current page's running server: client, kind, and server root.
+    pub(super) fn lsp_running(&self) -> Option<(&Client, Kind, PathBuf)> {
+        let (name, kind) = self.lsp.instance.as_ref()?;
+        let root = name.split_once('@')?.1;
+        Some((self.lsp.client()?, *kind, PathBuf::from(root)))
     }
 
     /// Close the hover popup.

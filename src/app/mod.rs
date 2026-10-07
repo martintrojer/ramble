@@ -8,6 +8,7 @@
 //! (launchers), `watch` (live reload).
 //! Later units add a file and register in the tables here and in `keys`.
 
+mod cmdline;
 mod codepath;
 mod effect;
 mod follow;
@@ -18,6 +19,7 @@ mod lsp_glue;
 mod marks;
 mod motion;
 mod page;
+mod picker;
 mod run;
 mod scroll;
 mod search;
@@ -38,12 +40,14 @@ use crate::doc::Document;
 use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
 
+pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
 pub use effect::{Clipboard, Effect, osc52};
 pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
+pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use run::{run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
@@ -100,6 +104,10 @@ pub enum Mode {
     Search,
     /// Typing a sidebar filter (`/` in a sidebar pane).
     Filter,
+    /// The picker overlay is open.
+    Picker,
+    /// Typing a `:` command.
+    Command,
     /// Typing a hint label after `s`.
     Hint,
 }
@@ -174,6 +182,9 @@ pub struct App {
     /// The clock, advanced by [`App::tick`].
     now: Instant,
     sidebar: sidebar::Sidebar,
+    picker: picker::PickerState,
+    /// The `:` command being typed.
+    cmdline: Option<String>,
     hints: hints::Hints,
 }
 
@@ -222,6 +233,8 @@ impl App {
             lsp,
             now: Instant::now(),
             sidebar,
+            picker: Default::default(),
+            cmdline: None,
             hints: hints::Hints::default(),
         };
         match opts.target {

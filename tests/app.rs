@@ -1754,6 +1754,352 @@ fn dir_placeholder_points_at_the_file_tree() {
     assert!(ramble::app::NO_FILE_MESSAGE.contains("file tree"));
 }
 
+// -------------------------------------------------------------------------
+// Notebook pickers and the `:` command line (step 13).
+
+/// Like [`lsp_app`], with a chosen server kind and `extra` files written
+/// into the notebook first.
+fn kind_app(
+    kind: ServerKind,
+    source: &str,
+    extra: &[(&str, &str)],
+    script: impl FnOnce(&Path) -> Value,
+) -> (TempDir, App, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join(".fake"), "").unwrap();
+    std::fs::write(root.join("a.md"), source).unwrap();
+    std::fs::write(root.join("b.md"), b_source()).unwrap();
+    for (name, text) in extra {
+        std::fs::write(root.join(name), text).unwrap();
+    }
+    let script_path = root.join("script.json");
+    std::fs::write(&script_path, script(&root).to_string()).unwrap();
+    let log = root.join("log.jsonl");
+    let mut o = opts(&root, StartTarget::File(root.join("a.md")));
+    o.config.lsp.server = vec![ServerConfig {
+        kind,
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-lsp").into(),
+            script_path.display().to_string(),
+            log.display().to_string(),
+        ],
+        root_markers: vec![".fake".into()],
+        position_encoding: None,
+    }];
+    (dir, App::new(o, (COLS, ROWS)).unwrap(), log)
+}
+
+fn zk_init() -> Value {
+    json!({"expect": "initialize", "reply": {"capabilities": {
+        "definitionProvider": true, "hoverProvider": true, "documentLinkProvider": {},
+        "referencesProvider": true,
+    }}})
+}
+
+fn zk_notes(root: &Path, names: &[(&str, &str)]) -> Value {
+    Value::Array(
+        names
+            .iter()
+            .map(|(title, f)| json!({"title": title, "absPath": root.join(f)}))
+            .collect(),
+    )
+}
+
+fn leader(app: &mut App, s: &str) {
+    send(app, key(KeyCode::Char(' ')));
+    keys(app, s);
+}
+
+fn picker_labels(app: &App) -> Vec<String> {
+    app.picker()
+        .map(|p| p.items.iter().map(|i| i.label.clone()).collect())
+        .unwrap_or_default()
+}
+
+fn command(app: &mut App, s: &str) {
+    keys(app, ":");
+    assert_eq!(app.mode(), Mode::Command);
+    keys(app, s);
+    send(app, key(KeyCode::Enter));
+}
+
+/// The executeCommand requests fake-lsp got after zk.index.
+fn executed(log: &Path, n: usize) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let got: Vec<Value> = logged(log, "workspace/executeCommand")
+            .into_iter()
+            .filter(|m| m["params"]["command"] != "zk.index")
+            .collect();
+        if got.len() >= n {
+            return got;
+        }
+        assert!(Instant::now() < deadline, "never got {n} executeCommand");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn notes_without_a_server_walk_files_filter_and_open() {
+    let (dir, mut app, _fx) = nav_app();
+    std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+    std::fs::write(dir.path().join("sub/deep.md"), "# Deep note\n").unwrap();
+    leader(&mut app, "zf");
+    assert_eq!(app.mode(), Mode::Picker);
+    assert_eq!(picker_labels(&app), ["a", "b", "deep"]);
+    keys(&mut app, "dee");
+    assert_eq!(picker_labels(&app), ["deep"]);
+    send(&mut app, key(KeyCode::Backspace));
+    send(&mut app, key(KeyCode::Backspace));
+    send(&mut app, key(KeyCode::Backspace));
+    send(&mut app, ctrl('n'));
+    send(&mut app, ctrl('n'));
+    send(&mut app, ctrl('p'));
+    assert_eq!(app.picker().unwrap().selected, 1);
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.mode(), Mode::Normal);
+    assert!(app.picker().is_none());
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(app.history_depth(), 1, "Enter pushes history");
+    keys(&mut app, ":Notes");
+    send(&mut app, key(KeyCode::Enter));
+    assert!(app.picker().is_some());
+    send(&mut app, key(KeyCode::Esc));
+    assert!(app.picker().is_none());
+    assert_eq!(app.mode(), Mode::Normal);
+}
+
+#[test]
+fn zk_ops_are_unavailable_without_a_zk_server() {
+    let (_d, mut app, _fx) = nav_app();
+    leader(&mut app, "zs");
+    assert_eq!(app.status(), "Search needs a zk notebook");
+    leader(&mut app, "zz");
+    assert_eq!(app.status(), "Tags needs a zk notebook");
+    keys(&mut app, "grr");
+    assert_eq!(app.status(), "Backlinks need a language server");
+    command(&mut app, "Backlinks");
+    assert_eq!(app.status(), "Backlinks need a language server");
+    assert!(app.picker().is_none());
+    use ramble::notebook::Op;
+    assert_eq!(app.available_ops(), [Op::Notes, Op::Links]);
+}
+
+#[test]
+fn zk_notes_go_through_zk_list_with_the_server_root() {
+    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "workspace/executeCommand",
+                "reply": zk_notes(root, &[("Note B", "b.md"), ("Note A", "a.md")])}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    use ramble::notebook::Op;
+    assert_eq!(app.available_ops(), Op::ALL);
+    leader(&mut app, "zf");
+    assert!(app.picker().unwrap().loading);
+    assert!(screen(&app).contains("Loading…"), "{}", screen(&app));
+    pump_until(&mut app, "notes", |a| !picker_labels(a).is_empty());
+    assert_eq!(picker_labels(&app), ["Note B", "Note A"]);
+    assert_eq!(app.picker().unwrap().items[0].detail, "b.md");
+    let sent = &executed(&log, 1)[0]["params"];
+    assert_eq!(sent["command"], "zk.list");
+    assert_eq!(sent["arguments"][0], json!(root));
+    assert_eq!(
+        sent["arguments"][1],
+        json!({"select": ["title", "absPath"], "sort": ["modified"]})
+    );
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("b.md"));
+}
+
+#[test]
+fn search_prompts_once_then_filters_results() {
+    let (_d, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "workspace/executeCommand",
+                "reply": zk_notes(root, &[("Alpha one", "a.md"), ("Beta", "b.md")])}])
+    });
+    running(&mut app);
+    leader(&mut app, "zs");
+    assert!(app.picker().unwrap().prompting);
+    keys(&mut app, "-foo bar*");
+    assert!(picker_labels(&app).is_empty(), "nothing sent while typing");
+    send(&mut app, key(KeyCode::Enter));
+    pump_until(&mut app, "results", |a| picker_labels(a).len() == 2);
+    let sent = &executed(&log, 1)[0]["params"];
+    assert_eq!(sent["arguments"][1]["match"], json!(["-foo bar*"]));
+    assert!(!app.picker().unwrap().prompting);
+    keys(&mut app, "bet");
+    assert_eq!(picker_labels(&app), ["Beta"]);
+    assert_eq!(executed(&log, 1).len(), 1, "the filter is local");
+}
+
+#[test]
+fn tags_open_a_second_picker_of_notes_by_tag() {
+    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "workspace/executeCommand",
+                "reply": [{"id": 1, "kind": "tag", "name": "project", "note_count": 1}]},
+               {"expect": "workspace/executeCommand",
+                "reply": zk_notes(root, &[("Note B", "b.md")])}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    command(&mut app, "Tags");
+    pump_until(&mut app, "tags", |a| !picker_labels(a).is_empty());
+    assert_eq!(picker_labels(&app), ["project"]);
+    assert_eq!(app.picker().unwrap().items[0].detail, "1");
+    send(&mut app, key(KeyCode::Enter));
+    pump_until(&mut app, "notes by tag", |a| picker_labels(a) == ["Note B"]);
+    let sent = executed(&log, 2);
+    assert_eq!(sent[0]["params"]["command"], "zk.tag.list");
+    assert_eq!(
+        sent[1]["params"]["arguments"][1]["tags"],
+        json!(["project"])
+    );
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("b.md"));
+}
+
+#[test]
+fn a_stale_picker_reply_is_dropped() {
+    let (_d, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "workspace/executeCommand", "as": "first"},
+               {"expect": "workspace/executeCommand",
+                "reply": zk_notes(root, &[("Second", "b.md")])},
+               {"respond": "first", "result": zk_notes(root, &[("First", "a.md")])}])
+    });
+    running(&mut app);
+    leader(&mut app, "zf");
+    send(&mut app, key(KeyCode::Esc));
+    leader(&mut app, "zf");
+    pump_until(&mut app, "second", |a| !picker_labels(a).is_empty());
+    pump_for(&mut app, Duration::from_millis(300));
+    assert_eq!(picker_labels(&app), ["Second"]);
+}
+
+#[test]
+fn zk_backlinks_send_references_at_0_0_and_open_at_the_line() {
+    let (dir, mut app, log) = kind_app(ServerKind::Zk, "# A\n", &[], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               {"expect": "textDocument/references", "reply": [
+                   {"uri": uri(&root.join("b.md")), "range": {
+                       "start": {"line": 44, "character": 0},
+                       "end": {"line": 44, "character": 0}}}]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    keys(&mut app, "grr");
+    pump_until(&mut app, "backlinks", |a| !picker_labels(a).is_empty());
+    let req = &logged(&log, "textDocument/references")[0]["params"];
+    assert_eq!(req["position"], json!({"line": 0, "character": 0}));
+    assert_eq!(req["context"]["includeDeclaration"], json!(false));
+    let item = app.picker().unwrap().items[0].clone();
+    assert_eq!(item.label, "B page", "first heading of b.md");
+    assert_eq!(item.detail, "b.md:45");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("b.md"));
+    assert_eq!(row_text(&app, app.cursor().row), "Deep", "b.md line 45");
+    assert_eq!(app.history_depth(), 1);
+}
+
+#[test]
+fn marksman_backlinks_use_the_first_heading_or_are_hidden() {
+    let src = "Intro text\n\n## Topic\n";
+    let (_d, mut app, log) = kind_app(
+        ServerKind::Marksman,
+        src,
+        &[("n.md", "plain\n")],
+        |_| json!([zk_init(), {"expect": "textDocument/references", "reply": []}]),
+    );
+    running(&mut app);
+    leader(&mut app, "zb");
+    pump_until(&mut app, "loaded", |a| {
+        a.picker().is_some_and(|p| !p.loading)
+    });
+    let req = &logged(&log, "textDocument/references")[0]["params"];
+    assert_eq!(req["position"], json!({"line": 2, "character": 0}));
+    send(&mut app, key(KeyCode::Esc));
+    command(&mut app, "e n.md");
+    assert!(page_path(&app).ends_with("n.md"));
+    running(&mut app);
+    keys(&mut app, "grr");
+    assert_eq!(app.status(), "Backlinks need a language server");
+    assert!(app.picker().is_none());
+}
+
+#[test]
+fn links_picker_follows_through_follow() {
+    let (dir, mut app, fx) = nav_app();
+    leader(&mut app, "zl");
+    let p = app.picker().unwrap();
+    assert_eq!(p.items[0].label, "b");
+    assert_eq!(p.items[0].detail, "b.md");
+    keys(&mut app, "#section");
+    assert_eq!(picker_labels(&app), ["h"]);
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(row_text(&app, app.cursor().row), "Section two");
+    command(&mut app, "Links");
+    keys(&mut app, "example");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(fx.borrow().opened, ["https://example.com"]);
+    command(&mut app, "Links");
+    keys(&mut app, "missing");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.status(), "No such file: missing.md");
+    assert!(page_path(&app).starts_with(dir.path()));
+}
+
+#[test]
+fn command_line_commands() {
+    let (dir, mut app, _fx) = nav_app();
+    std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+    std::fs::write(dir.path().join("sub/c.md"), "# C\n\n[up](../b.md)\n").unwrap();
+    keys(&mut app, ":e sub/c.m");
+    assert_eq!(app.cmdline_prompt().as_deref(), Some(":e sub/c.m"));
+    assert!(screen(&app).contains(":e sub/c.m"));
+    keys(&mut app, "d");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), dir.path().join("sub/c.md"));
+    assert_eq!(app.history_depth(), 1);
+    command(&mut app, "e ../b.md");
+    assert_eq!(page_path(&app), dir.path().join("sub/../b.md"));
+    command(&mut app, "e nope.md");
+    assert!(app.status().contains("No such file"), "{}", app.status());
+    command(&mut app, "Sidebar files");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    command(&mut app, "Sidebar sideways");
+    assert!(app.status().starts_with(":Sidebar"));
+    command(&mut app, "Launch nope");
+    assert_eq!(app.status(), "No launcher named nope");
+    command(&mut app, "Bogus");
+    assert_eq!(app.status(), "Not a command: Bogus");
+    keys(&mut app, ":x");
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.mode(), Mode::Normal);
+    assert_eq!(app.cmdline_prompt(), None);
+    command(&mut app, "q");
+    assert!(app.should_quit());
+}
+
+#[test]
+fn colon_e_from_stdin_resolves_against_cwd() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(
+        opts(dir.path(), StartTarget::Stdin("# S\n".into())),
+        (COLS, ROWS),
+    )
+    .unwrap();
+    command(&mut app, "e Cargo.toml.md");
+    assert!(app.status().contains("No such file"), "{}", app.status());
+    command(&mut app, "e README.md");
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(page_path(&app), cwd.join("README.md"));
+}
+
 // Link and heading motions, hints (`]l [l ; , ]] [[ s`).
 
 /// Links on rows 2 and 4, a heading below, a link after it.
