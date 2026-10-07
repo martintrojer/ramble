@@ -164,6 +164,12 @@ fn app_reloads_through_real_watcher() {
     );
     app.event(ev);
     assert!(app.page().unwrap().doc.source.contains("after"));
+    // The reload re-seeds the watcher with the new bytes, so it settles:
+    // a stale baseline would report the same write again, forever.
+    assert!(
+        rx.recv_timeout(Duration::from_millis(600)).is_err(),
+        "watcher kept reporting after the reload"
+    );
 }
 
 #[test]
