@@ -179,3 +179,19 @@ fn snapshot_raw_view() {
     keys(&mut app, "gR");
     insta::assert_snapshot!(screen(&app));
 }
+
+#[test]
+fn crlf_line_endings_are_not_drawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.md");
+    std::fs::write(&path, "# CR\r\n\r\nline one\r\n").unwrap();
+    let mut app = App::new(opts(dir.path(), StartTarget::File(path)), (COLS, ROWS)).unwrap();
+    keys(&mut app, "gR");
+    let p = app.page().unwrap();
+    assert_eq!(p.rendered.lines.len(), 3, "blank CRLF line keeps its row");
+    assert_eq!(p.rendered.source_lines, vec![1, 2, 3]);
+    assert_eq!(row_text(&app, 0), "# CR");
+    assert_eq!(row_text(&app, 1), "");
+    assert_eq!(row_text(&app, 2), "line one");
+    assert!(!screen(&app).contains('?'));
+}
