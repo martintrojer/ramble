@@ -22,9 +22,10 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     if area.width == 0 || app.page().is_none() {
         return;
     }
+    let marked = app.review_marked_rows();
     let buf = frame.buffer_mut();
     for y in 0..area.height {
-        if app.review_row_marked(app.scroll() + y as usize) {
+        if marked.binary_search(&(app.scroll() + y as usize)).is_ok() {
             buf[(area.x, area.y + y)]
                 .set_char(REVIEW_MARKER)
                 .set_style(Style::new().fg(palette::PEACH));

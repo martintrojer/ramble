@@ -121,40 +121,79 @@ impl App {
         (path.is_dir() && self.review.markers.under(path)).then_some((MARKER, None))
     }
 
-    /// Whether rendered `row` shows a source line inside a comment range.
-    /// Lines past the end of the file count as the last line; rows with no
-    /// text are never marked.
-    pub fn review_row_marked(&self, row: usize) -> bool {
-        let (Some(m), Some(p)) = (self.current_marks(), &self.page) else {
-            return false;
-        };
-        if self.cells(row).is_empty() {
-            return false;
-        }
-        let Some(&line) = p.rendered.source_lines.get(row) else {
-            return false;
-        };
-        let last = p.doc.source.lines().count().max(1);
-        m.lines
-            .iter()
-            .any(|&(s, e)| (s.min(last)..=e.min(last)).contains(&line))
-    }
-
-    /// Rows `]r` / `[r` stop on: the first drawn row of each comment's
-    /// start line, in order.
-    fn review_targets(&self) -> Vec<usize> {
+    /// Rendered rows showing each line comment of the current file, in
+    /// comment order; each list is sorted. A comment's lines map to rows
+    /// through the srcmap (so a line in the middle of a reflowed paragraph
+    /// finds its row), plus rows that start on one of those lines (blank
+    /// code lines draw no segments). A range that reaches no row falls back
+    /// to the last drawn row at or before its start line. Lines past the end
+    /// of the file count as the last line; rows with no text are never
+    /// marked.
+    fn review_rows(&self) -> Vec<Vec<usize>> {
         let (Some(m), Some(p)) = (self.current_marks(), &self.page) else {
             return Vec::new();
         };
-        let last = p.doc.source.lines().count().max(1);
+        let src = p.doc.source.as_str();
+        let starts: Vec<usize> = std::iter::once(0)
+            .chain(src.match_indices('\n').map(|(i, _)| i + 1))
+            .collect();
+        let last = src.lines().count().max(1);
+        // Byte where 1-based `line` starts (the end of the source past it).
+        let line_start = |line: usize| starts.get(line - 1).copied().unwrap_or(src.len());
         let lines = &p.rendered.source_lines;
-        let mut rows: Vec<usize> = m
-            .lines
+        let drawn = |r: &usize| !self.cells(*r).is_empty();
+        m.lines
             .iter()
-            .filter_map(|&(s, _)| {
-                let s = s.min(last);
-                (0..lines.len()).find(|&r| lines[r] >= s && !self.cells(r).is_empty())
+            .map(|&(s, e)| {
+                let (s, e) = (s.clamp(1, last), e.clamp(1, last));
+                let (s, e) = (s.min(e), s.max(e));
+                let bytes = line_start(s)..line_start(e + 1);
+                let mut rows: Vec<usize> = p
+                    .rendered
+                    .srcmap
+                    .spans_for(bytes)
+                    .iter()
+                    .map(|sp| sp.row)
+                    .collect();
+                rows.extend(
+                    (0..lines.len())
+                        .filter(|&r| (s..=e).contains(&lines[r]))
+                        .filter(drawn),
+                );
+                if rows.is_empty() {
+                    rows.extend(
+                        (0..lines.len())
+                            .rev()
+                            .filter(drawn)
+                            .find(|&r| lines[r] <= s),
+                    );
+                }
+                rows.sort_unstable();
+                rows.dedup();
+                rows
             })
+            .collect()
+    }
+
+    /// Every rendered row the gutter marks, sorted.
+    pub fn review_marked_rows(&self) -> Vec<usize> {
+        let mut rows: Vec<usize> = self.review_rows().concat();
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+
+    /// Whether the gutter marks rendered `row`.
+    pub fn review_row_marked(&self, row: usize) -> bool {
+        self.review_marked_rows().binary_search(&row).is_ok()
+    }
+
+    /// Rows `]r` / `[r` stop on: the first row of each comment, in order.
+    fn review_targets(&self) -> Vec<usize> {
+        let mut rows: Vec<usize> = self
+            .review_rows()
+            .iter()
+            .filter_map(|r| r.first().copied())
             .collect();
         rows.sort_unstable();
         rows.dedup();

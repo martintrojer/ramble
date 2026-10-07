@@ -500,6 +500,65 @@ fn gutter_status_and_jumps() {
     assert!(!s[(ROWS - 1) as usize].contains("review 3"));
 }
 
+/// A reflowed paragraph: rows are labelled with the first source line they
+/// draw, so lines 2..n of a paragraph must reach their rows via the srcmap.
+const PARA: &str = "# P\n\nfirst line\nsecond line\nthird line\n\nnext para\n\nlast para\nmore\n";
+
+fn para_app(dir: &Path, cols: u16) -> App {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("p.md"), PARA).unwrap();
+    App::new(
+        StartOptions {
+            target: StartTarget::File(dir.join("p.md")),
+            tree_root: dir.to_path_buf(),
+            config: config(None, SidebarMode::Off),
+        },
+        (cols, ROWS),
+    )
+    .unwrap()
+}
+
+fn gutter_rows(app: &App, cols: u16) -> Vec<usize> {
+    let mut term = Terminal::new(TestBackend::new(cols, ROWS)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
+    let buf = term.backend().buffer();
+    (0..ROWS - 1)
+        .filter(|&y| buf[(0, y)].symbol() == "●")
+        .map(|y| app.scroll() + y as usize)
+        .collect()
+}
+
+#[test]
+fn comments_inside_a_reflowed_paragraph_mark_and_target_its_rows() {
+    for cols in [80, 12] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("nb");
+        let mut app = para_app(&dir, cols);
+
+        // Line 4 ("second line"), the middle of a 3-line paragraph.
+        app.event(AppEvent::Review(markers(
+            &dir,
+            &[("p.md", marks(1, &[(4, 4)]))],
+        )));
+        let second = row_of(&app, "second");
+        assert_eq!(gutter_rows(&app, cols), vec![second], "cols {cols}");
+        keys(&mut app, "gg]r");
+        assert_eq!(app.cursor().row, second, "cols {cols}");
+        keys(&mut app, "]r");
+        assert_eq!(app.status(), NO_MORE_REVIEW, "cols {cols}");
+
+        // Line 10 ("more"), the last line of the last paragraph.
+        app.event(AppEvent::Review(markers(
+            &dir,
+            &[("p.md", marks(1, &[(10, 10)]))],
+        )));
+        let more = row_of(&app, "more");
+        assert_eq!(gutter_rows(&app, cols), vec![more], "cols {cols}");
+        keys(&mut app, "gg]r");
+        assert_eq!(app.cursor().row, more, "cols {cols}");
+    }
+}
+
 #[test]
 fn file_level_comments_count_but_get_no_gutter() {
     let tmp = tempfile::tempdir().unwrap();
