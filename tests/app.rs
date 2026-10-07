@@ -636,24 +636,9 @@ fn b_source() -> String {
 }
 
 fn nav_app() -> (TempDir, App, Rc<RefCell<Effects>>) {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.md"), a_source()).unwrap();
+    let (dir, app, fx) = nav_app_with(&a_source());
     std::fs::write(dir.path().join("b.md"), b_source()).unwrap();
     std::fs::write(dir.path().join("notes.txt"), "plain\n").unwrap();
-    let fx = Rc::new(RefCell::new(Effects::default()));
-    let (o, e) = (fx.clone(), fx.clone());
-    let app = App::new(
-        opts(dir.path(), StartTarget::File(dir.path().join("a.md"))),
-        (COLS, ROWS),
-    )
-    .unwrap()
-    .with_effects(
-        move |url| o.borrow_mut().opened.push(url.to_string()),
-        move |path| {
-            e.borrow_mut().edited.push(path.to_path_buf());
-            Ok(())
-        },
-    );
     (dir, app, fx)
 }
 
@@ -877,4 +862,66 @@ fn status_line_shows_back_depth() {
     goto_text(&mut app, "b");
     keys(&mut app, "gd");
     assert!(screen(&app).contains("← 1"), "{}", screen(&app));
+}
+
+/// An app on `dir/a.md` holding `source`, with recording effects.
+fn nav_app_with(source: &str) -> (TempDir, App, Rc<RefCell<Effects>>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.md"), source).unwrap();
+    let fx = Rc::new(RefCell::new(Effects::default()));
+    let (o, e) = (fx.clone(), fx.clone());
+    let app = App::new(
+        opts(dir.path(), StartTarget::File(dir.path().join("a.md"))),
+        (COLS, ROWS),
+    )
+    .unwrap()
+    .with_effects(
+        move |url| o.borrow_mut().opened.push(url.to_string()),
+        move |path| {
+            e.borrow_mut().edited.push(path.to_path_buf());
+            Ok(())
+        },
+    );
+    (dir, app, fx)
+}
+
+#[test]
+fn missing_non_markdown_link_is_a_status_not_the_editor() {
+    let (dir, mut app, fx) = nav_app_with("# A\n\n[m](gone.txt)\n");
+    goto_text(&mut app, "m");
+    keys(&mut app, "gd");
+    assert_eq!(app.status(), "No such file: gone.txt");
+    assert_eq!(app.pending_editor(), None);
+    app.run_pending_editor();
+    assert!(fx.borrow().edited.is_empty());
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
+fn missing_file_with_anchor_status_omits_the_anchor() {
+    let (dir, mut app, _fx) = nav_app_with("# A\n\n[g](gone.md#sec)\n");
+    goto_text(&mut app, "g");
+    keys(&mut app, "gd");
+    assert_eq!(app.status(), "No such file: gone.md");
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
+fn stdin_relative_link_resolves_against_cwd() {
+    // `cargo test` runs with the crate root as cwd; never change it here
+    // (tests share the process).
+    let rel = "tests/fixtures/doc/headings.md";
+    let cwd = std::env::current_dir().unwrap();
+    assert!(cwd.join(rel).is_file(), "fixture missing from {cwd:?}");
+    let dir = tempfile::tempdir().unwrap();
+    let text = format!("# From stdin\n\n[r]({rel})\n");
+    let mut app = App::new(opts(dir.path(), StartTarget::Stdin(text)), (COLS, ROWS))
+        .unwrap()
+        .with_effects(|_| panic!("no opener"), |_| panic!("no editor"));
+    goto_text(&mut app, "r");
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), cwd.join(rel), "status: {}", app.status());
+    assert_eq!(app.history_depth(), 1);
 }
