@@ -40,6 +40,9 @@ pub struct StartOptions {
 pub const NO_FILE_MESSAGE: &str =
     "No file loaded. The file tree arrives with the sidebar (step 8). Run: ramble <file.md>";
 
+/// Cap on a typed count, so `n as isize` never wraps negative.
+const MAX_COUNT: usize = 1_000_000;
+
 /// Cursor position in rendered-row coordinates (display columns).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Cursor {
@@ -329,7 +332,8 @@ impl App {
             && (c != '0' || self.count.is_some())
         {
             let d = c as usize - '0' as usize;
-            self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+            let n = self.count.unwrap_or(0).saturating_mul(10).saturating_add(d);
+            self.count = Some(n.min(MAX_COUNT));
             return;
         }
         let count = self.count.take();

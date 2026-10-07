@@ -535,3 +535,66 @@ fn dir_placeholder_is_drawn() {
     let s = screen(&app);
     assert!(s.contains("No file loaded"), "{s}");
 }
+
+#[test]
+fn huge_count_saturates_instead_of_reversing() {
+    let (_d, mut app) = app();
+    keys(&mut app, "5j");
+    keys(&mut app, "99999999999999999999j");
+    assert_eq!(app.cursor().row, total(&app) - 1, "huge j goes to the end");
+    keys(&mut app, "99999999999999999999k");
+    assert_eq!(app.cursor().row, 0, "huge k goes to the top");
+    keys(&mut app, "3j99999999999999999999l");
+    let w = "Para 1 has foo.bar words".len();
+    assert_eq!(app.cursor(), at(3, w - 1), "huge l goes to end of row");
+    keys(&mut app, "99999999999999999999h");
+    assert_eq!(app.cursor(), at(3, 0), "huge h goes to column 0");
+}
+
+fn wrapped_app() -> (TempDir, App) {
+    let src = "# Title\n\nalpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\n";
+    app_with(src.as_bytes())
+}
+
+#[test]
+fn e_stops_at_end_of_wrapped_row() {
+    let (_d, mut app) = wrapped_app();
+    let row3 = row_text(&app, 3);
+    assert!(row3.ends_with("eta"), "{row3:?}");
+    assert!(row_text(&app, 4).starts_with("theta"));
+    keys(&mut app, "3j$b");
+    assert_eq!(app.cursor(), at(3, row3.len() - 3));
+    keys(&mut app, "e");
+    assert_eq!(
+        app.cursor(),
+        at(3, row3.len() - 1),
+        "e does not run a word across the wrap"
+    );
+    keys(&mut app, "e");
+    assert_eq!(app.cursor(), at(4, 4), "next e ends `theta`");
+}
+
+#[test]
+fn l_with_count_counts_up_from_bottom() {
+    let (_d, mut app) = app();
+    keys(&mut app, "3L");
+    assert_eq!(app.cursor().row, VH - 3);
+    keys(&mut app, "100L");
+    assert_eq!(app.cursor().row, 0, "L count clamps to the top row");
+}
+
+#[test]
+fn render_width_is_capped_by_max_width() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("doc.md");
+    let long = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+    std::fs::write(&path, format!("# Title\n\n{long}\n")).unwrap();
+    let mut o = opts(dir.path(), StartTarget::File(path));
+    o.config.render.max_width = 40;
+    let app = App::new(o, (200, ROWS)).unwrap();
+    let widths: Vec<usize> = (0..total(&app))
+        .map(|r| unicode_width::UnicodeWidthStr::width(row_text(&app, r).as_str()))
+        .collect();
+    assert!(widths.iter().all(|&w| w <= 40), "{widths:?}");
+    assert!(total(&app) > 4, "paragraph wraps at 40, not 200");
+}
