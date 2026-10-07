@@ -355,9 +355,7 @@ fn binary_file_shows_message() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("looks binary"));
 }
 
-// ORCH-FOLLOWUP: enable after t02+t03 merge.
 #[test]
-#[ignore]
 fn file_arg_beats_stdin_end_to_end() {
     let tmp = TempDir::new().unwrap();
     let f = tmp.path().join("f.md");
@@ -393,4 +391,74 @@ fn print_without_document_exits_2_end_to_end() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("--print needs a file or stdin"));
+}
+
+fn print_cmd(args: &[&str], tmp: &TempDir) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_ramble"))
+        .args(args)
+        .arg("--config")
+        .arg(tmp.path().join("none.toml"))
+        .env_remove("COLUMNS")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap()
+}
+
+fn strip_sgr(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for d in chars.by_ref() {
+                if d == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Spec § Testing (print mode): `ramble --print --width 80 fixture.md`
+/// diffed against a golden file (here an insta snapshot of the ANSI bytes).
+#[test]
+fn print_golden_at_width_80() {
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("fixture.md");
+    fs::write(&f, include_str!("fixtures/print/fixture.md")).unwrap();
+    let out = print_cmd(&["--print", "--width", "80", f.to_str().unwrap()], &tmp);
+    assert_eq!(out.status.code(), Some(0));
+    insta::assert_snapshot!(String::from_utf8_lossy(&out.stdout));
+}
+
+/// Piped stdout without --print still prints and exits (auto print mode).
+#[test]
+fn piped_stdout_prints_without_flag() {
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("f.md");
+    fs::write(&f, "# Title\n\nbody text\n").unwrap();
+    let out = print_cmd(&["--width", "80", f.to_str().unwrap()], &tmp);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(strip_sgr(&String::from_utf8_lossy(&out.stdout)).contains("body text"));
+}
+
+/// $COLUMNS is used when --width is absent.
+#[test]
+fn columns_env_sets_print_width() {
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("f.md");
+    let para = "word ".repeat(40);
+    fs::write(&f, format!("{para}\n")).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ramble"))
+        .args(["--print", f.to_str().unwrap(), "--config"])
+        .arg(tmp.path().join("none.toml"))
+        .env("COLUMNS", "30")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let text = strip_sgr(&String::from_utf8_lossy(&out.stdout));
+    let widest = text.lines().map(|l| l.chars().count()).max().unwrap();
+    assert!(widest <= 30 && widest > 20, "widest row {widest}:\n{text}");
 }
