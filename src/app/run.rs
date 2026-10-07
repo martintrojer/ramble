@@ -17,11 +17,51 @@ const POLL: Duration = Duration::from_millis(100);
 pub fn run(opts: StartOptions) -> anyhow::Result<()> {
     let size = crossterm::terminal::size().context("reading terminal size")?;
     let mut app = App::new(opts, size)?;
+    push_title();
     // Installs a panic hook that restores the terminal before unwinding.
     let mut terminal = ratatui::try_init().context("initialising terminal")?;
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        pop_title();
+        hook(info);
+    }));
     let result = event_loop(&mut terminal, &mut app);
     ratatui::restore();
+    pop_title();
     result
+}
+
+/// XTWINOPS: save the terminal title on the terminal's title stack.
+const PUSH_TITLE: &str = "\x1b[22;0t";
+/// XTWINOPS: restore the title saved by [`PUSH_TITLE`].
+const POP_TITLE: &str = "\x1b[23;0t";
+
+fn push_title() {
+    let _ = write_flush(&mut std::io::stdout(), PUSH_TITLE.as_bytes());
+}
+
+fn pop_title() {
+    let _ = write_flush(&mut std::io::stdout(), POP_TITLE.as_bytes());
+}
+
+fn write_flush(out: &mut impl std::io::Write, bytes: &[u8]) -> std::io::Result<()> {
+    out.write_all(bytes)?;
+    out.flush()
+}
+
+/// The title to send, if `next` differs from the one last sent.
+fn title_change<'a>(last: Option<&str>, next: &'a str) -> Option<&'a str> {
+    (last != Some(next)).then_some(next)
+}
+
+/// Set the terminal title to the app's when it changed since `last`.
+fn update_title(app: &App, last: &mut Option<String>) -> std::io::Result<()> {
+    let next = app.title_text();
+    if let Some(t) = title_change(last.as_deref(), &next) {
+        crossterm::execute!(std::io::stdout(), crossterm::terminal::SetTitle(t))?;
+        *last = Some(next);
+    }
+    Ok(())
 }
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
@@ -31,9 +71,12 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
         app.set_status(format!("live reload off: {e:#}"));
     }
     app.start_review();
+    let mut title = None;
     while !app.should_quit() {
+        update_title(app, &mut title)?;
         if app.pending_effect().is_some() {
             suspend_and_run(terminal, || app.run_pending_effect())?;
+            title = None; // the command may have set its own title
         }
         terminal.draw(|f| ui::draw(f, app))?;
         if event::poll(POLL)? {
@@ -82,6 +125,16 @@ pub fn suspend_and_run<R>(
 mod tests {
     use super::*;
     use crate::app::{StartOptions, StartTarget};
+
+    #[test]
+    fn title_is_sent_only_when_it_changes() {
+        assert_eq!(title_change(None, "ramble"), Some("ramble"));
+        assert_eq!(title_change(Some("ramble"), "ramble"), None);
+        assert_eq!(
+            title_change(Some("ramble"), "ramble — a.md"),
+            Some("ramble — a.md")
+        );
+    }
 
     #[test]
     fn yank_reaches_the_terminal_as_osc52() {

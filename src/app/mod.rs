@@ -415,6 +415,17 @@ impl App {
         }
     }
 
+    /// Terminal window / pane title: `ramble — ` + [`App::title`], or
+    /// plain `ramble` with no page. Control characters are dropped so a
+    /// file name cannot end or inject an escape sequence.
+    pub fn title_text(&self) -> String {
+        if self.page.is_none() {
+            return "ramble".into();
+        }
+        let name: String = self.title().chars().filter(|c| !c.is_control()).collect();
+        format!("ramble — {name}")
+    }
+
     /// Back-history depth: entries behind the current page.
     pub fn history_depth(&self) -> usize {
         self.history.depth()

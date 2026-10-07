@@ -427,6 +427,41 @@ fn stdin_target_titles_stdin() {
 }
 
 #[test]
+fn title_text_names_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("notes")).unwrap();
+    let a = dir.path().join("notes/a.md");
+    std::fs::write(&a, "# A\n").unwrap();
+    let mut app = App::new(opts(dir.path(), StartTarget::File(a)), (COLS, ROWS)).unwrap();
+    assert_eq!(app.title_text(), "ramble — notes/a.md");
+
+    let other = tempfile::tempdir().unwrap();
+    let out = other.path().join("out.md");
+    std::fs::write(&out, "# Out\n").unwrap();
+    app.open_file(&out).unwrap();
+    assert_eq!(app.title_text(), format!("ramble — {}", out.display()));
+
+    let evil = dir.path().join("x\x07\x1b]0;pwn.md");
+    std::fs::write(&evil, "# E\n").unwrap();
+    app.open_file(&evil).unwrap();
+    assert_eq!(app.title_text(), "ramble — x]0;pwn.md");
+
+    let stdin = App::new(
+        opts(dir.path(), StartTarget::Stdin("# Hi\n".into())),
+        (COLS, ROWS),
+    )
+    .unwrap();
+    assert_eq!(stdin.title_text(), "ramble — [stdin]");
+
+    let none = App::new(
+        opts(dir.path(), StartTarget::Dir(dir.path().into())),
+        (COLS, ROWS),
+    )
+    .unwrap();
+    assert_eq!(none.title_text(), "ramble");
+}
+
+#[test]
 fn binary_file_sets_status_and_keeps_page() {
     let (dir, mut app) = app_with(b"\x00\x01binary");
     assert!(app.page().is_none());
@@ -680,9 +715,11 @@ fn gd_opens_markdown_link_and_c_o_returns() {
     assert_eq!((app.cursor(), app.scroll()), (at(0, 0), 0));
     assert_eq!(app.history_depth(), 1);
     assert_eq!(app.title(), "b.md");
+    assert_eq!(app.title_text(), "ramble — b.md");
 
     send(&mut app, ctrl('o'));
     assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.title_text(), "ramble — a.md");
     assert_eq!((app.cursor(), app.scroll()), before);
     assert_eq!(app.history_depth(), 0);
 }
