@@ -65,6 +65,15 @@ fn heading_slugs() {
 }
 
 #[test]
+fn heading_slugs_keep_combining_marks() {
+    let doc = parse("## हिन्दी\n\n## e\u{301}te!\n\n## \u{20DD}x 😀\n".to_owned());
+    let slugs: Vec<&str> = doc.headings.iter().map(|h| h.slug.as_str()).collect();
+    // Mn (virama U+094D, acute U+0301) and Me (U+20DD) are kept like
+    // github-slugger; punctuation and emoji are still dropped.
+    assert_eq!(slugs, ["हिन्दी", "e\u{301}te", "\u{20DD}x-"]);
+}
+
+#[test]
 fn heading_attributes_excluded_from_inline() {
     let doc = fixture("headings.md");
     let inline = doc

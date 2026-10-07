@@ -13,6 +13,7 @@ use std::ops::Range;
 use pulldown_cmark::{
     BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd,
 };
+use unicode_general_category::{GeneralCategory, get_general_category};
 
 /// A parsed markdown document. `source` is the full input text; every
 /// range below is a byte range into it.
@@ -767,8 +768,19 @@ fn collect_headings(events: &Events<'_>) -> Vec<Heading> {
     headings
 }
 
-/// GitHub heading slug: lowercase, keep alphanumerics, `-` and `_`,
-/// spaces to `-`, drop everything else.
+/// Unicode combining mark (general category Mn, Mc or Me). github-slugger
+/// keeps these, e.g. the Devanagari virama or a decomposed accent.
+fn is_mark(c: char) -> bool {
+    matches!(
+        get_general_category(c),
+        GeneralCategory::NonspacingMark
+            | GeneralCategory::SpacingMark
+            | GeneralCategory::EnclosingMark
+    )
+}
+
+/// GitHub heading slug: lowercase, keep alphanumerics, combining marks,
+/// `-` and `_`, spaces to `-`, drop everything else.
 fn slugify(text: &str) -> String {
     text.trim()
         .chars()
@@ -776,7 +788,7 @@ fn slugify(text: &str) -> String {
         .filter_map(|c| match c {
             ' ' => Some('-'),
             '-' | '_' => Some(c),
-            c if c.is_alphanumeric() => Some(c),
+            c if c.is_alphanumeric() || is_mark(c) => Some(c),
             _ => None,
         })
         .collect()
