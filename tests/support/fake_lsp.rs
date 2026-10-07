@@ -14,6 +14,7 @@
 //! - `{"sleep_ms": <n>}`
 //! - `{"stderr": "<text>"}`: write a line to stderr.
 //! - `{"exit": <code>}`: exit immediately (a crash, from the client's view).
+//! - `{"close_stdin": true}`: close stdin but keep running (client writes fail).
 //!
 //! After the script: requests get a `null` result, `exit` ends the process,
 //! and end of input ends it too. Every message read is appended to the log
@@ -74,6 +75,18 @@ impl Server {
     }
 }
 
+#[cfg(unix)]
+fn close_stdin() {
+    use std::os::fd::FromRawFd;
+    // SAFETY: fd 0 is ours; the `BufReader<Stdin>` is never read again.
+    drop(unsafe { std::fs::File::from_raw_fd(0) });
+}
+
+#[cfg(not(unix))]
+fn close_stdin() {
+    panic!("close_stdin is unix-only");
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let script_path = args.next().expect("usage: fake-lsp <script.json> [<log>]");
@@ -119,6 +132,8 @@ fn main() {
             thread::sleep(Duration::from_millis(ms));
         } else if let Some(text) = step.get("stderr").and_then(Value::as_str) {
             eprintln!("{text}");
+        } else if step.get("close_stdin").is_some() {
+            close_stdin();
         } else if let Some(code) = step.get("exit").and_then(Value::as_i64) {
             std::process::exit(code as i32);
         } else {

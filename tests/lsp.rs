@@ -667,3 +667,140 @@ fn shutdown_is_not_an_error_and_kills_stuck_server() {
         other => panic!("expected Exited, got {other:?}"),
     }
 }
+
+// ------------------------------------------------------------ write deadlocks
+
+/// Runs `f` on its own thread and waits at most `limit` for it. On timeout
+/// the test fails and the thread (and whatever it owns) is leaked instead
+/// of hanging the test run.
+fn within<T: Send + 'static>(
+    limit: Duration,
+    what: &str,
+    f: impl FnOnce() -> T + Send + 'static,
+) -> (T, Duration) {
+    let (tx, rx) = mpsc::channel();
+    let t = std::time::Instant::now();
+    std::thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    match rx.recv_timeout(limit) {
+        Ok(v) => (v, t.elapsed()),
+        Err(_) => panic!("{what} did not return within {limit:?}"),
+    }
+}
+
+#[test]
+fn server_request_during_large_write_does_not_deadlock() {
+    // The server answers test/go, then (not reading meanwhile) asks for
+    // configuration and floods ~400 KB of output while we write 1 MiB. Our
+    // reply must not block the reader, or neither side drains its pipe.
+    let flood = "x".repeat(20_000);
+    let mut steps = init(json!({}));
+    steps.push(json!({"expect": "test/go", "reply": null}));
+    steps.push(json!({"sleep_ms": 300}));
+    steps.push(
+        json!({"send": {"jsonrpc": "2.0", "id": "cfg", "method": "workspace/configuration",
+        "params": {"items": [{"section": "s"}]}}}),
+    );
+    for _ in 0..20 {
+        steps.push(
+            json!({"send": {"jsonrpc": "2.0", "method": "window/logMessage",
+            "params": {"type": 4, "message": flood}}}),
+        );
+    }
+    steps.push(json!({"expect": "textDocument/didOpen"}));
+    steps.push(json!({"expect": "test/done", "reply": true}));
+    let fake = Fake::new(Kind::Generic, Value::Array(steps));
+    let (client, rx) = fake.start();
+    client.request("test/go", json!({}), 1).unwrap();
+    assert_eq!(response(next(&rx)).1, 1);
+
+    let path = fake.root.join("big.md");
+    let big = "a".repeat(1 << 20);
+    let (client, took) = within(Duration::from_secs(1), "did_open", move || {
+        client.did_open(&path, &big, 1).unwrap();
+        client
+    });
+    eprintln!("did_open took {took:?}");
+    client.request("test/done", json!({}), 2).unwrap();
+    assert_eq!(response(next(&rx)), (3, 2, Ok(json!(true))));
+    let (_, took) = within(Duration::from_secs(3), "shutdown", move || {
+        client.shutdown()
+    });
+    eprintln!("shutdown took {took:?}");
+    let msgs = fake.messages();
+    let reply = msgs.iter().find(|m| m["id"] == "cfg").expect("cfg reply");
+    assert_eq!(reply["result"], json!([null]));
+    let open = msgs
+        .iter()
+        .find(|m| m["method"] == "textDocument/didOpen")
+        .unwrap();
+    assert_eq!(
+        open["params"]["textDocument"]["text"]
+            .as_str()
+            .unwrap()
+            .len(),
+        1 << 20
+    );
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(unix)]
+#[test]
+fn server_that_stops_reading_blocks_neither_writes_nor_drop() {
+    let fake = Fake::new(
+        Kind::Generic,
+        script(vec![init(json!({})), vec![json!({"sleep_ms": 60_000})]]),
+    );
+    let (client, _rx) = fake.start();
+    let pid = client.pid();
+    assert!(alive(pid));
+
+    let path = fake.root.join("big.md");
+    let big = "a".repeat(1 << 20);
+    let (client, took) = within(Duration::from_secs(1), "did_open", move || {
+        client.did_open(&path, &big, 1).unwrap();
+        client.did_open(&path, &big, 2).unwrap();
+        client
+    });
+    eprintln!("did_open x2 took {took:?}");
+    // Let the writer fill the pipe and block on it.
+    std::thread::sleep(Duration::from_millis(200));
+    let (_, took) = within(Duration::from_secs(3), "drop", move || drop(client));
+    eprintln!("drop took {took:?}");
+    assert!(!alive(pid), "fake-lsp {pid} still running after drop");
+}
+
+#[cfg(unix)]
+#[test]
+fn write_error_reports_exited_and_kills_server() {
+    let fake = Fake::new(
+        Kind::Generic,
+        script(vec![
+            init(json!({})),
+            vec![json!({"close_stdin": true}), json!({"sleep_ms": 60_000})],
+        ]),
+    );
+    let (client, rx) = fake.start();
+    let pid = client.pid();
+    std::thread::sleep(Duration::from_millis(100));
+    // Queued; the writer hits EPIPE.
+    let _ = client.did_open(&fake.root.join("a.md"), &"a".repeat(1 << 16), 1);
+    match next(&rx) {
+        LspEvent::Exited { error, .. } => {
+            let error = error.expect("write failure is an error");
+            assert!(error.contains("write to server failed"), "{error}");
+        }
+        other => panic!("expected Exited, got {other:?}"),
+    }
+    assert!(!alive(pid), "fake-lsp {pid} still running");
+    assert!(client.notify("test/late", json!({})).is_err());
+}

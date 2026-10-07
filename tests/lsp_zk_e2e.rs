@@ -24,10 +24,37 @@ fn zk_on_path() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
+fn fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zk")
+}
+
+/// Every file below `dir`, relative to it, sorted.
+fn file_list(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path.strip_prefix(dir).unwrap().to_path_buf());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Copies the fixture tree, skipping a stray index database so zk always
+/// starts from an unindexed notebook.
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap() {
         let entry = entry.unwrap();
+        if entry.file_name() == "notebook.db" {
+            continue;
+        }
         let dest = to.join(entry.file_name());
         if entry.file_type().unwrap().is_dir() {
             copy_dir(&entry.path(), &dest);
@@ -127,11 +154,13 @@ fn zk_end_to_end() {
     if !git.is_ok_and(|s| s.success()) {
         std::fs::create_dir(repo.join(".git")).unwrap();
     }
+    // zk writes its index into the notebook, so it only ever runs on a copy.
+    let fixture = fixture_dir();
+    let fixture_files = file_list(&fixture);
     let nb = repo.join("notes");
-    copy_dir(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zk"),
-        &nb,
-    );
+    copy_dir(&fixture, &nb);
+    let nb_real = nb.canonicalize().unwrap();
+    assert!(!nb_real.starts_with(fixture.canonicalize().unwrap()));
     assert!(!nb.join(".zk/notebook.db").exists());
 
     let zk = zk_spec(&tmp.path().join("home"));
@@ -202,4 +231,10 @@ fn zk_end_to_end() {
     assert_eq!(at, src.find("[nowhere]").unwrap(), "{diagnostics:?}");
 
     client.shutdown();
+    assert!(nb.join(".zk/notebook.db").exists(), "zk indexed the copy");
+    assert_eq!(
+        file_list(&fixture),
+        fixture_files,
+        "zk created files inside tests/fixtures"
+    );
 }

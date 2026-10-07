@@ -1,1 +1,2 @@
 target/
+tests/fixtures/zk/.zk/notebook.db

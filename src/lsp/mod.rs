@@ -5,19 +5,25 @@
 //! request id, carrying the caller's opaque `tag`), `publishDiagnostics`
 //! notifications, and server-to-client requests. Everything the app needs
 //! arrives as an [`LspEvent`] on the channel passed to [`Client::start`].
+//!
+//! One writer thread owns the child's stdin and drains an unbounded queue of
+//! encoded messages. Callers and the reader thread only enqueue, so neither a
+//! server that stops reading nor one that floods its output while we write
+//! can block them. A write error marks the client dead and kills the server,
+//! so the reader sees end of output and reports [`LspEvent::Exited`].
 
 mod framing;
 mod position;
 mod uri;
 
 use std::collections::{HashMap, VecDeque};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
@@ -32,6 +38,8 @@ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 const INDEX_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const STDERR_LINES: usize = 50;
+/// How long drop waits for each helper thread after killing the server.
+const JOIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Which built-in behaviour a server gets (startup steps, default encoding).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,27 +115,77 @@ enum Pending {
 
 struct Shared {
     name: String,
-    stdin: Mutex<Option<ChildStdin>>,
+    /// The writer thread's queue; `None` once closed. Held only to enqueue.
+    outbox: Mutex<Option<Sender<Vec<u8>>>>,
     pending: Mutex<HashMap<u64, Pending>>,
     child: Mutex<Child>,
+    pid: u32,
     stderr_tail: Mutex<VecDeque<String>>,
     /// Set when we stop the server, so its exit is not an error.
     stopping: AtomicBool,
+    /// Set on a write error or when the server's output ends.
+    dead: AtomicBool,
+    write_error: Mutex<Option<String>>,
 }
 
 impl Shared {
+    /// Encodes `msg` and queues it for the writer thread. Never blocks on the pipe.
     fn send(&self, msg: &Value) -> anyhow::Result<()> {
-        let mut stdin = self.stdin.lock().unwrap();
-        let w = stdin
-            .as_mut()
+        if self.dead.load(Ordering::SeqCst) {
+            bail!("{}: server is not running", self.name);
+        }
+        let mut frame = Vec::new();
+        write_message(&mut frame, msg)?;
+        let outbox = self.outbox.lock().unwrap();
+        let tx = outbox
+            .as_ref()
             .ok_or_else(|| anyhow!("{}: server stdin closed", self.name))?;
-        write_message(w, msg).with_context(|| format!("{}: write to server", self.name))
+        tx.send(frame)
+            .map_err(|_| anyhow!("{}: server writer stopped", self.name))
+    }
+
+    /// Closes the queue; the writer drains what is queued, then closes stdin.
+    fn close_outbox(&self) {
+        self.outbox.lock().unwrap().take();
+    }
+
+    fn kill(&self) {
+        let mut child = self.child.lock().unwrap();
+        if let Ok(None) = child.try_wait() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    }
+}
+
+/// A helper thread that can be joined with a timeout.
+struct Worker {
+    handle: JoinHandle<()>,
+    done: Receiver<()>,
+}
+
+impl Worker {
+    fn spawn(f: impl FnOnce() + Send + 'static) -> Worker {
+        let (tx, done) = mpsc::channel::<()>();
+        let handle = thread::spawn(move || {
+            let _done = tx; // dropped (even on panic) when the thread ends
+            f();
+        });
+        Worker { handle, done }
+    }
+
+    /// Joins if the thread ends within `timeout`; otherwise leaves it detached.
+    fn join_timeout(self, timeout: Duration) {
+        if let Err(RecvTimeoutError::Disconnected) = self.done.recv_timeout(timeout) {
+            let _ = self.handle.join();
+        }
     }
 }
 
 /// A running language server.
 pub struct Client {
     shared: Arc<Shared>,
+    threads: Vec<Worker>,
     next_id: AtomicU64,
     encoding: Encoding,
     capabilities: ServerCapabilities,
@@ -154,17 +212,21 @@ impl Client {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("{}: cannot start {program:?}", spec.name))?;
-        let stdin = child.stdin.take();
+        let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         let stderr = child.stderr.take().expect("piped stderr");
 
+        let (out_tx, out_rx) = mpsc::channel();
         let shared = Arc::new(Shared {
             name: spec.name.clone(),
-            stdin: Mutex::new(stdin),
+            outbox: Mutex::new(Some(out_tx)),
             pending: Mutex::new(HashMap::new()),
+            pid: child.id(),
             child: Mutex::new(child),
             stderr_tail: Mutex::new(VecDeque::new()),
             stopping: AtomicBool::new(false),
+            dead: AtomicBool::new(false),
+            write_error: Mutex::new(None),
         });
 
         let (stderr_done_tx, stderr_done) = mpsc::channel();
@@ -172,13 +234,18 @@ impl Client {
             let shared = Arc::clone(&shared);
             thread::spawn(move || drain_stderr(stderr, &shared, stderr_done_tx));
         }
-        {
+        let writer = {
             let shared = Arc::clone(&shared);
-            thread::spawn(move || read_loop(BufReader::new(stdout), &shared, &events, stderr_done));
-        }
+            Worker::spawn(move || write_loop(stdin, &out_rx, &shared))
+        };
+        let reader = {
+            let shared = Arc::clone(&shared);
+            Worker::spawn(move || read_loop(BufReader::new(stdout), &shared, &events, stderr_done))
+        };
 
         let mut client = Client {
             shared,
+            threads: vec![writer, reader],
             next_id: AtomicU64::new(1),
             encoding: Encoding::Utf16,
             capabilities: ServerCapabilities::default(),
@@ -247,6 +314,11 @@ impl Client {
         Ok(client)
     }
 
+    /// The server's process id.
+    pub fn pid(&self) -> u32 {
+        self.shared.pid
+    }
+
     /// The position encoding used for this server.
     pub fn encoding(&self) -> Encoding {
         self.encoding
@@ -262,7 +334,7 @@ impl Client {
         self.index_result.as_ref()
     }
 
-    /// Sends a request without waiting; the reply arrives as
+    /// Queues a request without waiting; the reply arrives as
     /// [`LspEvent::Response`] carrying `tag`. Returns the request id.
     pub fn request(&self, method: &str, params: Value, tag: u64) -> anyhow::Result<u64> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -280,7 +352,7 @@ impl Client {
         sent.map(|()| id)
     }
 
-    /// Sends a notification.
+    /// Queues a notification.
     pub fn notify(&self, method: &str, params: Value) -> anyhow::Result<()> {
         self.shared.send(&json!({
             "jsonrpc": "2.0", "method": method, "params": params,
@@ -307,8 +379,9 @@ impl Client {
         let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
         let _ = self.request_sync("shutdown", Value::Null, SHUTDOWN_TIMEOUT);
         let _ = self.notify("exit", Value::Null);
-        // Closing stdin also tells a server that ignores `exit` to stop.
-        self.shared.stdin.lock().unwrap().take();
+        // The writer closes stdin once the queue drains, which also tells a
+        // server that ignores `exit` to stop.
+        self.shared.close_outbox();
         while Instant::now() < deadline {
             if let Ok(Some(_)) = self.shared.child.lock().unwrap().try_wait() {
                 return;
@@ -352,13 +425,28 @@ impl Client {
 impl Drop for Client {
     fn drop(&mut self) {
         self.shared.stopping.store(true, Ordering::SeqCst);
-        self.shared.stdin.lock().unwrap().take();
-        let mut child = self.shared.child.lock().unwrap();
-        if let Ok(None) = child.try_wait() {
-            let _ = child.kill();
+        self.shared.close_outbox();
+        // Kill first: a writer stuck on a full pipe then fails and exits.
+        self.shared.kill();
+        for t in self.threads.drain(..) {
+            t.join_timeout(JOIN_TIMEOUT);
         }
-        let _ = child.wait();
     }
+}
+
+fn write_loop(mut stdin: ChildStdin, queue: &Receiver<Vec<u8>>, shared: &Shared) {
+    for frame in queue {
+        if let Err(e) = stdin.write_all(&frame).and_then(|()| stdin.flush()) {
+            shared.dead.store(true, Ordering::SeqCst);
+            *shared.write_error.lock().unwrap() = Some(e.to_string());
+            shared.close_outbox();
+            // Without a working stdin the server is useless; killing it ends
+            // its output, so the reader reports `Exited`.
+            shared.kill();
+            return;
+        }
+    }
+    // Queue closed: dropping `stdin` closes the pipe.
 }
 
 fn drain_stderr(stderr: impl std::io::Read, shared: &Shared, done: Sender<()>) {
@@ -402,6 +490,8 @@ fn read_loop(
             Err(e) => break Some(e.to_string()),
         }
     };
+    shared.dead.store(true, Ordering::SeqCst);
+    shared.close_outbox();
     let stopping = shared.stopping.load(Ordering::SeqCst);
     if !stopping {
         // Collect the stderr tail before waiters look at it.
@@ -420,6 +510,9 @@ fn read_loop(
             (None, Some(s)) => format!("server exited ({s})"),
             (None, None) => "server closed its output".to_string(),
         };
+        if let Some(e) = shared.write_error.lock().unwrap().as_deref() {
+            msg.push_str(&format!("; write to server failed: {e}"));
+        }
         msg.push_str(&tail_suffix(&stderr_tail(shared)));
         Some(msg)
     };
