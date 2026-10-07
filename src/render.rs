@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::FontStyle;
-use syntect::parsing::SyntaxSet;
+use syntect::parsing::{SyntaxReference, SyntaxSet};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -391,6 +391,47 @@ fn alert_info(kind: AlertKind) -> (&'static str, Color) {
         AlertKind::Warning => ("Warning", palette::YELLOW),
         AlertKind::Caution => ("Caution", palette::RED),
     }
+}
+
+/// Fence names syntect doesn't know, mapped to tokens it does. `console`
+/// and friends highlight every line as bash (prompts and output alike).
+/// The `text` family is explicitly plain.
+const LANG_ALIASES: &[(&str, &str)] = &[
+    ("python3", "python"),
+    ("shell", "bash"),
+    ("console", "bash"),
+    ("shellsession", "bash"),
+    ("sh-session", "bash"),
+    ("jsx", "tsx"),
+    ("jsonc", "json"),
+    ("json5", "json"),
+    ("golang", "go"),
+    ("lean4", "lean"),
+    ("objc", "objective-c"),
+    ("csharp", "c#"),
+    ("containerfile", "dockerfile"),
+];
+
+const PLAIN_LANGS: &[&str] = &["text", "txt", "plain", "none"];
+
+fn find_syntax(lang: &str) -> Option<&'static SyntaxReference> {
+    let lang = lang.to_lowercase();
+    if PLAIN_LANGS.contains(&lang.as_str()) {
+        return None;
+    }
+    let ss = syntaxes();
+    let token = LANG_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == lang)
+        .map_or(lang.as_str(), |(_, target)| target);
+    ss.find_syntax_by_token(token)
+        .filter(|s| s.name != ss.find_syntax_plain_text().name)
+}
+
+/// The syntax name a code fence's `lang` highlights with, or None for plain
+/// text (unknown names, and `text`/`txt`/`plain`/`none`).
+pub fn resolve_syntax(lang: &str) -> Option<&'static str> {
+    find_syntax(lang).map(|s| s.name.as_str())
 }
 
 fn syntaxes() -> &'static SyntaxSet {
@@ -843,7 +884,7 @@ impl<'a> Renderer<'a> {
     fn code_block(&mut self, lang: Option<&str>, code: &Range<usize>) {
         let ss = syntaxes();
         let syntax = lang
-            .and_then(|l| ss.find_syntax_by_token(l))
+            .and_then(find_syntax)
             .unwrap_or_else(|| ss.find_syntax_plain_text());
         let mut hl = HighlightLines::new(syntax, code_theme());
         let fallback = Style::new().fg(palette::GREEN);

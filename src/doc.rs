@@ -107,7 +107,10 @@ pub enum Block {
         range: Range<usize>,
         inline: Range<usize>,
     },
-    /// `lang` is the fence info string's first word, if any.
+    /// `lang` is the fence info string's first token, cut at the first `,`
+    /// or whitespace, with surrounding `{`/`}` and a leading `.` stripped,
+    /// lowercased (`rust,ignore` -> `rust`, `{.python}` -> `python`). None
+    /// for indented blocks and empty info strings.
     CodeBlock {
         lang: Option<String>,
         range: Range<usize>,
@@ -456,6 +459,16 @@ fn push_lines(
     }
 }
 
+/// The language of a fence info string; see [`Block::CodeBlock`].
+fn fence_lang(info: &str) -> Option<String> {
+    let first = info.trim_start().trim_start_matches('{').trim_start();
+    let end = first
+        .find(|c: char| c == ',' || c == '}' || c.is_whitespace())
+        .unwrap_or(first.len());
+    let lang = first[..end].trim_start_matches('.');
+    (!lang.is_empty()).then(|| lang.to_lowercase())
+}
+
 /// Inline code span without the backtick fences and the single padding
 /// space CommonMark strips.
 fn code_content(src: &str, range: Range<usize>) -> Range<usize> {
@@ -590,9 +603,7 @@ fn parse_blocks(src: &str, events: &Events<'_>, i: &mut usize) -> Vec<Block> {
             }
             Tag::CodeBlock(kind) => {
                 let lang = match kind {
-                    CodeBlockKind::Fenced(info) => {
-                        info.split_whitespace().next().map(str::to_owned)
-                    }
+                    CodeBlockKind::Fenced(info) => fence_lang(info),
                     CodeBlockKind::Indented => None,
                 };
                 let mut code: Option<Range<usize>> = None;
