@@ -1,0 +1,87 @@
+## ramble configuration.
+##
+## Every option is shown with its default value, commented out. Uncomment a
+## line to change it. Lines starting with "##" are explanations.
+
+## ---------------------------------------------------------------------------
+## Rendering
+# [render]
+## Upper bound on the reflow width, in columns.
+# max_width = 100
+# theme = "catppuccin-mocha"
+
+## ---------------------------------------------------------------------------
+## Sidebar
+# [sidebar]
+## auto | off | files | outline | split
+## auto: files for a directory or no argument, outline for a file or stdin.
+# default = "auto"
+## Width in columns.
+# width = 30
+## Share of the sidebar given to files in split mode.
+# split_ratio = 0.5
+## Also list non-markdown files in the tree.
+# show_all = false
+
+## ---------------------------------------------------------------------------
+## Keys
+# [keys]
+# leader = " "
+
+## ---------------------------------------------------------------------------
+## Review markers from a live tuicr session.
+# [review]
+# enabled = true
+# command = "tuicr"
+
+## ---------------------------------------------------------------------------
+## Language servers, tried in order; the first whose root marker is found
+## above the file wins. Any [[lsp.server]] entry here replaces this whole
+## list, so copy the ones you want to keep.
+## kind: zk | marksman | generic (generic gets standard LSP requests only).
+## position_encoding: "utf-8" | "utf-16" | "utf-32".
+## position_encoding defaults to utf-32 for zk; set it to override.
+
+# [[lsp.server]]
+# kind = "zk"
+# command = ["zk", "lsp"]
+# root_markers = [".zk"]
+
+# [[lsp.server]]
+# kind = "marksman"
+# command = ["marksman", "server"]
+# root_markers = [".marksman.toml", ".git"]
+
+## ---------------------------------------------------------------------------
+## Launchers: run a command in the terminal, then reload the page.
+## Variables (substituted per argument, no shell): ${file} ${line} ${dir}
+## ${vcs_root} ${editor}.
+## An entry with the same name replaces a default; new names are added;
+## `disabled = true` removes a default, e.g.:
+##   [[launch]]
+##   name = "review"
+##   disabled = true
+
+# [[launch]]
+# name = "edit"
+# key = "<leader>o"
+# command = ["${editor}", "+${line}", "${file}"]
+
+# [[launch]]
+# name = "review"
+## Annotate this document; works without VCS.
+# key = "<leader>rr"
+# command = ["tuicr", "--file", "${file}", "--line", "${line}"]
+
+# [[launch]]
+# name = "review-changes"
+## Uncommitted changes to this document.
+# key = "<leader>rw"
+# command = ["tuicr", "-w", "-p", "${file}", "--line", "${line}"]
+# needs_vcs = true
+
+# [[launch]]
+# name = "review-dir"
+## Annotate a folder.
+# key = "<leader>rd"
+# command = ["tuicr", "--file", "${dir}"]
