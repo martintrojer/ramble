@@ -1,9 +1,9 @@
-//! ratatui widgets only, no logic: content view, status line.
+//! The content view: the rendered page with cursorline and cursor.
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::app::App;
@@ -11,18 +11,8 @@ use crate::render::palette;
 
 /// Background of the cursorline (Catppuccin Mocha surface0).
 const CURSORLINE_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
-/// Background of the status line (Catppuccin Mocha mantle).
-const STATUS_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
 
-/// Draw one full screen: content view plus status line.
-pub fn draw(frame: &mut Frame, app: &App) {
-    let [content, status] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    draw_content(frame, app, content);
-    draw_status(frame, app, status);
-}
-
-fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
+pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let Some(page) = app.page() else {
         if let Some(msg) = app.placeholder() {
             let lines = msg.len() as u16 / area.width.max(1) + 1;
@@ -62,30 +52,4 @@ fn draw_content(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
     }
-}
-
-fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
-    let base = Style::new().fg(palette::TEXT).bg(STATUS_BG);
-    let right = format!(
-        " {}  {}  ← {} ",
-        app.lsp_label(),
-        app.position_label(),
-        app.history_depth()
-    );
-    let mut spans = vec![Span::styled(
-        format!(" {}", app.title()),
-        base.fg(palette::BLUE),
-    )];
-    if !app.status().is_empty() {
-        spans.push(Span::styled(
-            format!("  {}", app.status()),
-            base.fg(palette::YELLOW),
-        ));
-    }
-    let left_w: usize = spans.iter().map(Span::width).sum();
-    let right_w = Span::raw(right.as_str()).width();
-    let pad = (area.width as usize).saturating_sub(left_w + right_w);
-    spans.push(Span::styled(" ".repeat(pad), base));
-    spans.push(Span::styled(right, base));
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
 }
