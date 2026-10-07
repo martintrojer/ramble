@@ -1193,15 +1193,15 @@ impl Clipboard for RecClip {
 }
 
 #[test]
-fn y_copies_link_dest_else_file_path() {
+fn yu_copies_link_dest_else_file_path() {
     let (dir, app, _fx) = nav_app();
     let clip = RecClip::default();
     let mut app = app.with_clipboard(clip.clone());
     goto_text(&mut app, "w");
-    keys(&mut app, "y");
+    keys(&mut app, "yu");
     assert_eq!(app.status(), "Copied b.md#deep");
     keys(&mut app, "gg");
-    keys(&mut app, "y");
+    keys(&mut app, "yu");
     let path = dir.path().join("a.md").display().to_string();
     assert_eq!(
         *clip.0.borrow(),
@@ -1214,7 +1214,7 @@ fn y_copies_link_dest_else_file_path() {
 fn default_clipboard_queues_osc52_for_the_terminal() {
     let (_d, mut app, _fx) = nav_app();
     goto_text(&mut app, "u");
-    keys(&mut app, "y");
+    keys(&mut app, "yu");
     let out = String::from_utf8(app.take_terminal_output()).unwrap();
     assert_eq!(out, ramble::app::osc52("https://example.com"));
     assert!(app.take_terminal_output().is_empty());

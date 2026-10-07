@@ -33,7 +33,8 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let review = match app.review_count() {
         0 => String::new(),
         n => format!("review {n}  "),
-    } + if app.raw() { "RAW  " } else { "" };
+    } + if app.raw() { "RAW  " } else { "" }
+        + app.visual_label();
     let right = format!(
         " {review}{}  {}  ← {} ",
         app.lsp_label(),

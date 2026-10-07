@@ -74,7 +74,8 @@ pub enum Action {
     // Marks and yank.
     SetMark(char),
     GotoMark(char),
-    Yank,
+    /// Visual mode and the `y` operator.
+    Visual(super::VisualAction),
     // Launchers.
     /// Run `config.launch[i]`.
     Launch(usize),
@@ -144,6 +145,9 @@ impl App {
             return;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            if self.visual_interrupt() {
+                return;
+            }
             self.quit = true;
             return;
         }
@@ -158,7 +162,7 @@ impl App {
             KeyResult::Pending => self.pending = keys,
             KeyResult::Action(a) => {
                 self.count = None;
-                self.apply(a);
+                self.dispatch(a);
             }
             KeyResult::None => self.count = None,
         }
@@ -181,6 +185,8 @@ impl App {
             Mode::Command => super::cmdline::cmdline_keymap(keys),
             Mode::Hint => super::hints::hint_keymap(keys),
             Mode::Help => super::help::help_keymap(self, keys),
+            Mode::Visual(_) => self.visual_keymap(keys),
+            Mode::OpPending => self.op_keymap(keys),
         }
     }
 
@@ -208,8 +214,14 @@ impl App {
     }
 
     fn normal_keymap(&self, keys: &[KeyEvent]) -> KeyResult {
+        self.normal_keymap_with(keys, self.count)
+    }
+
+    /// The normal-mode table with `count` as the typed count (visual mode
+    /// and the `y` operator reuse it for motions).
+    pub(super) fn normal_keymap_with(&self, keys: &[KeyEvent], count: Option<usize>) -> KeyResult {
+        use super::{VisualAction as V, VisualKind as VK};
         use Action as A;
-        let count = self.count;
         if let Some(r) = self.leader_keymap(keys) {
             return r;
         }
@@ -233,6 +245,7 @@ impl App {
                 ('g', 'd') => KeyResult::Action(A::Follow),
                 ('g', 'x') => KeyResult::Action(A::OpenExternal),
                 ('g', 'R') => KeyResult::Action(A::ToggleRaw),
+                ('g', 'v') => KeyResult::Action(A::Visual(V::Reselect)),
                 ('z', 'z') => KeyResult::Action(A::CenterCursor),
                 ('z', 't') => KeyResult::Action(A::CursorToTop),
                 ('z', 'b') => KeyResult::Action(A::CursorToBottom),
@@ -258,6 +271,7 @@ impl App {
                 KeyCode::Char('b') => A::PageUp,
                 KeyCode::Char('e') => A::LineDown,
                 KeyCode::Char('y') => A::LineUp,
+                KeyCode::Char('v') => A::Visual(V::Start(VK::Block)),
                 _ => return KeyResult::None,
             };
             return KeyResult::Action(action);
@@ -281,7 +295,10 @@ impl App {
             KeyCode::Esc if self.hover_popup().is_some() => A::HoverClose,
             KeyCode::Esc => A::SearchClear,
             KeyCode::Char('K') => A::Hover,
-            KeyCode::Char('y') => A::Yank,
+            KeyCode::Char('y') => A::Visual(V::OpStart(count)),
+            KeyCode::Char('Y') => A::Visual(V::OpLines(count.unwrap_or(1).max(1))),
+            KeyCode::Char('v') => A::Visual(V::Start(VK::Char)),
+            KeyCode::Char('V') => A::Visual(V::Start(VK::Line)),
             KeyCode::Enter => A::Follow,
             KeyCode::Tab => A::Forward,
             KeyCode::Char('q') => A::Quit,
@@ -352,7 +369,7 @@ impl App {
             A::SearchCancel => self.search_cancel(),
             A::SetMark(c) => self.set_mark(c),
             A::GotoMark(c) => self.goto_mark(c),
-            A::Yank => self.yank(),
+            A::Visual(a) => self.visual_action(a),
             A::Launch(i) => self.launch_index(i),
             A::NoMapping => self.set_status("No mapping"),
             A::Hover => self.hover(),

@@ -15,6 +15,8 @@ const CURSORLINE_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 /// yellow / peach).
 const HIT: Style = Style::new().fg(BANNER_BG).bg(palette::YELLOW);
 const CURRENT_HIT: Style = Style::new().fg(BANNER_BG).bg(palette::PEACH);
+/// The visual selection (Catppuccin Mocha surface1).
+const SELECTION_BG: Color = Color::Rgb(0x45, 0x47, 0x5a);
 /// A link a diagnostic covers (e.g. a dead link).
 const BROKEN_LINK: Style = Style::new()
     .fg(palette::OVERLAY)
@@ -96,6 +98,21 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         );
         let current = s.row == cursor.row && (s.col_start..s.col_end).contains(&cursor.col);
         buf.set_style(rect, if current { CURRENT_HIT } else { HIT });
+    }
+    // The selection wins over the cursorline and search hits; the cursor
+    // stays reversed on top.
+    for s in app.selection_spans() {
+        if !on_screen(s.row) || s.col_start as u16 >= area.width {
+            continue;
+        }
+        let w = (s.col_end.min(area.width as usize) - s.col_start) as u16;
+        let rect = Rect::new(
+            area.x + s.col_start as u16,
+            area.y + (s.row - top) as u16,
+            w,
+            1,
+        );
+        buf.set_style(rect, Style::new().fg(palette::TEXT).bg(SELECTION_BG));
     }
     if on_screen(cursor.row) && (cursor.col as u16) < area.width {
         let (x, y) = (

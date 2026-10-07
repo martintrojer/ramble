@@ -58,6 +58,7 @@ impl App {
         self.status.clear();
         self.stdin = None;
         self.banner = None;
+        self.visual = Default::default();
         self.refresh_search();
         self.retarget_watch();
         self.lsp_page_changed();

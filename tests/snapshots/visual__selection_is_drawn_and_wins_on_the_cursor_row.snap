@@ -1,0 +1,16 @@
+---
+source: tests/visual.rs
+expression: term.backend().to_string()
+---
+"Title                         "
+"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+"                              "
+"Alpha bold beta gamma delta   "
+"epsilon zeta eta theta.       "
+"                              "
+"Second para.                  "
+"                              "
+"• one                         "
+"• two                         "
+"                              "
+" sub/a.md VISUAL  —  All  ← 0 "

@@ -1,4 +1,4 @@
-//! Marks within a page (`m{a-z}`, `'{a-z}`) and yank (`y`).
+//! Marks within a page (`m{a-z}`, `'{a-z}`) and path/link yank (`yf`, `yF`, `yu`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -47,7 +47,7 @@ impl App {
         self.goto_row(row);
     }
 
-    /// `y`: copy the link destination (as written) under the cursor, else
+    /// `yu`: copy the link destination (as written) under the cursor, else
     /// the file path.
     /// `y` has something to copy: a link under the cursor or a file path.
     pub(crate) fn can_yank(&self) -> bool {
@@ -63,20 +63,34 @@ impl App {
             .link_under_cursor()
             .and_then(|i| self.page.as_ref()?.doc.links.get(i))
             .map(|l| l.dest.clone());
-        let text = match link {
-            Some(dest) => dest,
-            None => match self.page.as_ref().and_then(|p| p.path.as_deref()) {
-                Some(p) => std::path::absolute(p)
-                    .unwrap_or_else(|_| p.to_path_buf())
-                    .display()
-                    .to_string(),
-                None => {
-                    self.set_status("Nothing to yank (stdin has no path)");
-                    return;
-                }
-            },
+        match link {
+            Some(dest) => self.copy_status(&dest),
+            None => self.yank_path(true),
+        }
+    }
+
+    /// `yf` (absolute) / `yF` (relative to the tree root): copy the file path.
+    pub(super) fn yank_path(&mut self, absolute: bool) {
+        let Some(p) = self.page.as_ref().and_then(|p| p.path.as_deref()) else {
+            self.set_status("No file (stdin)");
+            return;
         };
-        match self.clipboard.copy(&text) {
+        let abs = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+        let text = if absolute {
+            abs.display().to_string()
+        } else {
+            let root =
+                std::path::absolute(&self.tree_root).unwrap_or_else(|_| self.tree_root.clone());
+            abs.strip_prefix(&root)
+                .unwrap_or(&abs)
+                .display()
+                .to_string()
+        };
+        self.copy_status(&text);
+    }
+
+    fn copy_status(&mut self, text: &str) {
+        match self.clipboard.copy(text) {
             Ok(()) => self.set_status(format!("Copied {text}")),
             Err(e) => self.set_status(format!("copy failed: {e:#}")),
         }

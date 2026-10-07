@@ -4,8 +4,9 @@
 //! Layout: `keys` (key → [`Action`] table and dispatch), `motion` (cursor
 //! motions), `follow` (links and history), `page` (loading and layout),
 //! `effect` (side effects run outside the TUI), `run` (terminal and loop),
-//! `search` (`/ ? n N * #`), `marks` (marks and yank), `launch`
-//! (launchers), `watch` (live reload).
+//! `search` (`/ ? n N * #`), `marks` (marks, path/link yank), `visual`
+//! (visual mode, the `y` operator), `launch` (launchers), `watch` (live
+//! reload).
 //! Later units add a file and register in the tables here and in `keys`.
 
 mod cmdline;
@@ -27,6 +28,7 @@ mod run;
 mod scroll;
 mod search;
 pub mod sidebar;
+mod visual;
 mod watch;
 
 use std::cell::RefCell;
@@ -56,6 +58,7 @@ pub use review_glue::{MARKER as REVIEW_MARKER, NO_MORE_REVIEW, NO_REVIEW};
 pub use run::{run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
+pub use visual::{VisualAction, VisualKind};
 pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent};
 
 use motion::Cell;
@@ -119,6 +122,10 @@ pub enum Mode {
     Hint,
     /// The `g?` help overlay is open.
     Help,
+    /// Selecting text (`v`, `V`, `C-v`).
+    Visual(VisualKind),
+    /// `y` typed, waiting for a motion.
+    OpPending,
 }
 
 /// Everything the event loop feeds the app. Later units add variants
@@ -201,6 +208,7 @@ pub struct App {
     help: help::HelpState,
     /// `C-l` asked `run` to clear the terminal before the next draw.
     clear_request: bool,
+    visual: visual::VisualState,
 }
 
 impl App {
@@ -258,6 +266,7 @@ impl App {
             review: Default::default(),
             help: Default::default(),
             clear_request: false,
+            visual: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
