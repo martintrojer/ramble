@@ -247,30 +247,36 @@ impl App {
         let forward = self.search.forward == same;
         let Some(p) = &self.page else { return };
         let map = &p.rendered.srcmap;
-        let mut cur = map.source_at(self.cursor.row, self.cursor.col).unwrap_or(0);
-        let mut wrapped = false;
-        let hits = &self.search.hits;
-        for _ in 0..count.max(1) {
-            let next = if forward {
-                hits.iter().find(|h| h.start > cur)
-            } else {
-                hits.iter().rev().find(|h| h.start < cur)
-            };
-            let hit = next.unwrap_or_else(|| {
-                wrapped = true;
-                if forward {
-                    &hits[0]
-                } else {
-                    &hits[hits.len() - 1]
-                }
-            });
-            cur = hit.start;
-        }
-        let Some(span) = hit_spans(map, &(cur..cur + 1)).first().copied() else {
+        // Compare screen positions, not source bytes: a blank or rule row
+        // has no byte under it but still sits between the hits above and
+        // below it (vim searches onward from the cursor position).
+        let mut starts: Vec<(usize, usize)> = self
+            .search
+            .hits
+            .iter()
+            .filter_map(|h| hit_spans(map, &(h.start..h.start + 1)).first().copied())
+            .map(|s| (s.row, s.col_start))
+            .collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let (Some(&first), Some(&last)) = (starts.first(), starts.last()) else {
             return;
         };
-        self.cursor.row = span.row;
-        self.set_col(span.col_start);
+        let mut cur = (self.cursor.row, self.cursor.col);
+        let mut wrapped = false;
+        for _ in 0..count.max(1) {
+            let next = if forward {
+                starts.iter().find(|&&h| h > cur)
+            } else {
+                starts.iter().rev().find(|&&h| h < cur)
+            };
+            cur = *next.unwrap_or_else(|| {
+                wrapped = true;
+                if forward { &first } else { &last }
+            });
+        }
+        self.cursor.row = cur.0;
+        self.set_col(cur.1);
         if wrapped {
             self.set_status(if forward {
                 "search hit BOTTOM, continuing at TOP"

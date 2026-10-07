@@ -961,6 +961,46 @@ fn slash_search_highlights_incrementally_and_n_wraps() {
 }
 
 #[test]
+fn n_and_shift_n_from_a_blank_row_search_onward_from_the_cursor() {
+    // Blank row between Para 3 and Para 4.
+    let (_d, mut app) = app();
+    type_search(&mut app, '/', "has");
+    send(&mut app, key(KeyCode::Enter));
+    keys(&mut app, "gg");
+    keys(&mut app, &"j".repeat(para_row(3) + 1));
+    assert_eq!(row_text(&app, app.cursor().row), "");
+    keys(&mut app, "n");
+    assert_eq!(app.cursor(), at(para_row(4), 7));
+    assert_eq!(app.status(), "");
+    keys(&mut app, "kN");
+    assert_eq!(app.cursor(), at(para_row(3), 7));
+    assert_eq!(app.status(), "");
+}
+
+#[test]
+fn n_and_shift_n_from_a_heading_rule_row_search_onward() {
+    // The rule row under a heading has no source byte either.
+    let (_d, mut app) = app_with(b"one foo\n\n## Section\n\nfoo two\n\nlast\n");
+    type_search(&mut app, '/', "foo");
+    send(&mut app, key(KeyCode::Enter));
+    let rule = (0..total(&app))
+        .find(|&r| row_text(&app, r).starts_with('\u{2500}'))
+        .expect("heading rule row");
+    let two = (0..total(&app))
+        .find(|&r| row_text(&app, r) == "foo two")
+        .unwrap();
+    keys(&mut app, "gg");
+    keys(&mut app, &"j".repeat(rule));
+    keys(&mut app, "n");
+    assert_eq!(app.cursor(), at(two, 0));
+    assert_eq!(app.status(), "");
+    keys(&mut app, "G");
+    keys(&mut app, "N");
+    assert_eq!(app.cursor(), at(two, 0));
+    assert_eq!(app.status(), "");
+}
+
+#[test]
 fn uppercase_pattern_is_case_sensitive_and_question_searches_back() {
     let (_d, mut app) = app();
     type_search(&mut app, '/', "PARA");
