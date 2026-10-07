@@ -598,3 +598,283 @@ fn render_width_is_capped_by_max_width() {
     assert!(widths.iter().all(|&w| w <= 40), "{widths:?}");
     assert!(total(&app) > 4, "paragraph wraps at 40, not 200");
 }
+
+// -------------------------------------------------------------------------
+// Link following and history (step 6)
+
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::rc::Rc;
+
+/// Recorded side effects: URLs opened and files edited.
+#[derive(Default)]
+struct Effects {
+    opened: Vec<String>,
+    edited: Vec<PathBuf>,
+}
+
+fn a_source() -> String {
+    let mut s = String::from(
+        "# A\n\n[b](b.md)\n\n[h](#section-two)\n\n[x](missing.md)\n\n\
+         [u](https://example.com)\n\n[t](notes.txt)\n\n[w](b.md#deep)\n\n\
+         [bad](#nope)\n\n[[b]]\n\n",
+    );
+    for i in 1..=15 {
+        s.push_str(&format!("Filler {i}\n\n"));
+    }
+    s.push_str("## Section two\n\nend\n");
+    s
+}
+
+fn b_source() -> String {
+    let mut s = String::from("# B page\n\nback to [a](a.md)\n\n");
+    for i in 1..=20 {
+        s.push_str(&format!("B filler {i}\n\n"));
+    }
+    s.push_str("## Deep\n\nbottom\n");
+    s
+}
+
+fn nav_app() -> (TempDir, App, Rc<RefCell<Effects>>) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.md"), a_source()).unwrap();
+    std::fs::write(dir.path().join("b.md"), b_source()).unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "plain\n").unwrap();
+    let fx = Rc::new(RefCell::new(Effects::default()));
+    let (o, e) = (fx.clone(), fx.clone());
+    let app = App::new(
+        opts(dir.path(), StartTarget::File(dir.path().join("a.md"))),
+        (COLS, ROWS),
+    )
+    .unwrap()
+    .with_effects(
+        move |url| o.borrow_mut().opened.push(url.to_string()),
+        move |path| {
+            e.borrow_mut().edited.push(path.to_path_buf());
+            Ok(())
+        },
+    );
+    (dir, app, fx)
+}
+
+/// Row whose text is exactly `text`.
+fn find_row(app: &App, text: &str) -> usize {
+    (0..total(app))
+        .find(|&r| row_text(app, r) == text)
+        .unwrap_or_else(|| panic!("no row {text:?}"))
+}
+
+/// Move the cursor to the start of the row reading `text` using `gg` + `j`.
+fn goto_text(app: &mut App, text: &str) {
+    let row = find_row(app, text);
+    keys(app, "gg");
+    for _ in 0..row {
+        keys(app, "j");
+    }
+    assert_eq!(app.cursor(), at(row, 0));
+}
+
+fn page_path(app: &App) -> PathBuf {
+    app.page().unwrap().path.clone().unwrap()
+}
+
+#[test]
+fn gd_opens_markdown_link_and_c_o_returns() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    let before = (app.cursor(), app.scroll());
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(row_text(&app, 0), "B page");
+    assert_eq!((app.cursor(), app.scroll()), (at(0, 0), 0));
+    assert_eq!(app.history_depth(), 1);
+    assert_eq!(app.title(), "b.md");
+
+    send(&mut app, ctrl('o'));
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!((app.cursor(), app.scroll()), before);
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
+fn enter_and_c_bracket_follow() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    send(&mut app, ctrl('t'));
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    // crossterm reports C-] as C-5.
+    send(&mut app, ctrl('5'));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    send(&mut app, ctrl('o'));
+    send(&mut app, ctrl(']'));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+}
+
+#[test]
+fn back_and_forward_round_trip_restores_cursor_and_scroll() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    // On b.md, move to the bottom and a few rows up, mid-line.
+    keys(&mut app, "G3kw");
+    let b_bottom = (app.cursor(), app.scroll());
+    assert!(b_bottom.1 > 0, "b.md scrolled");
+
+    send(&mut app, ctrl('o'));
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.forward_depth(), 1);
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!((app.cursor(), app.scroll()), b_bottom);
+    send(&mut app, ctrl('o'));
+    send(&mut app, ctrl('i'));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!((app.cursor(), app.scroll()), b_bottom);
+    // Nothing further forward.
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(app.history_depth(), 1);
+}
+
+#[test]
+fn new_follow_clears_forward() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    send(&mut app, ctrl('o'));
+    assert_eq!(app.forward_depth(), 1);
+    goto_text(&mut app, "h");
+    keys(&mut app, "gd");
+    assert_eq!(app.forward_depth(), 0);
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 1);
+}
+
+#[test]
+fn anchor_jump_lands_on_heading_and_is_undoable() {
+    let (_d, mut app, _fx) = nav_app();
+    goto_text(&mut app, "h");
+    let before = (app.cursor(), app.scroll());
+    keys(&mut app, "gd");
+    let heading = find_row(&app, "Section two");
+    assert_eq!(app.cursor(), at(heading, 0));
+    assert!(app.scroll() <= heading && heading < app.scroll() + VH);
+    assert_eq!(app.history_depth(), 1);
+    send(&mut app, ctrl('o'));
+    assert_eq!((app.cursor(), app.scroll()), before);
+}
+
+#[test]
+fn path_with_anchor_opens_then_jumps() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "w");
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(app.cursor(), at(find_row(&app, "Deep"), 0));
+}
+
+#[test]
+fn wikilink_adds_md() {
+    let (dir, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    let wiki = (0..total(&app))
+        .filter(|&r| row_text(&app, r) == "b")
+        .nth(1)
+        .expect("wikilink row");
+    for _ in app.cursor().row..wiki {
+        keys(&mut app, "j");
+    }
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+}
+
+#[test]
+fn unknown_anchor_and_missing_file_set_status_only() {
+    let (dir, mut app, fx) = nav_app();
+    goto_text(&mut app, "bad");
+    let pos = app.cursor();
+    keys(&mut app, "gd");
+    assert_eq!(app.status(), "No heading #nope");
+    assert_eq!((app.cursor(), app.history_depth()), (pos, 0));
+
+    goto_text(&mut app, "x");
+    keys(&mut app, "gd");
+    assert_eq!(app.status(), "No such file: missing.md");
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+    assert!(fx.borrow().opened.is_empty() && fx.borrow().edited.is_empty());
+}
+
+#[test]
+fn external_link_uses_injected_opener() {
+    let (dir, mut app, fx) = nav_app();
+    goto_text(&mut app, "u");
+    keys(&mut app, "gd");
+    assert_eq!(fx.borrow().opened, ["https://example.com"]);
+    assert_eq!(app.status(), "Opened https://example.com");
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+
+    keys(&mut app, "gx");
+    assert_eq!(fx.borrow().opened.len(), 2);
+    goto_text(&mut app, "b");
+    keys(&mut app, "gx");
+    assert_eq!(app.status(), "Not a URL");
+    assert_eq!(fx.borrow().opened.len(), 2);
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+}
+
+#[test]
+fn non_markdown_link_goes_to_injected_editor() {
+    let (dir, mut app, fx) = nav_app();
+    goto_text(&mut app, "t");
+    keys(&mut app, "gd");
+    let txt = dir.path().join("notes.txt");
+    assert_eq!(app.pending_editor(), Some(txt.as_path()));
+    assert!(fx.borrow().edited.is_empty(), "app never runs it itself");
+    app.run_pending_editor();
+    assert_eq!(fx.borrow().edited, [txt]);
+    assert_eq!(app.pending_editor(), None);
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
+fn gd_off_a_link_is_a_status() {
+    let (_d, mut app, _fx) = nav_app();
+    keys(&mut app, "gd");
+    assert_eq!(app.status(), "No link under cursor");
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
+fn c_o_returns_to_stdin_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let b = dir.path().join("b.md");
+    std::fs::write(&b, b_source()).unwrap();
+    let text = format!("# From stdin\n\n[b]({})\n", b.display());
+    let mut app = App::new(opts(dir.path(), StartTarget::Stdin(text)), (COLS, ROWS))
+        .unwrap()
+        .with_effects(|_| panic!("no opener"), |_| panic!("no editor"));
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    assert_eq!(app.page().unwrap().path.as_deref(), Some(b.as_path()));
+    send(&mut app, ctrl('o'));
+    assert_eq!(app.title(), "[stdin]");
+    assert_eq!(row_text(&app, 0), "From stdin");
+    assert_eq!(app.cursor(), at(find_row(&app, "b"), 0));
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(app.page().unwrap().path.as_deref(), Some(b.as_path()));
+}
+
+#[test]
+fn status_line_shows_back_depth() {
+    let (_d, mut app, _fx) = nav_app();
+    assert!(screen(&app).contains("← 0"), "{}", screen(&app));
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    assert!(screen(&app).contains("← 1"), "{}", screen(&app));
+}

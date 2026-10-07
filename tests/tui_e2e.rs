@@ -53,42 +53,13 @@ fn first_line(screen: &str) -> &str {
 
 #[test]
 fn g_then_gg_in_tmux() {
-    if Command::new("tmux").arg("-V").output().is_err() {
-        eprintln!("skipping tui_e2e: tmux not found on PATH");
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    std::fs::create_dir(&home).unwrap();
     let doc = dir.path().join("long.md");
     let body: String = (1..=120).map(|i| format!("line {i:03}\n\n")).collect();
     std::fs::write(&doc, body).unwrap();
-
-    let tmux = Tmux {
-        sock: dir.path().join("sock"),
-        home: home.clone(),
+    let Some(tmux) = start(dir.path(), &doc) else {
+        return;
     };
-    let bin = env!("CARGO_BIN_EXE_ramble");
-    let shell_cmd = format!(
-        "env HOME={} {} {}",
-        quote(&home),
-        quote(Path::new(bin)),
-        quote(&doc)
-    );
-    let out = tmux.cmd(&[
-        "-f",
-        "/dev/null",
-        "new-session",
-        "-d",
-        "-s",
-        "e2e",
-        "-x",
-        "80",
-        "-y",
-        "24",
-        &shell_cmd,
-    ]);
-    assert!(out.status.success(), "tmux new-session: {out:?}");
 
     let screen = tmux.wait_for("first page", |s| first_line(s) == "line 001");
     assert!(
@@ -112,6 +83,72 @@ fn g_then_gg_in_tmux() {
         assert!(Instant::now() < deadline, "ramble did not quit on q");
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Start the real binary on `doc` in a fresh isolated tmux server.
+fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
+    if Command::new("tmux").arg("-V").output().is_err() {
+        eprintln!("skipping tui_e2e: tmux not found on PATH");
+        return None;
+    }
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let tmux = Tmux {
+        sock: dir.join("sock"),
+        home: home.clone(),
+    };
+    let bin = env!("CARGO_BIN_EXE_ramble");
+    let shell_cmd = format!(
+        "env HOME={} {} {}",
+        quote(&home),
+        quote(Path::new(bin)),
+        quote(doc)
+    );
+    let out = tmux.cmd(&[
+        "-f",
+        "/dev/null",
+        "new-session",
+        "-d",
+        "-s",
+        "e2e",
+        "-x",
+        "80",
+        "-y",
+        "24",
+        &shell_cmd,
+    ]);
+    assert!(out.status.success(), "tmux new-session: {out:?}");
+    Some(tmux)
+}
+
+#[test]
+fn follow_link_and_back_in_tmux() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.md");
+    std::fs::write(&a, "# Page A\n\nGo to [the b page](b.md) now\n").unwrap();
+    std::fs::write(dir.path().join("b.md"), "# Page B\n\nbody of b\n").unwrap();
+    let Some(tmux) = start(dir.path(), &a) else {
+        return;
+    };
+    tmux.wait_for("a.md", |s| first_line(s) == "Page A");
+
+    // Rows: "Page A", rule, blank, link line. `w w w` lands on "the".
+    tmux.cmd(&["send-keys", "-t", "e2e", "j", "j", "j", "w", "w", "w"]);
+    tmux.cmd(&["send-keys", "-t", "e2e", "g", "d"]);
+    let screen = tmux.wait_for("b.md after gd", |s| first_line(s) == "Page B");
+    assert!(screen.contains("body of b"), "{screen}");
+    assert!(screen.contains("← 1"), "{screen}");
+
+    tmux.cmd(&["send-keys", "-t", "e2e", "C-o"]);
+    let screen = tmux.wait_for("a.md after C-o", |s| first_line(s) == "Page A");
+    assert!(screen.contains("the b page"), "{screen}");
+    assert!(screen.contains("← 0"), "{screen}");
+
+    // C-] (sent once) follows the same link: the cursor was restored onto it.
+    tmux.cmd(&["send-keys", "-t", "e2e", "C-]"]);
+    tmux.wait_for("b.md after C-]", |s| first_line(s) == "Page B");
+
+    tmux.cmd(&["send-keys", "-t", "e2e", "q"]);
 }
 
 fn quote(p: &Path) -> String {

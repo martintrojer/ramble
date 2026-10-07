@@ -5,6 +5,7 @@
 //! [`run`] for interactive mode; t05_app implements it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -14,6 +15,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::config::Config;
 use crate::doc::{self, Document};
+use crate::nav::{self, Entry, History, PageRef, Target};
 use crate::render::{self, RenderedPage, SrcMap, Theme};
 use crate::ui;
 
@@ -81,6 +83,9 @@ struct Pos {
     idx: usize,
 }
 
+/// Runs an editor on a file outside the TUI.
+type Editor = dyn FnMut(&Path) -> anyhow::Result<()>;
+
 pub struct App {
     config: Config,
     tree_root: PathBuf,
@@ -98,6 +103,15 @@ pub struct App {
     count: Option<usize>,
     pending: Option<char>,
     quit: bool,
+    history: History,
+    /// Text of the current page when it came from stdin (kept for history).
+    stdin: Option<Arc<String>>,
+    /// Opens an external URL (`open` / `xdg-open` by default).
+    opener: Box<dyn FnMut(&str)>,
+    /// Edits a non-markdown file (`$VISUAL` / `$EDITOR` / `vi` by default).
+    editor: Box<Editor>,
+    /// A file to hand to the editor; `run` drains it outside the TUI.
+    pending_editor: Option<PathBuf>,
 }
 
 impl App {
@@ -119,29 +133,58 @@ impl App {
             count: None,
             pending: None,
             quit: false,
+            history: History::new(),
+            stdin: None,
+            opener: Box::new(system_open),
+            editor: Box::new(system_edit),
+            pending_editor: None,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
             StartTarget::Dir(_) => app.placeholder = Some(NO_FILE_MESSAGE),
-            StartTarget::Stdin(text) => app.set_page(None, doc::parse(text)),
+            StartTarget::Stdin(text) => app.open_stdin(Arc::new(text)),
         }
         Ok(app)
+    }
+
+    /// Replace the side effects: `opener` gets external URLs, `editor`
+    /// gets non-markdown files. Tests pass recording closures.
+    pub fn with_effects(
+        mut self,
+        opener: impl FnMut(&str) + 'static,
+        editor: impl FnMut(&Path) -> anyhow::Result<()> + 'static,
+    ) -> Self {
+        self.opener = Box::new(opener);
+        self.editor = Box::new(editor);
+        self
     }
 
     /// Load and render `path`, cursor to the top. An I/O error is returned;
     /// a binary file leaves the current page unchanged and sets the status.
     pub fn open_file(&mut self, path: &Path) -> anyhow::Result<()> {
         let bytes = std::fs::read(path).with_context(|| format!("{}", path.display()))?;
-        let Some(doc) = doc::from_bytes(&bytes) else {
+        self.open_bytes(path, &bytes);
+        Ok(())
+    }
+
+    /// Show `bytes` as the page for `path`. False (page unchanged) when the
+    /// bytes look binary.
+    fn open_bytes(&mut self, path: &Path, bytes: &[u8]) -> bool {
+        let Some(doc) = doc::from_bytes(bytes) else {
             self.set_status("looks binary");
-            return Ok(());
+            return false;
         };
         let lossy = doc.lossy;
         self.set_page(Some(path.to_path_buf()), doc);
         if lossy {
             self.set_status("not valid UTF-8");
         }
-        Ok(())
+        true
+    }
+
+    fn open_stdin(&mut self, text: Arc<String>) {
+        self.set_page(None, doc::parse(text.as_ref().clone()));
+        self.stdin = Some(text);
     }
 
     fn set_page(&mut self, path: Option<PathBuf>, doc: Document) {
@@ -157,6 +200,7 @@ impl App {
         self.want_col = 0;
         self.scroll = 0;
         self.status.clear();
+        self.stdin = None;
     }
 
     fn render_width(&self) -> u16 {
@@ -275,9 +319,29 @@ impl App {
         "—"
     }
 
-    /// Back-history depth. Navigation arrives in step 6.
+    /// Back-history depth: entries behind the current page.
     pub fn history_depth(&self) -> usize {
-        0
+        self.history.depth()
+    }
+
+    /// Forward-history depth: entries ahead of the current page.
+    pub fn forward_depth(&self) -> usize {
+        self.history.forward_depth()
+    }
+
+    /// A non-markdown file waiting for the editor.
+    pub fn pending_editor(&self) -> Option<&Path> {
+        self.pending_editor.as_deref()
+    }
+
+    /// Hand the pending file (if any) to the editor. The caller must have
+    /// left the TUI first; `run` does this.
+    pub fn run_pending_editor(&mut self) {
+        if let Some(path) = self.pending_editor.take()
+            && let Err(e) = (self.editor)(&path)
+        {
+            self.set_status(format!("editor: {e:#}"));
+        }
     }
 
     /// Position through the page: `All`, `Top`, or `NN%`.
@@ -339,11 +403,18 @@ impl App {
         let count = self.count.take();
         let n = count.unwrap_or(1).max(1);
         if ctrl {
-            if let KeyCode::Char(c) = key.code {
-                self.scroll_key(c);
+            match key.code {
+                // C-] arrives as C-5 from crossterm.
+                KeyCode::Char('5' | ']') => self.follow(),
+                KeyCode::Char('o' | 't') => self.back(),
+                KeyCode::Char('i') => self.forward(),
+                KeyCode::Char(c) => self.scroll_key(c),
+                _ => {}
             }
         } else {
             match key.code {
+                KeyCode::Enter => self.follow(),
+                KeyCode::Tab => self.forward(),
                 KeyCode::Char(c @ ('g' | 'z' | 'Z')) => {
                     self.pending = Some(c);
                     self.count = count;
@@ -391,6 +462,8 @@ impl App {
     fn prefixed(&mut self, prefix: char, c: char, count: Option<usize>) {
         match (prefix, c) {
             ('g', 'g') => self.goto_row(count.map_or(0, |c| c - 1)),
+            ('g', 'd') => self.follow(),
+            ('g', 'x') => self.open_external(),
             ('z', 'z') => {
                 let half = (self.viewport_height() - 1) / 2;
                 self.scroll = self.cursor.row.saturating_sub(half).min(self.max_scroll());
@@ -469,6 +542,178 @@ impl App {
         } else if self.cursor.row >= self.scroll + vh {
             self.scroll = self.cursor.row + 1 - vh;
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Navigation
+
+    /// The current page and position as a history entry.
+    fn entry(&self) -> Option<Entry> {
+        let p = self.page.as_ref()?;
+        let page = match &p.path {
+            Some(path) => PageRef::File(path.clone()),
+            None => PageRef::Stdin(
+                self.stdin
+                    .clone()
+                    .unwrap_or_else(|| Arc::new(p.doc.source.clone())),
+            ),
+        };
+        Some(Entry {
+            page,
+            cursor_row: self.cursor.row,
+            cursor_col: self.cursor.col,
+            scroll: self.scroll,
+        })
+    }
+
+    /// Directory relative links resolve against: the current file's
+    /// directory, or the working directory for stdin.
+    fn link_dir(&self) -> PathBuf {
+        match self.page.as_ref().and_then(|p| p.path.as_deref()) {
+            Some(path) => match path.parent() {
+                Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+                _ => PathBuf::from("."),
+            },
+            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        }
+    }
+
+    /// The link under the cursor, resolved, plus its destination as written.
+    fn target_under_cursor(&mut self) -> Option<(Target, String)> {
+        let Some(i) = self.link_under_cursor() else {
+            self.set_status("No link under cursor");
+            return None;
+        };
+        let link = self.page.as_ref()?.doc.links.get(i)?.clone();
+        Some((
+            nav::resolve(&link.dest, &link.kind, &self.link_dir()),
+            link.dest,
+        ))
+    }
+
+    /// `gd` / `Enter` / `C-]`: follow the link under the cursor.
+    fn follow(&mut self) {
+        let Some((target, dest)) = self.target_under_cursor() else {
+            return;
+        };
+        match target {
+            Target::External(url) => {
+                (self.opener)(&url);
+                self.set_status(format!("Opened {url}"));
+            }
+            Target::Anchor(anchor) => {
+                let Some(row) = self.heading_row(&anchor) else {
+                    self.set_status(format!("No heading #{anchor}"));
+                    return;
+                };
+                if let Some(e) = self.entry() {
+                    self.history.push(e);
+                }
+                self.jump_to_row(row);
+            }
+            Target::File { path, anchor } => {
+                let as_written = dest.split('#').next().unwrap_or("").to_string();
+                let missing = || format!("No such file: {as_written}");
+                if !path.is_file() {
+                    self.set_status(missing());
+                    return;
+                }
+                if !nav::is_markdown(&path) {
+                    self.pending_editor = Some(path);
+                    return;
+                }
+                let Ok(bytes) = std::fs::read(&path) else {
+                    self.set_status(missing());
+                    return;
+                };
+                let here = self.entry();
+                if !self.open_bytes(&path, &bytes) {
+                    return;
+                }
+                if let Some(e) = here {
+                    self.history.push(e);
+                }
+                if let Some(anchor) = anchor {
+                    match self.heading_row(&anchor) {
+                        Some(row) => self.jump_to_row(row),
+                        None => self.set_status(format!("No heading #{anchor}")),
+                    }
+                }
+            }
+        }
+    }
+
+    /// `gx`: open the URL under the cursor externally.
+    fn open_external(&mut self) {
+        match self.target_under_cursor() {
+            Some((Target::External(url), _)) => {
+                (self.opener)(&url);
+                self.set_status(format!("Opened {url}"));
+            }
+            Some(_) => self.set_status("Not a URL"),
+            None => {}
+        }
+    }
+
+    /// Rendered row of the heading with `slug` on the current page.
+    fn heading_row(&self, slug: &str) -> Option<usize> {
+        let p = self.page.as_ref()?;
+        let h = p.doc.headings.iter().find(|h| h.slug == slug).or_else(|| {
+            let lower = slug.to_lowercase();
+            p.doc.headings.iter().find(|h| h.slug == lower)
+        })?;
+        p.rendered.srcmap.row_for(h.range.start)
+    }
+
+    /// Cursor to `row`, column 0, scrolled to the top of the view.
+    fn jump_to_row(&mut self, row: usize) {
+        self.goto_row(row);
+        self.scroll = self.cursor.row.min(self.max_scroll());
+    }
+
+    /// `C-o` / `C-t`.
+    fn back(&mut self) {
+        let Some(here) = self.entry() else { return };
+        let Some(e) = self.history.back(here) else {
+            self.set_status("At the start of history");
+            return;
+        };
+        if let Err(msg) = self.restore(&e) {
+            self.history.forward(e);
+            self.set_status(msg);
+        }
+    }
+
+    /// `C-i` / `Tab`.
+    fn forward(&mut self) {
+        let Some(here) = self.entry() else { return };
+        let Some(e) = self.history.forward(here) else {
+            self.set_status("At the end of history");
+            return;
+        };
+        if let Err(msg) = self.restore(&e) {
+            self.history.back(e);
+            self.set_status(msg);
+        }
+    }
+
+    /// Show the entry's page with its cursor and scroll.
+    fn restore(&mut self, e: &Entry) -> Result<(), String> {
+        match &e.page {
+            PageRef::File(path) => {
+                let bytes =
+                    std::fs::read(path).map_err(|_| format!("No such file: {}", path.display()))?;
+                if !self.open_bytes(path, &bytes) {
+                    return Err("looks binary".into());
+                }
+            }
+            PageRef::Stdin(text) => self.open_stdin(text.clone()),
+        }
+        self.cursor.row = e.cursor_row.min(self.last_row());
+        self.set_col(e.cursor_col);
+        self.scroll = e.scroll.min(self.max_scroll());
+        self.keep_visible();
+        Ok(())
     }
 
     // ---------------------------------------------------------------------
@@ -729,6 +974,44 @@ fn col_for(map: &SrcMap, byte: usize) -> usize {
     s.span.col_start + (byte - s.src.start) * cols / len
 }
 
+/// Default opener: `open` (macOS) or `xdg-open`, detached, with null stdio.
+fn system_open(url: &str) {
+    use std::process::{Command, Stdio};
+    let prog = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    if let Ok(mut child) = Command::new(prog)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        // Reap it in the background so it never becomes a zombie.
+        std::thread::spawn(move || child.wait());
+    }
+}
+
+/// Default editor: `$VISUAL`, else `$EDITOR`, else `vi`, in the terminal.
+fn system_edit(path: &Path) -> anyhow::Result<()> {
+    let cmd = ["VISUAL", "EDITOR"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .find(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "vi".into());
+    let mut words = cmd.split_whitespace();
+    let prog = words.next().unwrap_or("vi");
+    let status = std::process::Command::new(prog)
+        .args(words)
+        .arg(path)
+        .status()
+        .with_context(|| format!("running {prog}"))?;
+    anyhow::ensure!(status.success(), "{prog} exited with {status}");
+    Ok(())
+}
+
 /// Run the interactive TUI until the user quits.
 pub fn run(opts: StartOptions) -> anyhow::Result<()> {
     let size = crossterm::terminal::size().context("reading terminal size")?;
@@ -742,6 +1025,12 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
 
 fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
     while !app.should_quit() {
+        if app.pending_editor().is_some() {
+            suspend()?;
+            app.run_pending_editor();
+            resume()?;
+            terminal.clear()?;
+        }
         terminal.draw(|f| ui::draw(f, app))?;
         if !event::poll(Duration::from_millis(250))? {
             continue;
@@ -752,5 +1041,19 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> anyhow:
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Leave raw mode and the alternate screen so a child can use the terminal.
+fn suspend() -> anyhow::Result<()> {
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    Ok(())
+}
+
+/// Undo [`suspend`].
+fn resume() -> anyhow::Result<()> {
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::terminal::enable_raw_mode()?;
     Ok(())
 }
