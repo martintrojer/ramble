@@ -121,6 +121,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b(":", N, G::General, "command line", always),
     b("q", Any, G::General, "quit", always),
     b("ZZ", N, G::General, "quit", always),
+    b(
+        "gR",
+        N,
+        G::General,
+        "toggle the raw source view",
+        App::has_page,
+    ),
     // Motions.
     b("h, Left", N, G::Motions, "left", App::has_page),
     b("l, Right", N, G::Motions, "right", App::has_page),
@@ -456,14 +463,20 @@ impl App {
         !self.available_ops().is_empty()
     }
 
-    /// The `<leader>` sequence in `keys` reaches its built-in binding:
-    /// no launcher key takes or extends it.
+    /// The `<leader>` sequence in `keys` reaches its built-in binding: no
+    /// launcher key takes or extends it, and none sits on a prefix of it
+    /// (dispatch launches as soon as the typed prefix matches).
     fn leader_free(&self, keys: &str) -> bool {
         let Some(rest) = keys.strip_prefix("<leader>") else {
             return true;
         };
         let typed: Vec<char> = rest.chars().collect();
-        match_leader(&self.leader_bindings, &typed) == LeaderMatch::NoMapping
+        (1..=typed.len()).all(|n| {
+            !matches!(
+                match_leader(&self.leader_bindings, &typed[..n]),
+                LeaderMatch::Launch(_)
+            )
+        }) && match_leader(&self.leader_bindings, &typed) == LeaderMatch::NoMapping
     }
 
     /// Whether a row of context `ctx` applies with the current focus.
@@ -770,8 +783,8 @@ mod tests {
             "h", "j", "k", "l", "w", "b", "e", "0", "$", "{", "}", "gg", "G", "H", "M", "L", "C-d",
             "C-u", "C-f", "C-b", "C-e", "C-y", "zz", "zt", "zb", "gd", "Enter", "C-]", "gx", "]l",
             "[l", ";", ",", "]]", "[[", "s", "K", "y", "C-o", "C-t", "C-i", "Tab", "/", "?", "n",
-            "N", "*", "#", "Esc", "m{a-z}", "'{a-z}", "]r", "[r", ":", "grr", "ZZ", "PgDn", "PgUp",
-            "Home", "End",
+            "N", "*", "#", "Esc", "m{a-z}", "'{a-z}", "]r", "[r", ":", "grr", "ZZ", "gR", "PgDn",
+            "PgUp", "Home", "End",
         ];
         for k in normal {
             assert!(has(k, &[Ctx::Normal, Ctx::Any]), "no normal row for {k}");

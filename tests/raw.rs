@@ -193,5 +193,10 @@ fn crlf_line_endings_are_not_drawn() {
     assert_eq!(row_text(&app, 0), "# CR");
     assert_eq!(row_text(&app, 1), "");
     assert_eq!(row_text(&app, 2), "line one");
-    assert!(!screen(&app).contains('?'));
+    let screen = screen(&app);
+    let content: Vec<&str> = screen.lines().take(ROWS as usize - 1).collect();
+    assert!(
+        !content.iter().any(|l| l.contains('?')),
+        "no stray CR above the status line (its g? hint has a ?): {screen}"
+    );
 }

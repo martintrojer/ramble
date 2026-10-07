@@ -77,7 +77,8 @@ fn screen(app: &App) -> String {
 }
 
 fn status_row(app: &App) -> String {
-    screen(app).lines().last().unwrap().to_string()
+    let s = screen(app);
+    s.lines().last().unwrap().trim_matches('"').to_string()
 }
 
 #[test]
@@ -262,8 +263,7 @@ fn scrolls_and_never_panics_at_a_small_size() {
     keys(&mut app, "gg");
     assert_eq!(app.help_view().unwrap().scroll, 0);
     app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
-    let half = app.help_view().unwrap().scroll;
-    assert!(half > 0);
+    assert!(app.help_view().unwrap().scroll > 0);
     app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
     assert_eq!(app.help_view().unwrap().scroll, 0);
     screen(&app);
@@ -304,4 +304,67 @@ fn status_line_hint_is_hidden_while_a_prompt_owns_the_row() {
     let (_d, mut app) = app_with(config());
     keys(&mut app, "/");
     assert!(!status_row(&app).contains("g? help"));
+}
+
+#[test]
+fn ctrl_d_and_ctrl_u_move_by_half_the_list() {
+    let (_d, mut app) = app_with(config());
+    let (w, h) = app.size();
+    let rows = ramble::app::help_list_rows(ramble::app::help_rect(ratatui::layout::Rect::new(
+        0,
+        0,
+        w,
+        h - 1,
+    )));
+    let half = rows / 2;
+    assert!(half > 1, "80x24 gives a half page of more than one line");
+    keys(&mut app, "g?");
+    let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+    app.handle_key(ctrl('d'));
+    assert_eq!(app.help_view().unwrap().scroll, half);
+    app.handle_key(ctrl('d'));
+    assert_eq!(app.help_view().unwrap().scroll, 2 * half);
+    app.handle_key(ctrl('u'));
+    assert_eq!(app.help_view().unwrap().scroll, half);
+}
+
+#[test]
+fn status_line_hint_is_hidden_under_the_sidebar_filter_and_command_prompts() {
+    let mut c = config();
+    c.sidebar.default = SidebarMode::Files;
+    let (_d, mut app) = app_named("a.md", c, (100, 30));
+    assert!(status_row(&app).contains("g? help"));
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    keys(&mut app, "h/x");
+    assert_eq!(app.mode(), Mode::Filter);
+    let row = status_row(&app);
+    assert!(row.starts_with("/x"), "{row}");
+    assert!(!row.contains("g? help"), "{row}");
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(key(KeyCode::Esc));
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    keys(&mut app, "l:");
+    assert_eq!(app.mode(), Mode::Command);
+    let row = status_row(&app);
+    assert!(row.starts_with(':'), "{row}");
+    assert!(!row.contains("g? help"), "{row}");
+}
+
+#[test]
+fn a_launcher_on_a_leader_prefix_hides_the_rows_it_shadows() {
+    let mut c = config();
+    c.launch = vec![launcher("zed", Some("<leader>z"), false)];
+    let (_d, app) = app_with(c);
+    assert!(has_keys(&app, "Space z"), "the launcher is listed");
+    for k in ["Space zf", "Space zl", "Space zs", "Space zz", "Space zb"] {
+        assert!(!has_keys(&app, k), "{k} is unreachable behind Space z");
+    }
+    assert!(has_keys(&app, "Space e"), "unrelated leader rows stay");
+}
+
+#[test]
+fn raw_view_rows_are_listed() {
+    let (_d, app) = app_with(config());
+    assert!(has_keys(&app, "gR"));
+    assert!(has_keys(&app, ":Raw"));
 }

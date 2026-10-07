@@ -21,6 +21,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     (":Links", "links picker"),
     (":Launch <name>", "run a launcher by name"),
     (":Sidebar off|files|outline|split", "set the sidebar mode"),
+    (":Raw", "toggle the raw source view"),
 ];
 
 /// Keys while typing a command.

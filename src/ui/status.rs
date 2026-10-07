@@ -25,6 +25,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
         return;
     }
+    // A sidebar filter or `:` prompt owns the row and is drawn over it
+    // later; its Paragraph only covers its own text, so draw nothing here.
+    if app.filter_prompt().is_some() || app.cmdline_prompt().is_some() {
+        return;
+    }
     let review = match app.review_count() {
         0 => String::new(),
         n => format!("review {n}  "),
