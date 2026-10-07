@@ -2,6 +2,7 @@
 //! widget per area; later units add a file and one call here.
 
 mod content;
+mod hints;
 mod hover;
 mod sidebar;
 mod status;
@@ -23,6 +24,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
     content::draw(frame, app, content);
     hover::draw(frame, app, content);
+    hints::draw(frame, app, content);
     status::draw(frame, app, status);
     sidebar::draw_prompt(frame, app, status);
 }

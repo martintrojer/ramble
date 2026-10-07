@@ -1753,3 +1753,201 @@ fn injected_lsp_event_for_another_server_is_ignored() {
 fn dir_placeholder_points_at_the_file_tree() {
     assert!(ramble::app::NO_FILE_MESSAGE.contains("file tree"));
 }
+
+// Link and heading motions, hints (`]l [l ; , ]] [[ s`).
+
+/// Links on rows 2 and 4, a heading below, a link after it.
+fn links_source() -> String {
+    "# Top\n\nsee [one](#end) and [two](#end)\n\n[three](#end) here\n\n## Mid\n\ntext\n\n## End\n\n[four](#top)\n".into()
+}
+
+/// Screen (row, col) of the first cell of the row text `word` in `app`.
+fn word_at(app: &App, word: &str) -> Cursor {
+    (0..total(app))
+        .find_map(|r| row_text(app, r).find(word).map(|c| at(r, c)))
+        .unwrap_or_else(|| panic!("no {word:?}"))
+}
+
+#[test]
+fn link_motions_visit_links_in_screen_order_and_stop_at_ends() {
+    let (_d, mut app, _fx) = nav_app_with(&links_source());
+    let (one, two, three, four) = (
+        word_at(&app, "one"),
+        word_at(&app, "two"),
+        word_at(&app, "three"),
+        word_at(&app, "four"),
+    );
+    keys(&mut app, "]l");
+    assert_eq!(app.cursor(), one);
+    keys(&mut app, "]l");
+    assert_eq!(app.cursor(), two);
+    // From inside a link, ]l goes to the following one.
+    keys(&mut app, "l]l");
+    assert_eq!(app.cursor(), three);
+    keys(&mut app, "]l");
+    assert_eq!(app.cursor(), four);
+    keys(&mut app, "]l");
+    assert_eq!(app.cursor(), four, "no wrap-around");
+    assert_eq!(app.status(), "No more links");
+    keys(&mut app, "[l");
+    assert_eq!(app.cursor(), three);
+    keys(&mut app, "2[l");
+    assert_eq!(app.cursor(), one);
+    keys(&mut app, "5]l");
+    assert_eq!(app.cursor(), four, "a count stops early at the end");
+    keys(&mut app, "gg");
+    keys(&mut app, "[l");
+    assert_eq!(app.status(), "No more links");
+    assert_eq!(app.cursor(), at(0, 0));
+}
+
+#[test]
+fn semicolon_and_comma_repeat_the_last_link_motion() {
+    let (_d, mut app, _fx) = nav_app_with(&links_source());
+    keys(&mut app, ";");
+    assert_eq!(app.status(), "No previous link motion");
+    assert_eq!(app.cursor(), at(0, 0));
+    keys(&mut app, ",");
+    assert_eq!(app.status(), "No previous link motion");
+    let (one, two, three) = (
+        word_at(&app, "one"),
+        word_at(&app, "two"),
+        word_at(&app, "three"),
+    );
+    keys(&mut app, "]l;");
+    assert_eq!(app.cursor(), two);
+    keys(&mut app, ",");
+    assert_eq!(app.cursor(), one);
+    // After [l, ; goes backward and , forward.
+    keys(&mut app, "G[l;");
+    assert_eq!(app.cursor(), two);
+    keys(&mut app, ",");
+    assert_eq!(app.cursor(), three);
+    // Heading motions do not change the repeat direction.
+    keys(&mut app, "gg]];");
+    assert_eq!(app.cursor(), three, "; still goes backward");
+}
+
+#[test]
+fn heading_motions() {
+    let (_d, mut app, _fx) = nav_app_with(&links_source());
+    let (mid, end) = (find_row(&app, "Mid"), find_row(&app, "End"));
+    keys(&mut app, "]]");
+    assert_eq!(app.cursor(), at(mid, 0));
+    keys(&mut app, "]]");
+    assert_eq!(app.cursor(), at(end, 0));
+    keys(&mut app, "]]");
+    assert_eq!(app.status(), "No more headings");
+    assert_eq!(app.cursor(), at(end, 0));
+    keys(&mut app, "2[[");
+    assert_eq!(app.cursor(), at(0, 0));
+    keys(&mut app, "[[");
+    assert_eq!(app.status(), "No more headings");
+    keys(&mut app, "9]]");
+    assert_eq!(app.cursor(), at(end, 0));
+}
+
+#[test]
+fn heading_motion_only_keeps_the_heading_visible() {
+    let (_d, mut app) = app_with(format!("{}## Last\n\nx\n", source()).as_bytes());
+    let last = find_row_plain(&app, "Last");
+    keys(&mut app, "]]");
+    assert_eq!(app.cursor(), at(last, 0));
+    assert_eq!(app.scroll(), last + 1 - VH, "scrolled just enough");
+}
+
+fn find_row_plain(app: &App, text: &str) -> usize {
+    (0..total(app)).find(|&r| row_text(app, r) == text).unwrap()
+}
+
+#[test]
+fn hint_labels_are_single_then_all_double() {
+    use ramble::app::{HINT_ALPHABET, hint_labels};
+    assert_eq!(hint_labels(3), ["a", "s", "d"]);
+    let one = hint_labels(26);
+    assert_eq!(one.concat(), HINT_ALPHABET);
+    let two = hint_labels(27);
+    assert_eq!(two.len(), 27);
+    assert!(two.iter().all(|l| l.len() == 2));
+    assert_eq!(&two[..2], ["aa", "as"]);
+    assert_eq!(two[26], "sa");
+    let set: std::collections::HashSet<_> = two.iter().collect();
+    assert_eq!(set.len(), 27, "labels are unique");
+}
+
+#[test]
+fn s_label_follows_the_link_and_esc_cancels() {
+    let (_d, mut app, _fx) = nav_app_with(&links_source());
+    keys(&mut app, "s");
+    assert_eq!(app.mode(), ramble::app::Mode::Hint);
+    let labels: Vec<_> = app.hints().iter().map(|(l, _)| l.to_string()).collect();
+    // [four] is below the viewport.
+    assert!(word_at(&app, "four").row >= VH);
+    assert_eq!(labels, ["a", "s", "d"]);
+    let shown = screen(&app);
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.mode(), ramble::app::Mode::Normal);
+    assert!(app.hints().is_empty());
+    assert_eq!(app.cursor(), at(0, 0));
+    assert_ne!(shown, screen(&app), "labels were drawn");
+
+    // "d" is the third link, [three](#end): follows to the End heading.
+    keys(&mut app, "sd");
+    assert_eq!(app.mode(), ramble::app::Mode::Normal);
+    assert_eq!(app.cursor(), at(find_row(&app, "End"), 0));
+    assert_eq!(app.history_depth(), 1);
+    send(&mut app, ctrl('o'));
+    assert_eq!(
+        app.cursor(),
+        word_at(&app, "three"),
+        "history holds the link"
+    );
+
+    keys(&mut app, "sx");
+    assert_eq!(app.status(), "No such hint");
+    assert_eq!(app.mode(), ramble::app::Mode::Normal);
+}
+
+#[test]
+fn s_with_no_visible_links() {
+    let (_d, mut app) = app();
+    keys(&mut app, "s");
+    assert_eq!(app.status(), "No links");
+    assert_eq!(app.mode(), ramble::app::Mode::Normal);
+}
+
+#[test]
+fn more_than_26_visible_links_get_two_letter_labels() {
+    // 30 one-letter links, ten per paragraph, each to #t.
+    let mut s = String::from("# T\n\n");
+    for p in 0..3 {
+        for i in 0..10 {
+            s.push_str(&format!("[{}](#t) ", (b'a' + (p * 10 + i) % 26) as char));
+        }
+        s.push_str("\n\n");
+    }
+    let (_d, mut app, _fx) = nav_app_with(&s);
+    keys(&mut app, "s");
+    let hints: Vec<_> = app
+        .hints()
+        .iter()
+        .map(|(l, sp)| (l.to_string(), *sp))
+        .collect();
+    assert_eq!(hints.len(), 30);
+    assert!(hints.iter().all(|(l, _)| l.len() == 2));
+    // The 29th link (index 28) is "sd"; typing "s" narrows, "d" follows.
+    assert_eq!(hints[28].0, "sd");
+    let target = hints[28].1;
+    keys(&mut app, "s");
+    assert_eq!(app.mode(), ramble::app::Mode::Hint);
+    assert!(
+        app.hints().iter().all(|(l, _)| l.len() == 1),
+        "prefix typed"
+    );
+    keys(&mut app, "d");
+    assert_eq!(app.mode(), ramble::app::Mode::Normal);
+    assert_eq!(app.history_depth(), 1, "followed");
+    assert_eq!(app.cursor(), at(0, 0), "jumped to #t");
+    send(&mut app, ctrl('o'));
+    assert_eq!(app.cursor(), at(target.row, target.col_start));
+}

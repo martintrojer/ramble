@@ -86,6 +86,18 @@ pub enum Action {
     HoverClose,
     // Sidebar.
     Sidebar(SidebarAction),
+    // Link and heading motions, hints.
+    /// `]l` (true) / `[l`.
+    LinkMotion(bool, Option<usize>),
+    /// `;` (true) / `,`.
+    LinkRepeat(bool, Option<usize>),
+    /// `]]` (true) / `[[`.
+    HeadingMotion(bool, Option<usize>),
+    /// `s`: show hint labels.
+    HintStart,
+    /// A letter typed in hint mode.
+    HintInput(char),
+    HintCancel,
 }
 
 /// What a key sequence means so far.
@@ -143,6 +155,7 @@ impl App {
             Mode::Normal => self.normal_keymap(keys),
             Mode::Search => search_keymap(keys),
             Mode::Filter => sidebar::filter_keymap(keys),
+            Mode::Hint => super::hints::hint_keymap(keys),
         }
     }
 
@@ -192,6 +205,10 @@ impl App {
                 ('z', 't') => KeyResult::Action(A::CursorToTop),
                 ('z', 'b') => KeyResult::Action(A::CursorToBottom),
                 ('Z', 'Z') => KeyResult::Action(A::Quit),
+                (']', 'l') => KeyResult::Action(A::LinkMotion(true, count)),
+                ('[', 'l') => KeyResult::Action(A::LinkMotion(false, count)),
+                (']', ']') => KeyResult::Action(A::HeadingMotion(true, count)),
+                ('[', '[') => KeyResult::Action(A::HeadingMotion(false, count)),
                 _ => KeyResult::None,
             };
         };
@@ -216,6 +233,10 @@ impl App {
                 return KeyResult::Count(c as usize - '0' as usize);
             }
             KeyCode::Char('g' | 'z' | 'Z' | 'm' | '\'') => return KeyResult::Pending,
+            KeyCode::Char('[' | ']') => return KeyResult::Pending,
+            KeyCode::Char(';') => A::LinkRepeat(true, count),
+            KeyCode::Char(',') => A::LinkRepeat(false, count),
+            KeyCode::Char('s') => A::HintStart,
             KeyCode::Char('/') => A::SearchStart(true),
             KeyCode::Char('?') => A::SearchStart(false),
             KeyCode::Char('n') => A::SearchNext(true, count),
@@ -302,6 +323,12 @@ impl App {
             A::Hover => self.hover(),
             A::HoverClose => self.hover_close(),
             A::Sidebar(a) => self.sidebar_action(a),
+            A::LinkMotion(fwd, c) => self.link_motion(fwd, n(c)),
+            A::LinkRepeat(same, c) => self.link_repeat(same, n(c)),
+            A::HeadingMotion(fwd, c) => self.heading_motion(fwd, n(c)),
+            A::HintStart => self.hint_start(),
+            A::HintInput(c) => self.hint_input(c),
+            A::HintCancel => self.hint_cancel(),
         }
     }
 }

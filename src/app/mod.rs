@@ -10,6 +10,7 @@
 
 mod effect;
 mod follow;
+mod hints;
 mod keys;
 mod launch;
 mod lsp_glue;
@@ -37,6 +38,7 @@ use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
 
 pub use effect::{Clipboard, Effect, osc52};
+pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
@@ -96,6 +98,8 @@ pub enum Mode {
     Search,
     /// Typing a sidebar filter (`/` in a sidebar pane).
     Filter,
+    /// Typing a hint label after `s`.
+    Hint,
 }
 
 /// Everything the event loop feeds the app. Later units add variants
@@ -168,6 +172,7 @@ pub struct App {
     /// The clock, advanced by [`App::tick`].
     now: Instant,
     sidebar: sidebar::Sidebar,
+    hints: hints::Hints,
 }
 
 impl App {
@@ -215,6 +220,7 @@ impl App {
             lsp,
             now: Instant::now(),
             sidebar,
+            hints: hints::Hints::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
