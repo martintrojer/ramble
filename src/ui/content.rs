@@ -15,6 +15,11 @@ const CURSORLINE_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 /// yellow / peach).
 const HIT: Style = Style::new().fg(BANNER_BG).bg(palette::YELLOW);
 const CURRENT_HIT: Style = Style::new().fg(BANNER_BG).bg(palette::PEACH);
+/// A link a diagnostic covers (e.g. a dead link).
+const BROKEN_LINK: Style = Style::new()
+    .fg(palette::OVERLAY)
+    .add_modifier(Modifier::DIM)
+    .remove_modifier(Modifier::UNDERLINED);
 /// Background of the deleted-file banner (Catppuccin Mocha red on base).
 const BANNER_BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 
@@ -49,6 +54,27 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let bottom = top + area.height as usize;
     let on_screen = |row: usize| row >= top && row < bottom;
     let buf = frame.buffer_mut();
+    // Links a diagnostic covers: muted.
+    let broken = app.broken_links();
+    for seg in &page.rendered.srcmap.segments {
+        let span = seg.span;
+        if !seg.link.is_some_and(|i| broken.contains(&i))
+            || !on_screen(span.row)
+            || span.col_start as u16 >= area.width
+        {
+            continue;
+        }
+        let w = (span.col_end.min(area.width as usize) - span.col_start) as u16;
+        buf.set_style(
+            Rect::new(
+                area.x + span.col_start as u16,
+                area.y + (span.row - top) as u16,
+                w,
+                1,
+            ),
+            BROKEN_LINK,
+        );
+    }
     // Cursorline first, so search hits on the cursor row keep their colours.
     if on_screen(cursor.row) {
         let y = area.y + (cursor.row - top) as u16;

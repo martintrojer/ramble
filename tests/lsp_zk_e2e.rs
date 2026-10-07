@@ -199,6 +199,39 @@ fn zk_end_to_end() {
         "{links:?}"
     );
 
+    // definition on the link text in a.md (`See [Note B](b)`, line 2) -> b.md.
+    let a_src = std::fs::read_to_string(&a).unwrap();
+    let at_link =
+        ramble::lsp::byte_to_position(&a_src, a_src.find("Note B](b)").unwrap(), client.encoding());
+    let pos = json!({"line": at_link.line, "character": at_link.character});
+    let def = request(
+        &client,
+        &rx,
+        "textDocument/definition",
+        json!({"textDocument": {"uri": canonical_uri(&a)}, "position": pos}),
+    );
+    let first = def.as_array().and_then(|xs| xs.first()).unwrap_or(&def);
+    let def_uri = first
+        .get("uri")
+        .or_else(|| first.get("targetUri"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("definition: {def}"));
+    assert_eq!(
+        uri_to_path(&def_uri.parse().unwrap()).as_deref(),
+        Some(b.as_path()),
+        "{def}"
+    );
+
+    // hover on the same link shows b.md's content.
+    let hover = request(
+        &client,
+        &rx,
+        "textDocument/hover",
+        json!({"textDocument": {"uri": canonical_uri(&a)}, "position": pos}),
+    );
+    let contents = hover["contents"].to_string();
+    assert!(contents.contains("Back to"), "{hover}");
+
     // A link after an emoji: its range converts to the right byte offset.
     let emoji = nb.join("emoji.md");
     let src = std::fs::read_to_string(&emoji).unwrap();

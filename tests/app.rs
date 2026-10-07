@@ -29,11 +29,14 @@ fn para_row(i: usize) -> usize {
     1 + 2 * i
 }
 
+/// Options with no language servers configured, so no test starts a real one.
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
+    let mut config = Config::default();
+    config.lsp.server = vec![];
     StartOptions {
         target,
         tree_root: dir.to_path_buf(),
-        config: Config::default(),
+        config,
     }
 }
 
@@ -728,6 +731,7 @@ fn new_follow_clears_forward() {
     let (dir, mut app, _fx) = nav_app();
     goto_text(&mut app, "b");
     keys(&mut app, "gd");
+    pump_until(&mut app, "on b.md", |a| a.history_depth() == 1);
     send(&mut app, ctrl('o'));
     assert_eq!(app.forward_depth(), 1);
     goto_text(&mut app, "h");
@@ -1221,4 +1225,496 @@ fn fs_watch_delete_shows_banner_and_keeps_content() {
     app.event(AppEvent::FsWatch(path, FsEvent::Changed));
     assert_eq!(app.banner(), None);
     assert_eq!(row_text(&app, 0), "Back");
+}
+
+// -------------------------------------------------------------------------
+// LSP features (step 11), driven by the scripted fake server.
+
+use ramble::config::{ServerConfig, ServerKind};
+use serde_json::{Value, json};
+use std::ops::Range;
+use std::time::{Duration, Instant};
+
+/// A temp notebook (root marker `.fake`) with `a.md` holding `source` and
+/// `b.md`, and an app whose only server is fake-lsp running the script
+/// `script(root)` builds. Returns the log of every message fake-lsp read.
+fn lsp_app(source: &str, script: impl FnOnce(&Path) -> Value) -> (TempDir, App, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join(".fake"), "").unwrap();
+    std::fs::write(root.join("a.md"), source).unwrap();
+    std::fs::write(root.join("b.md"), b_source()).unwrap();
+    let script_path = root.join("script.json");
+    std::fs::write(&script_path, script(&root).to_string()).unwrap();
+    let log = root.join("log.jsonl");
+    let mut o = opts(&root, StartTarget::File(root.join("a.md")));
+    o.config.lsp.server = vec![ServerConfig {
+        kind: ServerKind::Generic,
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-lsp").into(),
+            script_path.display().to_string(),
+            log.display().to_string(),
+        ],
+        root_markers: vec![".fake".into()],
+        position_encoding: None,
+    }];
+    let app = App::new(o, (COLS, ROWS)).unwrap();
+    (dir, app, log)
+}
+
+fn init_step() -> Value {
+    json!({"expect": "initialize", "reply": {"capabilities": {
+        "definitionProvider": true, "hoverProvider": true, "documentLinkProvider": {},
+    }}})
+}
+
+/// Pump LSP events until `pred` holds (5 s limit).
+fn pump_until(app: &mut App, what: &str, pred: impl Fn(&App) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !pred(app) {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}; status {:?}",
+            app.status()
+        );
+        app.pump_lsp(Duration::from_millis(20));
+    }
+}
+
+/// Pump for a while, to show that something does not happen.
+fn pump_for(app: &mut App, d: Duration) {
+    let end = Instant::now() + d;
+    while Instant::now() < end {
+        app.pump_lsp(Duration::from_millis(10));
+    }
+}
+
+fn uri(path: &Path) -> String {
+    ramble::lsp::canonical_uri(path).as_str().to_string()
+}
+
+/// A documentLink entry over source line `line`, columns `cols`.
+fn doc_link(line: u32, cols: Range<u32>, target: &Path) -> Value {
+    json!({
+        "range": {"start": {"line": line, "character": cols.start},
+                  "end": {"line": line, "character": cols.end}},
+        "target": uri(target),
+    })
+}
+
+/// The messages fake-lsp logged with `method`. A line fake-lsp is still
+/// writing does not parse and is skipped.
+fn logged(log: &Path, method: &str) -> Vec<Value> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|m| m["method"] == method)
+        .collect()
+}
+
+/// Wait until fake-lsp has logged `n` messages with `method`.
+fn wait_logged(log: &Path, method: &str, n: usize) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let got = logged(log, method);
+        if got.len() >= n {
+            return got;
+        }
+        assert!(Instant::now() < deadline, "fake-lsp never got {n} {method}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn running(app: &mut App) {
+    pump_until(app, "server running", |a| a.lsp_label().ends_with('●'));
+}
+
+#[test]
+fn lsp_starts_off_the_ui_thread_then_shows_running() {
+    let (_d, mut app, _log) = lsp_app(
+        "# A\n\n[b](b)\n",
+        |_| json!([{"sleep_ms": 300}, init_step()]),
+    );
+    assert_eq!(
+        app.lsp_label(),
+        "generic ○",
+        "starting while the server sleeps"
+    );
+    running(&mut app);
+    assert_eq!(app.lsp_label(), "generic ●");
+    assert!(screen(&app).contains("generic ●"), "{}", screen(&app));
+}
+
+#[test]
+fn no_server_for_the_root_shows_dash() {
+    let (_d, app) = app();
+    assert_eq!(app.lsp_label(), "—");
+    assert!(screen(&app).contains('—'));
+}
+
+#[test]
+fn document_link_targets_are_applied_and_gd_follows_them() {
+    // `[b](b)` has no `.md`: the local parse alone resolves to a missing file.
+    let (dir, mut app, log) = lsp_app("# A\n\n[b](b)\n", |root| {
+        json!([init_step(), {"expect": "textDocument/documentLink",
+                             "reply": [doc_link(2, 0..6, &root.join("b.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    pump_until(&mut app, "documentLink applied", |a| {
+        a.link_target(0).is_some()
+    });
+    assert_eq!(app.link_target(0), Some(root.join("b.md").as_path()));
+    let opens = logged(&log, "textDocument/didOpen");
+    assert_eq!(opens.len(), 1);
+    assert_eq!(opens[0]["params"]["textDocument"]["version"], 1);
+    assert_eq!(opens[0]["params"]["textDocument"]["languageId"], "markdown");
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), root.join("b.md"));
+    assert_eq!(app.history_depth(), 1);
+}
+
+#[test]
+fn diagnostics_mark_covered_links_broken_and_muted() {
+    let (dir, mut app, _log) = lsp_app("# A\n\n[gone](nowhere) and [b](b.md)\n", |root| {
+        json!([init_step(), {"expect": "textDocument/didOpen"}, {"send": {
+            "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri(&root.join("a.md")), "version": 1, "diagnostics": [{
+                "range": {"start": {"line": 2, "character": 0},
+                          "end": {"line": 2, "character": 15}},
+                "message": "dead link",
+            }]},
+        }}])
+    });
+    let _ = dir;
+    pump_until(&mut app, "diagnostics", |a| !a.broken_links().is_empty());
+    assert_eq!(
+        app.broken_links().iter().copied().collect::<Vec<_>>(),
+        vec![0]
+    );
+    // Drawn muted: the broken link's cells differ from the healthy link's.
+    let mut term = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    let buf = term.backend().buffer();
+    let row = find_row(&app, "gone and b") as u16;
+    let gone = &buf[(0, row)];
+    let b = &buf[(9, row)];
+    assert_eq!(gone.symbol(), "g");
+    assert_eq!(b.symbol(), "b");
+    assert_eq!(gone.fg, ramble::render::palette::OVERLAY);
+    assert!(gone.modifier.contains(ratatui::style::Modifier::DIM));
+    assert_ne!(b.fg, ramble::render::palette::OVERLAY);
+}
+
+#[test]
+fn diagnostics_for_an_older_version_are_ignored() {
+    let (_dir, mut app, _log) = lsp_app("# A\n\n[gone](nowhere)\n", |root| {
+        json!([init_step(), {"expect": "textDocument/didOpen"}, {"send": {
+            "jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            "params": {"uri": uri(&root.join("a.md")), "version": 7, "diagnostics": [{
+                "range": {"start": {"line": 2, "character": 0},
+                          "end": {"line": 2, "character": 15}},
+                "message": "dead link",
+            }]},
+        }}])
+    });
+    running(&mut app);
+    pump_for(&mut app, Duration::from_millis(300));
+    assert!(app.broken_links().is_empty());
+}
+
+#[test]
+fn reply_for_a_page_the_user_left_is_dropped() {
+    let (dir, mut app, _log) = lsp_app("# A\n\n[b](b.md)\n", |root| {
+        json!([init_step(),
+               {"expect": "textDocument/documentLink", "as": "a"},
+               {"expect": "textDocument/documentLink", "as": "b"},
+               {"respond": "a", "result": [doc_link(2, 0..9, &root.join("a.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    let first_page = app.page_id();
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    // No documentLink target yet: definition (fake answers null), then local.
+    pump_until(&mut app, "on b.md", |a| {
+        a.page().unwrap().path.as_deref() == Some(root.join("b.md").as_path())
+    });
+    assert!(app.page_id() > first_page);
+    // b.md's own link `back to [a](a.md)` is link 0 on the new page; a.md's
+    // late reply (also for link 0) must not land there.
+    pump_for(&mut app, Duration::from_millis(300));
+    assert_eq!(app.link_target(0), None);
+}
+
+#[test]
+fn reply_for_an_older_version_is_dropped_after_reload() {
+    let (dir, mut app, log) = lsp_app("# A\n\n[b](b)\n", |root| {
+        json!([init_step(),
+               {"expect": "textDocument/documentLink", "as": "v1"},
+               {"expect": "textDocument/documentLink", "as": "v2"},
+               {"respond": "v1", "result": [doc_link(2, 0..6, &root.join("a.md"))]},
+               // v2 is answered only after the test sends a hover (`K`).
+               {"expect": "textDocument/hover", "reply": null},
+               {"respond": "v2", "result": [doc_link(2, 0..6, &root.join("b.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    let path = root.join("a.md");
+    std::fs::write(&path, "# A\n\n[b](b)\n\nmore\n").unwrap();
+    app.event(AppEvent::FsWatch(path, FsEvent::Changed));
+    // The fs-watch reload re-sent didOpen with a new version.
+    let opens = wait_logged(&log, "textDocument/didOpen", 2);
+    assert_eq!(opens[1]["params"]["textDocument"]["version"], 2);
+    assert!(
+        opens[1]["params"]["textDocument"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("more")
+    );
+    assert_eq!(app.lsp_version(), Some(2));
+    pump_for(&mut app, Duration::from_millis(300));
+    assert_eq!(app.link_target(0), None, "v1 reply dropped");
+    goto_text(&mut app, "b");
+    keys(&mut app, "K");
+    pump_until(&mut app, "v2 reply", |a| a.link_target(0).is_some());
+    assert_eq!(app.link_target(0), Some(root.join("b.md").as_path()));
+}
+
+#[test]
+fn versions_keep_increasing_when_a_page_is_revisited() {
+    let (_dir, mut app, log) = lsp_app("# A\n\n[b](b.md)\n", |_| json!([init_step()]));
+    running(&mut app);
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    pump_until(&mut app, "on b.md", |a| a.history_depth() == 1);
+    send(&mut app, ctrl('o'));
+    let opens = wait_logged(&log, "textDocument/didOpen", 3);
+    let versions: Vec<(String, i64)> = opens
+        .iter()
+        .map(|m| {
+            let td = &m["params"]["textDocument"];
+            (
+                td["uri"]
+                    .as_str()
+                    .unwrap()
+                    .rsplit('/')
+                    .next()
+                    .unwrap()
+                    .to_string(),
+                td["version"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        versions,
+        vec![("a.md".into(), 1), ("b.md".into(), 1), ("a.md".into(), 2)]
+    );
+}
+
+#[test]
+fn spinner_shows_after_two_seconds_without_a_reply() {
+    let (_dir, mut app, log) = lsp_app("# A\n\n[b](b.md)\n", |_| {
+        // Hold the documentLink request and never answer it.
+        json!([init_step(), {"expect": "textDocument/documentLink", "as": "held"}])
+    });
+    let t0 = Instant::now();
+    app.tick(t0);
+    running(&mut app);
+    wait_logged(&log, "textDocument/documentLink", 1);
+    assert!(!app.lsp_spinning());
+    app.tick(t0 + Duration::from_millis(1900));
+    assert!(!app.lsp_spinning());
+    assert_eq!(app.lsp_label(), "generic ●");
+    app.tick(t0 + Duration::from_millis(2500));
+    assert!(app.lsp_spinning());
+    assert!(
+        app.lsp_label().len() > "generic ●".len(),
+        "{}",
+        app.lsp_label()
+    );
+}
+
+#[test]
+fn server_crash_shows_status_and_falls_back_to_no_lsp() {
+    let (_dir, mut app, _log) = lsp_app("# A\n\n[b](b.md)\n", |_| {
+        json!([init_step(), {"expect": "textDocument/didOpen"},
+               {"stderr": "boom"}, {"exit": 3}])
+    });
+    pump_until(&mut app, "crash noticed", |a| {
+        a.status().contains("LSP off")
+    });
+    assert_eq!(app.lsp_label(), "—");
+    // gd still works from the local parse.
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    assert!(page_path(&app).ends_with("b.md"));
+    assert_eq!(app.lsp_label(), "—", "not respawned for this root");
+}
+
+#[test]
+fn start_failure_is_no_lsp_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join(".fake"), "").unwrap();
+    std::fs::write(root.join("a.md"), "# A\n").unwrap();
+    let mut o = opts(&root, StartTarget::File(root.join("a.md")));
+    o.config.lsp.server = vec![ServerConfig {
+        kind: ServerKind::Zk,
+        command: vec![root.join("no-such-server").display().to_string()],
+        root_markers: vec![".fake".into()],
+        position_encoding: None,
+    }];
+    let mut app = App::new(o, (COLS, ROWS)).unwrap();
+    assert_eq!(app.lsp_label(), "zk ○");
+    pump_until(&mut app, "start failure", |a| a.lsp_label() == "—");
+    assert!(
+        app.status().contains("LSP failed to start"),
+        "{}",
+        app.status()
+    );
+}
+
+#[test]
+fn gd_without_a_document_link_uses_definition() {
+    // `[x](x)` resolves locally to a missing file; definition says b.md.
+    let (dir, mut app, log) = lsp_app("# A\n\n[x](x)\n", |root| {
+        json!([init_step(),
+               {"expect": "textDocument/documentLink", "reply": []},
+               {"expect": "textDocument/definition",
+                "reply": {"uri": uri(&root.join("b.md")), "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end": {"line": 0, "character": 0}}}}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    wait_logged(&log, "textDocument/documentLink", 1);
+    goto_text(&mut app, "x");
+    keys(&mut app, "gd");
+    pump_until(&mut app, "definition followed", |a| {
+        a.page().unwrap().path.as_deref() == Some(root.join("b.md").as_path())
+    });
+    let defs = logged(&log, "textDocument/definition");
+    assert_eq!(
+        defs[0]["params"]["position"],
+        json!({"line": 2, "character": 1})
+    );
+}
+
+#[test]
+fn null_definition_falls_back_to_the_local_parse() {
+    let (_dir, mut app, log) = lsp_app("# A\n\n[b](b.md)\n", |_| {
+        json!([init_step(), {"expect": "textDocument/documentLink", "reply": []},
+               {"expect": "textDocument/definition", "reply": null}])
+    });
+    running(&mut app);
+    wait_logged(&log, "textDocument/documentLink", 1);
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    pump_until(&mut app, "local follow", |a| {
+        a.page()
+            .unwrap()
+            .path
+            .as_ref()
+            .is_some_and(|p| p.ends_with("b.md"))
+    });
+}
+
+#[test]
+fn definition_reply_after_the_cursor_moved_is_dropped() {
+    let (_dir, mut app, log) = lsp_app("# A\n\n[b](b.md)\n\nplain\n", |root| {
+        json!([init_step(), {"expect": "textDocument/documentLink", "reply": []},
+               {"expect": "textDocument/definition", "as": "d"},
+               {"sleep_ms": 200},
+               {"respond": "d", "result": {"uri": uri(&root.join("b.md")), "range": {
+                   "start": {"line": 0, "character": 0},
+                   "end": {"line": 0, "character": 0}}}}])
+    });
+    running(&mut app);
+    wait_logged(&log, "textDocument/documentLink", 1);
+    goto_text(&mut app, "b");
+    keys(&mut app, "gd");
+    keys(&mut app, "j");
+    pump_for(&mut app, Duration::from_millis(500));
+    assert!(page_path(&app).ends_with("a.md"));
+}
+
+#[test]
+fn anchor_link_with_a_fragment_less_target_lands_on_the_heading() {
+    let (dir, mut app, _log) = lsp_app("# A\n\n[deep](b#deep)\n", |root| {
+        // zk drops the fragment: the target is plain b.md.
+        json!([init_step(), {"expect": "textDocument/documentLink",
+                             "reply": [doc_link(2, 0..14, &root.join("b.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    pump_until(&mut app, "documentLink", |a| a.link_target(0).is_some());
+    goto_text(&mut app, "deep");
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), root.join("b.md"));
+    assert_eq!(row_text(&app, app.cursor().row), "Deep");
+}
+
+#[test]
+fn k_shows_hover_popup_and_esc_closes_it() {
+    let (_dir, mut app, log) = lsp_app("# A\n\n[b](b.md)\n", |_| {
+        json!([init_step(), {"expect": "textDocument/hover", "reply": {
+            "contents": {"kind": "markdown", "value": "# B page\n\nhovered text"}}}])
+    });
+    running(&mut app);
+    goto_text(&mut app, "b");
+    keys(&mut app, "K");
+    pump_until(&mut app, "hover", |a| a.hover_popup().is_some());
+    assert_eq!(app.hover_popup(), Some("# B page\n\nhovered text"));
+    assert!(screen(&app).contains("hovered text"), "{}", screen(&app));
+    let hovers = logged(&log, "textDocument/hover");
+    assert_eq!(
+        hovers[0]["params"]["position"],
+        json!({"line": 2, "character": 1})
+    );
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.hover_popup(), None);
+    assert!(!screen(&app).contains("hovered text"));
+}
+
+#[test]
+fn k_without_a_server_is_a_status() {
+    let (_d, mut app, _fx) = nav_app();
+    goto_text(&mut app, "b");
+    keys(&mut app, "K");
+    assert!(app.status().contains("No hover"), "{}", app.status());
+}
+
+#[test]
+fn stdin_page_gets_no_lsp() {
+    let (_dir, mut app, log) = lsp_app("# A\n", |_| json!([init_step()]));
+    running(&mut app);
+    let dir = tempfile::tempdir().unwrap();
+    let mut o = opts(dir.path(), StartTarget::Stdin("# S\n".into()));
+    o.config = Config::default();
+    o.config.lsp.server = vec![];
+    let s = App::new(o, (COLS, ROWS)).unwrap();
+    assert_eq!(s.lsp_label(), "—");
+    assert_eq!(wait_logged(&log, "textDocument/didOpen", 1).len(), 1);
+}
+
+#[test]
+fn injected_lsp_event_for_another_server_is_ignored() {
+    let (_dir, mut app, _log) = lsp_app("# A\n\n[gone](x)\n", |_| json!([init_step()]));
+    running(&mut app);
+    let path = app.page().unwrap().path.clone().unwrap();
+    app.event(AppEvent::Lsp(ramble::lsp::LspEvent::Diagnostics {
+        server: "other@/".into(),
+        uri: ramble::lsp::canonical_uri(&path),
+        version: None,
+        diagnostics: vec![lsp_types::Diagnostic {
+            range: lsp_types::Range::new(
+                lsp_types::Position::new(2, 0),
+                lsp_types::Position::new(2, 9),
+            ),
+            message: "dead".into(),
+            ..Default::default()
+        }],
+    }));
+    assert!(app.broken_links().is_empty());
 }

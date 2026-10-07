@@ -56,6 +56,7 @@ impl App {
         self.banner = None;
         self.refresh_search();
         self.retarget_watch();
+        self.lsp_page_changed();
     }
 
     fn render_width(&self) -> u16 {

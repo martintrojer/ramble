@@ -12,6 +12,7 @@ mod effect;
 mod follow;
 mod keys;
 mod launch;
+mod lsp_glue;
 mod marks;
 mod motion;
 mod page;
@@ -37,6 +38,7 @@ use crate::render::{RenderedPage, Theme};
 pub use effect::{Clipboard, Effect, osc52};
 pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
+pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use run::{run, suspend_and_run};
 pub use search::find_all;
 pub use watch::{DEBOUNCE, DELETED_BANNER, FileWatcher, FsEvent};
@@ -101,6 +103,9 @@ pub enum AppEvent {
     Tick(Instant),
     /// The watched file changed or disappeared (debounced).
     FsWatch(PathBuf, FsEvent),
+    /// An event from a language server (`run` drains the app's own LSP
+    /// channel with [`App::pump_lsp`]; this variant injects one directly).
+    Lsp(crate::lsp::LspEvent),
 }
 
 /// Runs an editor on a file outside the TUI.
@@ -154,6 +159,10 @@ pub struct App {
     watcher: Option<FileWatcher>,
     /// Banner over the content, e.g. the file was deleted.
     banner: Option<String>,
+    /// Language servers and per-page LSP state.
+    lsp: lsp_glue::LspState,
+    /// The clock, advanced by [`App::tick`].
+    now: Instant,
 }
 
 impl App {
@@ -162,6 +171,7 @@ impl App {
     pub fn new(opts: StartOptions, size: (u16, u16)) -> anyhow::Result<App> {
         let term_out = Rc::new(RefCell::new(Vec::new()));
         let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
+        let lsp = lsp_glue::LspState::new(&opts.config.lsp.server);
         let mut app = App {
             config: opts.config,
             tree_root: opts.tree_root,
@@ -196,6 +206,8 @@ impl App {
             launch_reloaded_at: None,
             watcher: None,
             banner: None,
+            lsp,
+            now: Instant::now(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -263,11 +275,15 @@ impl App {
             AppEvent::Resize(cols, rows) => self.resize(cols, rows),
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
+            AppEvent::Lsp(ev) => self.lsp_event(ev),
         }
     }
 
-    /// Called once per loop iteration (at least every 100 ms). No-op for now.
-    pub fn tick(&mut self, _now: Instant) {}
+    /// Called once per loop iteration (at least every 100 ms): advances the
+    /// clock used for the slow-request spinner.
+    pub fn tick(&mut self, now: Instant) {
+        self.now = now;
+    }
 
     pub fn mode(&self) -> Mode {
         self.mode
@@ -338,11 +354,6 @@ impl App {
                 .to_string(),
             None => "[no file]".into(),
         }
-    }
-
-    /// LSP state for the status line. No LSP until step 10.
-    pub fn lsp_label(&self) -> &str {
-        "—"
     }
 
     /// Back-history depth: entries behind the current page.

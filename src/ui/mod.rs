@@ -2,6 +2,7 @@
 //! widget per area; later units add a file and one call here.
 
 mod content;
+mod hover;
 mod status;
 
 use ratatui::Frame;
@@ -14,5 +15,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let [content, status] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     content::draw(frame, app, content);
+    hover::draw(frame, app, content);
     status::draw(frame, app, status);
 }

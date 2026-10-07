@@ -78,6 +78,11 @@ pub enum Action {
     Launch(usize),
     /// `<leader>` followed by keys bound to nothing.
     NoMapping,
+    // LSP.
+    /// `K`: hover preview for the link under the cursor.
+    Hover,
+    /// `Esc` while the hover popup is open.
+    HoverClose,
 }
 
 /// What a key sequence means so far.
@@ -205,7 +210,9 @@ impl App {
             KeyCode::Char('N') => A::SearchNext(false, count),
             KeyCode::Char('*') => A::SearchWord(true),
             KeyCode::Char('#') => A::SearchWord(false),
+            KeyCode::Esc if self.hover_popup().is_some() => A::HoverClose,
             KeyCode::Esc => A::SearchClear,
+            KeyCode::Char('K') => A::Hover,
             KeyCode::Char('y') => A::Yank,
             KeyCode::Enter => A::Follow,
             KeyCode::Tab => A::Forward,
@@ -280,6 +287,8 @@ impl App {
             A::Yank => self.yank(),
             A::Launch(i) => self.launch_index(i),
             A::NoMapping => self.set_status("No mapping"),
+            A::Hover => self.hover(),
+            A::HoverClose => self.hover_close(),
         }
     }
 }

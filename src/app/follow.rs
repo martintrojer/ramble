@@ -51,8 +51,16 @@ impl App {
         ))
     }
 
-    /// `gd` / `Enter` / `C-]`: follow the link under the cursor.
+    /// `gd` / `Enter` / `C-]`: follow the link under the cursor. The
+    /// language server answers first (see `lsp_glue`), else the local parse.
     pub(super) fn follow(&mut self) {
+        if !self.lsp_follow() {
+            self.follow_local();
+        }
+    }
+
+    /// Follow the link under the cursor using only the local parse.
+    pub(super) fn follow_local(&mut self) {
         let Some((target, dest)) = self.target_under_cursor() else {
             return;
         };
@@ -73,32 +81,43 @@ impl App {
             }
             Target::File { path, anchor } => {
                 let as_written = dest.split('#').next().unwrap_or("").to_string();
-                let missing = || format!("No such file: {as_written}");
-                if !path.is_file() {
-                    self.set_status(missing());
-                    return;
-                }
-                if !nav::is_markdown(&path) {
-                    self.pending_effect = Some(Effect::Edit(path));
-                    return;
-                }
-                let Ok(bytes) = std::fs::read(&path) else {
-                    self.set_status(missing());
-                    return;
-                };
-                let here = self.entry();
-                if !self.open_bytes(&path, &bytes) {
-                    return;
-                }
-                if let Some(e) = here {
-                    self.history.push(e);
-                }
-                if let Some(anchor) = anchor {
-                    match self.heading_row(&anchor) {
-                        Some(row) => self.jump_to_row(row),
-                        None => self.set_status(format!("No heading #{anchor}")),
-                    }
-                }
+                self.open_link_file(path, anchor, &as_written);
+            }
+        }
+    }
+
+    /// Open `path` as a followed link (history push), then jump to `anchor`.
+    /// `as_written` names the file in status messages.
+    pub(super) fn open_link_file(
+        &mut self,
+        path: PathBuf,
+        anchor: Option<String>,
+        as_written: &str,
+    ) {
+        let missing = || format!("No such file: {as_written}");
+        if !path.is_file() {
+            self.set_status(missing());
+            return;
+        }
+        if !nav::is_markdown(&path) {
+            self.pending_effect = Some(Effect::Edit(path));
+            return;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            self.set_status(missing());
+            return;
+        };
+        let here = self.entry();
+        if !self.open_bytes(&path, &bytes) {
+            return;
+        }
+        if let Some(e) = here {
+            self.history.push(e);
+        }
+        if let Some(anchor) = anchor {
+            match self.heading_row(&anchor) {
+                Some(row) => self.jump_to_row(row),
+                None => self.set_status(format!("No heading #{anchor}")),
             }
         }
     }

@@ -45,6 +45,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
         while let Ok(ev) = rx.try_recv() {
             app.event(ev);
         }
+        app.pump_lsp(Duration::ZERO);
         app.tick(Instant::now());
         write_terminal_output(app, &mut std::io::stdout())?;
     }
