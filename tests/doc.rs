@@ -698,3 +698,11 @@ fn display_math_in_quote_maps_past_prefixes() {
     let raw: Vec<String> = raw.iter().map(|r| s(&doc, r)).collect();
     assert_eq!(raw, vec!["$$", "\\frac{a}{b}", "$$"]);
 }
+
+#[test]
+fn math_range_skips_padding_spaces() {
+    let doc = parse("a $$ \\frac{1}{2} $$ c\n".to_owned());
+    let m = maths(&doc);
+    assert_eq!(m.len(), 1, "{m:?}");
+    assert_eq!(m[0].2, "\\frac{1}{2}");
+}

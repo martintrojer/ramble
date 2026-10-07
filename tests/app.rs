@@ -2648,3 +2648,17 @@ fn esc_in_help_closes_the_hover_first() {
     send(&mut app, key(KeyCode::Esc));
     assert_eq!(app.mode(), Mode::Normal);
 }
+
+/// `[render] math` reaches the interactive renderer.
+#[test]
+fn render_math_config_is_applied() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("doc.md");
+    std::fs::write(&path, "A $x^2$ b\n").unwrap();
+    let mut o = opts(dir.path(), StartTarget::File(path.clone()));
+    let app = App::new(o.clone(), (COLS, ROWS)).unwrap();
+    assert_eq!(row_text(&app, 0), "A x² b");
+    o.config.render.math = false;
+    let app = App::new(o, (COLS, ROWS)).unwrap();
+    assert_eq!(row_text(&app, 0), "A $x^2$ b");
+}

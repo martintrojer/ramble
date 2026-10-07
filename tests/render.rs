@@ -935,3 +935,50 @@ fn math_fence_in_quote_skips_only_the_prefix() {
         }
     }
 }
+
+#[test]
+fn too_wide_display_math_measures_the_container_width() {
+    // The grid is 20 columns; the list item leaves 21 - 2 = 19 at width 21.
+    let src = "- $$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$\n";
+    let (_, narrow) = render_md(src, 21, true);
+    assert_eq!(all_rows(&narrow), vec!["• ∑ᵢ₌₁ⁿ i =", "  (n(n+1))/2"]);
+    let (_, wide) = render_md(src, 22, true);
+    assert_eq!(wide.lines.len(), 3, "{:#?}", all_rows(&wide));
+    let quoted = src.replacen("- ", "> ", 1);
+    let (_, page) = render_md(&quoted, 21, true);
+    assert_eq!(all_rows(&page), vec!["│ ∑ᵢ₌₁ⁿ i =", "│ (n(n+1))/2"]);
+}
+
+#[test]
+fn display_math_placement() {
+    // Text after the math keeps the paragraph inline.
+    let (_, page) = render_md("$$\\frac{a}{b}$$ tail\n", 40, true);
+    assert_eq!(all_rows(&page), vec!["a/b tail"]);
+    // A heading is not a paragraph: inline.
+    let (_, page) = render_md("# $$\\frac{a}{b}$$\n", 40, true);
+    assert_eq!(row_text(&page, 0), "a/b");
+    // A list item's lone math is a display block.
+    let (_, page) = render_md("- $$\\frac{a}{b}$$\n", 40, true);
+    let rows = all_rows(&page);
+    assert_eq!(rows.len(), 3, "{rows:#?}");
+    assert!(
+        rows[0].starts_with("• ") && rows[1].contains("───"),
+        "{rows:#?}"
+    );
+}
+
+#[test]
+fn math_off_draws_math_fence_as_code() {
+    let (_, page) = render_md("```math\n\\frac{a}{b}\n```\n", 40, false);
+    assert_eq!(all_rows(&page), vec!["\\frac{a}{b}"]);
+}
+
+#[test]
+fn blank_or_unbalanced_conversion_keeps_raw_source() {
+    // `\,` converts to nothing; keep the source rather than draw blank.
+    let (_, page) = render_md("A $\\,$ b\n", 40, true);
+    assert_eq!(row_text(&page, 0), "A \\, b");
+    // The grid for `\{x` is `{x` (unbalanced): fall back to one line.
+    let (_, page) = render_md("$$\\{x$$\n", 40, true);
+    assert_eq!(all_rows(&page), vec!["\\{x"]);
+}

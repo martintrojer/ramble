@@ -462,3 +462,26 @@ fn columns_env_sets_print_width() {
     let widest = text.lines().map(|l| l.chars().count()).max().unwrap();
     assert!(widest <= 30 && widest > 20, "widest row {widest}:\n{text}");
 }
+
+/// `[render] math` reaches print mode: off shows the LaTeX source.
+#[test]
+fn print_respects_render_math_config() {
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("f.md");
+    fs::write(&f, "A $x^2$ b\n").unwrap();
+    let run = |cfg: &str| {
+        let c = tmp.path().join("c.toml");
+        fs::write(&c, cfg).unwrap();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_ramble"))
+            .args(["--print", "--width", "40", "--config"])
+            .arg(&c)
+            .arg(&f)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        strip_sgr(&String::from_utf8_lossy(&out.stdout))
+    };
+    assert!(run("").contains("A x² b"));
+    assert!(run("[render]\nmath = false\n").contains("A $x^2$ b"));
+}
