@@ -33,6 +33,7 @@ fn defaults_match_spec() {
     let c = Config::default();
     assert_eq!(c.render.max_width, 100);
     assert_eq!(c.render.theme, "catppuccin-mocha");
+    assert!(c.render.math);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
     assert_eq!(c.sidebar.width, 30);
     assert_eq!(c.sidebar.split_ratio, 0.5);
@@ -90,11 +91,12 @@ fn defaults_match_spec() {
 #[test]
 fn partial_override_keeps_other_defaults() {
     let c = load_str(
-        "[render]\nmax_width = 72\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\n[review]\nenabled = false\n",
+        "[render]\nmax_width = 72\nmath = false\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\n[review]\nenabled = false\n",
     )
     .unwrap();
     let mut want = Config::default();
     want.render.max_width = 72;
+    want.render.math = false;
     want.sidebar.default = SidebarMode::Split;
     want.keys.leader = ',';
     want.review.enabled = false;

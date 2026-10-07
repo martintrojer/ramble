@@ -27,6 +27,8 @@ pub struct RenderConfig {
     /// Upper bound on the reflow width.
     pub max_width: u16,
     pub theme: String,
+    /// Convert LaTeX math to Unicode; off shows the raw source.
+    pub math: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +145,7 @@ impl Default for Config {
             render: RenderConfig {
                 max_width: 100,
                 theme: "catppuccin-mocha".into(),
+                math: true,
             },
             sidebar: SidebarConfig {
                 default: SidebarMode::Auto,
@@ -220,6 +223,7 @@ struct RawConfig {
 struct RawRender {
     max_width: Option<u16>,
     theme: Option<String>,
+    math: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -316,6 +320,7 @@ impl Config {
         if let Some(r) = raw.render {
             set(&mut c.render.max_width, r.max_width);
             set(&mut c.render.theme, r.theme);
+            set(&mut c.render.math, r.math);
         }
         if let Some(s) = raw.sidebar {
             set(&mut c.sidebar.default, s.default);

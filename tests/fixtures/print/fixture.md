@@ -28,6 +28,12 @@ fn main() {
 }
 ```
 
+Math: $\sum_{i=1}^n x_i$ and
+
+$$
+\frac{a+b}{c}
+$$
+
 ---
 
 Footnote ref[^1].

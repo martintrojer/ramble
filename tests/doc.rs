@@ -26,6 +26,7 @@ fn drawn(doc: &Document, range: std::ops::Range<usize>) -> String {
             Inline::SoftBreak => " ".into(),
             Inline::HardBreak => "\n".into(),
             Inline::FootnoteRef { label, .. } => format!("[{label}]"),
+            Inline::Math { tex, .. } => format!("${tex}$"),
         })
         .collect()
 }
@@ -179,6 +180,7 @@ fn inlines_escapes_entities_code_html_breaks() {
             Inline::SoftBreak => "<soft>".into(),
             Inline::HardBreak => "<hard>".into(),
             Inline::FootnoteRef { .. } => "<fn>".into(),
+            Inline::Math { .. } => "<math>".into(),
         })
         .collect();
     assert_eq!(
@@ -368,6 +370,7 @@ fn seg_strings(doc: &Document, inline: std::ops::Range<usize>) -> Vec<String> {
                 Inline::SoftBreak => "<soft>".into(),
                 Inline::HardBreak => "<hard>".into(),
                 Inline::FootnoteRef { label, .. } => format!("[^{label}]"),
+                Inline::Math { range, .. } => format!("${}$", s(doc, range)),
             };
             assert!(!out.contains('\n'), "segment crosses a line: {out:?}");
             out
@@ -619,4 +622,79 @@ fn leading_rule_without_closing_fence_is_not_front_matter() {
         ]
     ));
     assert!(doc.headings.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Math
+
+/// The math segments of the first paragraph: (tex, display, range text).
+fn maths(doc: &Document) -> Vec<(String, bool, String)> {
+    inlines(doc, first_paragraph_inline(doc))
+        .iter()
+        .filter_map(|i| match i {
+            Inline::Math {
+                tex,
+                display,
+                range,
+                ..
+            } => Some((tex.clone(), *display, s(doc, range))),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn inline_and_display_math_parse() {
+    let doc = parse("a $x^2$ b $$\\frac{1}{2}$$ c\n".to_owned());
+    assert_eq!(
+        maths(&doc),
+        vec![
+            ("x^2".into(), false, "x^2".into()),
+            ("\\frac{1}{2}".into(), true, "\\frac{1}{2}".into()),
+        ]
+    );
+    assert_eq!(
+        drawn(&doc, first_paragraph_inline(&doc)),
+        "a $x^2$ b $\\frac{1}{2}$ c"
+    );
+}
+
+#[test]
+fn escaped_dollar_and_code_span_are_not_math() {
+    let doc = parse("\\$5 and `$x$` and $5 and $6\n".to_owned());
+    assert!(maths(&doc).is_empty());
+    assert_eq!(
+        drawn(&doc, first_paragraph_inline(&doc)),
+        "$5 and $x$ and $5 and $6"
+    );
+}
+
+#[test]
+fn display_math_in_quote_maps_past_prefixes() {
+    let src = "> $$\n> \\frac{a}{b}\n> $$\n";
+    let doc = parse(src.to_owned());
+    let Block::BlockQuote { children, .. } = &doc.blocks[0] else {
+        panic!("{:?}", doc.blocks);
+    };
+    let Block::Paragraph { inline, .. } = &children[0] else {
+        panic!("{children:?}");
+    };
+    let segs = inlines(&doc, inline.clone());
+    let [
+        Inline::Math {
+            tex,
+            display,
+            range,
+            raw,
+            ..
+        },
+    ] = segs.as_slice()
+    else {
+        panic!("{segs:?}");
+    };
+    assert!(*display);
+    assert_eq!(tex.trim(), "\\frac{a}{b}");
+    assert_eq!(s(&doc, range), "\\frac{a}{b}");
+    let raw: Vec<String> = raw.iter().map(|r| s(&doc, r)).collect();
+    assert_eq!(raw, vec!["$$", "\\frac{a}{b}", "$$"]);
 }

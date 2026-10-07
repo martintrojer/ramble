@@ -9,6 +9,8 @@
 ## Upper bound on the reflow width, in columns.
 # max_width = 100
 # theme = "catppuccin-mocha"
+## Draw LaTeX math ($…$, $$…$$, ```math) as Unicode; false shows the source.
+# math = true
 
 ## ---------------------------------------------------------------------------
 ## Sidebar

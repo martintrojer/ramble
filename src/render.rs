@@ -23,6 +23,9 @@ pub struct Theme {
     pub name: String,
     /// syntect theme name inside two-face's embedded set.
     pub code_theme: String,
+    /// Convert LaTeX math to Unicode (`[render] math`). Off: math shows
+    /// as its raw source, delimiters included, in the math colour.
+    pub math: bool,
 }
 
 impl Theme {
@@ -30,6 +33,7 @@ impl Theme {
         Self {
             name: "catppuccin-mocha".into(),
             code_theme: "catppuccin-mocha".into(),
+            math: true,
         }
     }
 }
@@ -144,8 +148,8 @@ pub fn render_with(
     inlines: &dyn Fn(Range<usize>) -> Vec<Inline>,
 ) -> RenderedPage {
     // v1 always uses the embedded Catppuccin Mocha code theme.
-    let _ = theme;
     let mut r = Renderer::new(doc, width, inlines);
+    r.math = theme.math;
     r.blocks(&doc.blocks, true);
     RenderedPage {
         lines: r.lines,
@@ -488,6 +492,7 @@ struct Renderer<'a> {
     newlines: Vec<usize>,
     prefixes: Vec<Prefix>,
     list_depth: usize,
+    math: bool,
     lines: Vec<Line<'static>>,
     segments: Vec<Segment>,
     source_lines: Vec<usize>,
@@ -507,6 +512,7 @@ impl<'a> Renderer<'a> {
             newlines: src.match_indices('\n').map(|(i, _)| i).collect(),
             prefixes: Vec::new(),
             list_depth: 0,
+            math: true,
             lines: Vec::new(),
             segments: Vec::new(),
             source_lines: Vec::new(),
@@ -686,7 +692,7 @@ impl<'a> Renderer<'a> {
             }
         };
         for inline in inlines {
-            let (range, style, link) = match inline {
+            let (range, style, link) = match inline.clone() {
                 Inline::Text { range, style: s } => {
                     let mut style = base;
                     if s.strong {
@@ -721,6 +727,22 @@ impl<'a> Renderer<'a> {
                 Inline::HardBreak => {
                     flush(&mut word, &mut toks);
                     toks.push(Tok::Break);
+                    continue;
+                }
+                Inline::Math { .. } => {
+                    for tok in self.math_tokens(&inline, base) {
+                        match tok {
+                            Tok::Word(cells) => word.extend(cells),
+                            Tok::Space(src) => {
+                                flush(&mut word, &mut toks);
+                                space(&mut toks, src);
+                            }
+                            Tok::Break => {
+                                flush(&mut word, &mut toks);
+                                toks.push(Tok::Break);
+                            }
+                        }
+                    }
                     continue;
                 }
                 Inline::FootnoteRef { label, range } => {
@@ -791,9 +813,15 @@ impl<'a> Renderer<'a> {
                 }
             }
             Block::Paragraph { range, inline } => {
+                if self.standalone_math(range, inline) {
+                    return;
+                }
                 for row in self.wrapped_inline(inline, base_style(), self.avail()) {
                     self.emit(row, Some(range.start));
                 }
+            }
+            Block::CodeBlock { lang, code, .. } if self.math && lang.as_deref() == Some("math") => {
+                self.math_fence(code)
             }
             Block::CodeBlock { lang, code, .. } => self.code_block(lang.as_deref(), code),
             Block::BlockQuote {
@@ -1060,5 +1088,230 @@ impl<'a> Renderer<'a> {
             }
         }
         self.emit(bottom, Some(range.start));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Math
+
+fn math_style(base: Style, link: Option<usize>) -> Style {
+    let style = base.fg(palette::TEAL);
+    if link.is_some() {
+        style
+            .add_modifier(Modifier::UNDERLINED)
+            .underline_color(palette::BLUE)
+    } else {
+        style
+    }
+}
+
+/// True when `{`/`}` (ignoring `\{`, `\}`) nest properly.
+fn braces_balanced(s: &str) -> bool {
+    let mut depth = 0i32;
+    let mut escaped = false;
+    for c in s.chars() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// The converters never fail, so judge their output: a conversion fails
+/// when the output is blank, still holds a `\command`, or has unbalanced
+/// braces, or when the input does (`\frac{a}{`) or uses an environment
+/// (`\begin{…}`, which neither converter lays out).
+fn converted(tex: &str, out: &str) -> bool {
+    let has_command = out
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'\\' && w[1].is_ascii_alphabetic());
+    !out.trim().is_empty()
+        && !has_command
+        && braces_balanced(out)
+        && braces_balanced(tex)
+        && !tex.contains("\\begin{")
+}
+
+/// The LaTeX on one line, trimmed (converters do not expect newlines).
+fn math_source(tex: &str) -> String {
+    tex.replace(['\r', '\n'], " ").trim().to_string()
+}
+
+/// One-line Unicode for `tex`, or the trimmed LaTeX when conversion fails.
+fn math_one_line(tex: &str) -> String {
+    let tex = math_source(tex);
+    let out = latex_to_unicode::latex_to_unicode(&tex);
+    if converted(&tex, &out) { out } else { tex }
+}
+
+/// 2-D rows for display math, or `None` when conversion fails.
+fn math_grid(tex: &str) -> Option<Vec<String>> {
+    let tex = math_source(tex);
+    let block = term_maths::render(&tex);
+    let rows: Vec<String> = block
+        .cells()
+        .iter()
+        .map(|row| row.concat().trim_end().to_string())
+        .collect();
+    converted(&tex, &rows.join("\n")).then_some(rows)
+}
+
+impl Renderer<'_> {
+    /// A drawn math cell mapping to `src` (the whole math range).
+    fn math_cell(g: &str, src: &Range<usize>, style: Style, link: Option<usize>) -> Option<Cell> {
+        let (text, w) = sanitize(g);
+        (w > 0).then(|| Cell {
+            text,
+            w,
+            style,
+            src: Some(src.clone()),
+            link,
+        })
+    }
+
+    /// Wrap tokens for an [`Inline::Math`] drawn on one line: converted
+    /// Unicode (every cell maps to the math range), or with math off the
+    /// raw source pieces (each grapheme maps to its own byte).
+    fn math_tokens(&self, inline: &Inline, base: Style) -> Vec<Tok> {
+        let Inline::Math {
+            tex,
+            range,
+            raw,
+            link,
+            ..
+        } = inline
+        else {
+            return Vec::new();
+        };
+        let style = math_style(base, *link);
+        let mut toks = Vec::new();
+        let mut word = Vec::new();
+        let space = |word: &mut Vec<Cell>, toks: &mut Vec<Tok>, src| {
+            if !word.is_empty() {
+                toks.push(Tok::Word(std::mem::take(word)));
+            }
+            toks.push(Tok::Space(src));
+        };
+        if self.math {
+            for g in math_one_line(tex).graphemes(true) {
+                if g.chars().all(char::is_whitespace) {
+                    space(&mut word, &mut toks, Some(range.clone()));
+                } else {
+                    word.extend(Self::math_cell(g, range, style, *link));
+                }
+            }
+        } else {
+            for (k, r) in raw.iter().enumerate() {
+                if k > 0 {
+                    space(&mut word, &mut toks, None);
+                }
+                for (i, g) in self.slice(r).grapheme_indices(true) {
+                    let b = r.start + i;
+                    if g.chars().all(char::is_whitespace) {
+                        space(&mut word, &mut toks, Some(b..b + g.len()));
+                    } else {
+                        self.push_grapheme(&mut word, g, b, style, *link);
+                    }
+                }
+            }
+        }
+        if !word.is_empty() {
+            toks.push(Tok::Word(word));
+        }
+        toks
+    }
+
+    /// A paragraph whose only content is one `$$…$$` is drawn as a
+    /// display block. Returns false (nothing drawn) otherwise, and always
+    /// with math off (the paragraph then reflows its raw source).
+    fn standalone_math(&mut self, range: &Range<usize>, inline: &Range<usize>) -> bool {
+        if !self.math {
+            return false;
+        }
+        let inlines = (self.inlines)(inline.clone());
+        let mut math = inlines.iter().filter(|i| {
+            !matches!(i, Inline::SoftBreak | Inline::HardBreak)
+                && !matches!(i, Inline::Text { range, .. } if self.slice(range).trim().is_empty())
+        });
+        let (Some(m @ Inline::Math { display: true, .. }), None) = (math.next(), math.next())
+        else {
+            return false;
+        };
+        self.display_math(m, range.start);
+        true
+    }
+
+    /// A fenced ```` ```math ```` block, drawn like a standalone `$$` block.
+    fn math_fence(&mut self, code: &Range<usize>) {
+        let mut tex = String::new();
+        let mut first: Option<Range<usize>> = None;
+        let mut offset = code.start;
+        for line in self.slice(code).split_inclusive('\n') {
+            let body = line.trim_end_matches(['\n', '\r']);
+            let text = body.trim_start_matches([' ', '\t', '>']).trim_end();
+            if first.is_none() && !text.is_empty() {
+                let start = offset + body.len() - body.trim_start_matches([' ', '\t', '>']).len();
+                first = Some(start..start + text.len());
+            }
+            tex.push_str(text);
+            tex.push('\n');
+            offset += line.len();
+        }
+        let range = first.unwrap_or(code.start..code.start);
+        let m = Inline::Math {
+            tex,
+            display: true,
+            raw: vec![range.clone()],
+            range,
+            link: None,
+        };
+        self.display_math(&m, code.start);
+    }
+
+    /// Display math: the 2-D grid centred in the available width, or one
+    /// wrapped line when it does not convert or does not fit.
+    fn display_math(&mut self, m: &Inline, fallback: usize) {
+        let Inline::Math { tex, range, .. } = m else {
+            return;
+        };
+        let style = math_style(base_style(), None);
+        let avail = self.avail();
+        if let Some(rows) = math_grid(tex) {
+            let w = rows
+                .iter()
+                .map(|r| UnicodeWidthStr::width(r.as_str()))
+                .max()
+                .unwrap_or(0);
+            if w <= avail {
+                let pad = " ".repeat((avail - w) / 2);
+                for row in rows {
+                    let mut cells = deco_cells(&pad, base_style());
+                    cells.extend(
+                        row.graphemes(true)
+                            .filter_map(|g| Self::math_cell(g, range, style, None)),
+                    );
+                    self.emit(cells, Some(fallback));
+                }
+                return;
+            }
+        }
+        let toks = self.math_tokens(m, base_style());
+        let rows = wrap(toks, avail, base_style());
+        if rows.is_empty() {
+            self.emit(Vec::new(), Some(fallback));
+        }
+        for row in rows {
+            self.emit(row, Some(fallback));
+        }
     }
 }

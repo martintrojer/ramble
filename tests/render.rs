@@ -95,6 +95,22 @@ fn walk(d: &Document, range: Range<usize>) -> Vec<Inline> {
             });
             i = end + 1;
             text_start = i;
+        } else if let Some(body) = rest.strip_prefix('$') {
+            flush(&mut out, text_start, i, strong);
+            let display = body.starts_with('$');
+            let d = 1 + usize::from(display);
+            let len = rest[d..].find(&"$$"[..d]).expect("closing $");
+            let range = i + d..i + d + len;
+            let whole = i..range.end + d;
+            out.push(Inline::Math {
+                tex: src[range.clone()].to_string(),
+                display,
+                range: range.clone(),
+                raw: vec![whole],
+                link: None,
+            });
+            i = range.end + d;
+            text_start = i;
         } else if rest.starts_with("[^") {
             flush(&mut out, text_start, i, strong);
             let end = i + rest.find(']').expect("closing bracket");
@@ -230,6 +246,10 @@ fn main() {
 
 <div>raw html</div>
 
+Math $\\sum_{i=1}^n x_i$ and $\\mathbb{R}^n$ inline.
+
+$$\\frac{a+b}{c}$$
+
 [^1]: The footnote.
 ";
 
@@ -329,6 +349,8 @@ fn fixture() -> Document {
         Block::Html {
             range: rng(s, "<div>raw html</div>"),
         },
+        para(s, "Math $\\sum_{i=1}^n x_i$ and $\\mathbb{R}^n$ inline."),
+        para(s, "$$\\frac{a+b}{c}$$"),
         Block::FootnoteDefinition {
             label: "1".into(),
             range: rng(s, "[^1]: The footnote."),
@@ -754,4 +776,130 @@ proptest! {
         }
         prop_assert!(page.source_lines.windows(2).all(|w| w[0] <= w[1]));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Math
+
+fn render_md(src: &str, width: u16, math: bool) -> (Document, RenderedPage) {
+    let d = ramble::doc::parse(src.to_string());
+    let theme = Theme {
+        math,
+        ..Theme::catppuccin_mocha()
+    };
+    let page = render(&d, width, &theme);
+    (d, page)
+}
+
+fn all_rows(page: &RenderedPage) -> Vec<String> {
+    (0..page.lines.len()).map(|r| row_text(page, r)).collect()
+}
+
+#[test]
+fn inline_math_renders_unicode_in_math_colour() {
+    let (_, page) = render_md("Sum $\\sum_{i=1}^n x_i$ here.\n", 80, true);
+    assert_eq!(row_text(&page, 0), "Sum ∑ᵢ₌₁ⁿ xᵢ here.");
+    let span = page.lines[0]
+        .spans
+        .iter()
+        .find(|s| s.content.contains('∑'))
+        .expect("math span");
+    assert_eq!(span.style.fg, Some(palette::TEAL));
+}
+
+#[test]
+fn bad_math_keeps_raw_source() {
+    for (tex, want) in [
+        ("\\foo{x}", "\\foo{x}"),
+        (
+            "\\begin{matrix}a&b\\end{matrix}",
+            "\\begin{matrix}a&b\\end{matrix}",
+        ),
+        ("x^2", "x²"),
+    ] {
+        let (_, page) = render_md(&format!("A ${tex}$ b\n"), 80, true);
+        assert_eq!(row_text(&page, 0), format!("A {want} b"), "{tex}");
+    }
+    // CommonMark does not read `$\frac{a}{$` as math; a math fence does.
+    let (_, page) = render_md("```math\n\\frac{a}{\n```\n", 40, true);
+    assert_eq!(all_rows(&page), vec!["\\frac{a}{"]);
+}
+
+#[test]
+fn display_math_draws_centred_fraction() {
+    let src = "$$\n\\frac{a+b}{c}\n$$\n";
+    let (d, page) = render_md(src, 21, true);
+    let rows = all_rows(&page);
+    assert_eq!(rows, vec!["        a + b", "       ───────", "          c"]);
+    // Every math row maps into the LaTeX, not the delimiters.
+    let inner = rng(src, "\\frac{a+b}{c}");
+    for row in 0..3 {
+        let segs: Vec<_> = page
+            .srcmap
+            .segments
+            .iter()
+            .filter(|s| s.span.row == row)
+            .collect();
+        assert!(!segs.is_empty(), "row {row}");
+        for seg in segs {
+            assert!(
+                seg.src.start >= inner.start && seg.src.end <= inner.end,
+                "row {row}: {:?} outside {inner:?} ({:?})",
+                seg.src,
+                &d.source[seg.src.clone()]
+            );
+        }
+    }
+    assert_eq!(page.source_lines, vec![2, 2, 2]);
+}
+
+#[test]
+fn display_math_in_quote_maps_past_prefix() {
+    let src = "> $$\n> \\frac{1}{2}\n> $$\n";
+    let (_, page) = render_md(src, 40, true);
+    let rows = all_rows(&page);
+    assert_eq!(rows.len(), 3, "{rows:#?}");
+    assert!(rows.iter().all(|r| r.starts_with("│ ")), "{rows:#?}");
+    let inner = rng(src, "\\frac{1}{2}");
+    for seg in &page.srcmap.segments {
+        assert!(seg.src.start >= inner.start && seg.src.end <= inner.end);
+    }
+}
+
+#[test]
+fn too_wide_display_math_falls_back_to_one_line() {
+    let src = "$$\\sum_{i=1}^n i = \\frac{n(n+1)}{2}$$\n";
+    let (_, wide) = render_md(src, 40, true);
+    assert_eq!(wide.lines.len(), 3);
+    let (_, narrow) = render_md(src, 16, true);
+    assert_eq!(all_rows(&narrow), vec!["∑ᵢ₌₁ⁿ i =", "(n(n+1))/2"]);
+}
+
+#[test]
+fn display_math_inside_text_renders_inline() {
+    let (_, page) = render_md("half $$\\frac{1}{2}$$ done\n", 40, true);
+    assert_eq!(all_rows(&page), vec!["half 1/2 done"]);
+}
+
+#[test]
+fn math_fence_renders_like_display_math() {
+    let (_, page) = render_md("```math\n\\frac{a}{b}\n```\n", 3, true);
+    assert_eq!(all_rows(&page), vec![" a", "───", " b"]);
+}
+
+#[test]
+fn math_off_shows_raw_source() {
+    let src = "A $x^2$ b\n\n$$\\frac{1}{2}$$\n";
+    let (_, page) = render_md(src, 40, false);
+    assert_eq!(all_rows(&page), vec!["A $x^2$ b", "", "$$\\frac{1}{2}$$"]);
+    let span = page.lines[0]
+        .spans
+        .iter()
+        .find(|s| s.content.contains("x^2"))
+        .expect("math span");
+    assert_eq!(span.style.fg, Some(palette::TEAL));
+    // Raw source maps byte for byte.
+    let spans = page.srcmap.spans_for(rng(src, "$x^2$"));
+    assert_eq!((spans[0].col_start, spans[0].col_end), (0, 9));
+    assert_eq!(page.srcmap.source_at(0, 4), Some(4));
 }

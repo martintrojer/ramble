@@ -193,6 +193,22 @@ pub enum Inline {
     HardBreak,
     /// Footnote reference `[^label]`; `range` is the label text.
     FootnoteRef { label: String, range: Range<usize> },
+    /// Math: `$…$` (`display: false`) or `$$…$$` (`display: true`).
+    Math {
+        /// The LaTeX as CommonMark reads it: no delimiters, no container
+        /// prefixes. Convert this, never a slice of the source.
+        tex: String,
+        display: bool,
+        /// Where converted output maps: the LaTeX without delimiters or
+        /// container prefixes. For math over several lines this is the
+        /// first non-blank line (prefix-free), so it never covers `> `.
+        range: Range<usize>,
+        /// The whole construct, delimiters included, one range per source
+        /// line with container prefixes skipped (shown when math is off).
+        raw: Vec<Range<usize>>,
+        /// Index into `Document::links` when the math is link text.
+        link: Option<usize>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -306,6 +322,13 @@ pub fn inlines(doc: &Document, inline: Range<usize>) -> Vec<Inline> {
                 }
                 Ev::SoftBreak => out.push(Inline::SoftBreak),
                 Ev::HardBreak => out.push(Inline::HardBreak),
+                Ev::Math { tex, display } => out.push(math_inline(
+                    &doc.source,
+                    range,
+                    tex.clone(),
+                    *display,
+                    style.link,
+                )),
                 Ev::FootnoteRef(label) => out.push(Inline::FootnoteRef {
                     label: label.clone(),
                     range: range.start + 2..range.end - 1,
@@ -334,6 +357,7 @@ enum Ev {
     SoftBreak,
     HardBreak,
     FootnoteRef(String),
+    Math { tex: String, display: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -380,7 +404,15 @@ fn inline_events(src: &str) -> Vec<InlineEvent> {
                 Event::Start(Tag::Link { .. }) => Ev::Start(Mark::Link),
                 Event::End(TagEnd::Link) => Ev::End(Mark::Link),
                 // Inline HTML is shown literally.
-                Event::Text(_) | Event::InlineHtml(_) | Event::InlineMath(_) => Ev::Text,
+                Event::Text(_) | Event::InlineHtml(_) => Ev::Text,
+                Event::InlineMath(tex) => Ev::Math {
+                    tex: tex.to_string(),
+                    display: false,
+                },
+                Event::DisplayMath(tex) => Ev::Math {
+                    tex: tex.to_string(),
+                    display: true,
+                },
                 Event::Code(_) => Ev::Code,
                 Event::SoftBreak => Ev::SoftBreak,
                 Event::HardBreak => Ev::HardBreak,
@@ -408,6 +440,7 @@ fn options() -> Options {
         | Options::ENABLE_WIKILINKS
         | Options::ENABLE_HEADING_ATTRIBUTES
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | Options::ENABLE_MATH
 }
 
 fn events(src: &str) -> Vec<(Event<'_>, Range<usize>)> {
@@ -467,6 +500,50 @@ fn fence_lang(info: &str) -> Option<String> {
         .unwrap_or(first.len());
     let lang = first[..end].trim_start_matches('.');
     (!lang.is_empty()).then(|| lang.to_lowercase())
+}
+
+/// An [`Inline::Math`] for the math event at `range` (delimiters included).
+fn math_inline(
+    src: &str,
+    range: Range<usize>,
+    tex: String,
+    display: bool,
+    link: Option<usize>,
+) -> Inline {
+    let pieces = |r: Range<usize>| {
+        let mut out = Vec::new();
+        push_lines(&mut out, src, r, |range| Inline::Text {
+            range,
+            style: InlineStyle::default(),
+        });
+        out.into_iter()
+            .filter_map(|i| match i {
+                Inline::Text { range, .. } => Some(range),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // A math event spans both delimiters.
+    let delim = if display { 2 } else { 1 };
+    let start = (range.start + delim).min(range.end);
+    let inner = start..range.end.saturating_sub(delim).max(start);
+    let first = pieces(inner.clone())
+        .into_iter()
+        .find_map(|r| {
+            let s = &src[r.clone()];
+            let t = s.trim_start();
+            let start = r.start + s.len() - t.len();
+            let end = start + t.trim_end().len();
+            (start < end).then_some(start..end)
+        })
+        .unwrap_or(inner.start..inner.start);
+    Inline::Math {
+        tex,
+        display,
+        range: first,
+        raw: pieces(range),
+        link,
+    }
 }
 
 /// Inline code span without the backtick fences and the single padding
@@ -775,7 +852,11 @@ fn collect_links(events: &Events<'_>) -> Vec<Link> {
                     });
                 }
             }
-            Event::Text(_) | Event::Code(_) | Event::InlineHtml(_) | Event::InlineMath(_) => {
+            Event::Text(_)
+            | Event::Code(_)
+            | Event::InlineHtml(_)
+            | Event::InlineMath(_)
+            | Event::DisplayMath(_) => {
                 for (_, span) in &mut open {
                     *span = Some(match span.take() {
                         None => range.clone(),

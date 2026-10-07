@@ -50,7 +50,11 @@ fn main() -> ExitCode {
             let Some(document) = doc::from_bytes(&bytes) else {
                 return fail(format!("ramble: {label} looks binary"), 1);
             };
-            let page = render::render(&document, width, &render::Theme::catppuccin_mocha());
+            let theme = render::Theme {
+                math: config.render.math,
+                ..render::Theme::catppuccin_mocha()
+            };
+            let page = render::render(&document, width, &theme);
             let mut out = std::io::stdout().lock();
             match out
                 .write_all(render::to_ansi(&page).as_bytes())

@@ -209,10 +209,14 @@ impl App {
         let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
         let sidebar = sidebar::Sidebar::new(&opts.config.sidebar, &opts.target);
         let lsp = lsp_glue::LspState::new(&opts.config.lsp.server);
+        let math = opts.config.render.math;
         let mut app = App {
             config: opts.config,
             tree_root: opts.tree_root,
-            theme: Theme::catppuccin_mocha(),
+            theme: Theme {
+                math,
+                ..Theme::catppuccin_mocha()
+            },
             size,
             page: None,
             rows: Vec::new(),

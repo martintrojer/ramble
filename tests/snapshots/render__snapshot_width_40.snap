@@ -39,4 +39,10 @@ expression: "snapshot_text(&draw(&fixture(), 40))"
  28|
  30|{overlay}<div>raw html</div>{/}
  30|
- 32|{peach}[1] {/}The footnote.
+ 32|Math {teal}∑ᵢ₌₁ⁿ{/} {teal}xᵢ{/} and {teal}ℝⁿ{/} inline.
+ 32|
+ 34|                {teal} a + b{/}
+ 34|                {teal}───────{/}
+ 34|                {teal}   c{/}
+ 34|
+ 36|{peach}[1] {/}The footnote.

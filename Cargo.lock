@@ -1000,6 +1000,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 
 [[package]]
+name = "latex-to-unicode"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd4163985a58a9b834744e3bb6bd6407ac193ac63617b9b1ce9f63ef3bede696"
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1581,6 +1587,7 @@ dependencies = [
  "crossterm",
  "ignore",
  "insta",
+ "latex-to-unicode",
  "lsp-types",
  "notify",
  "nucleo",
@@ -1591,6 +1598,7 @@ dependencies = [
  "serde_json",
  "syntect",
  "tempfile",
+ "term-maths",
  "toml",
  "two-face",
  "unicode-general-category",
@@ -1810,6 +1818,12 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "rust-latex-parser"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30b0949524549f0f83d8a14c71e9b378c45307a77bb6ea6bb969d1399d5ae134"
 
 [[package]]
 name = "rustc_version"
@@ -2128,6 +2142,17 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "term-maths"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26ccccf7b1e429ef47ef4a82726346feefdb67169e6a9d8d97fc6d3707640a05"
+dependencies = [
+ "rust-latex-parser",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
