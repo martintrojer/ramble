@@ -113,12 +113,16 @@ fn show_all_lists_other_files() {
 #[test]
 fn tree_is_walked_lazily() {
     let (_d, root) = fixture();
-    let tree = Tree::new(&root, true);
+    let mut tree = Tree::new(&root, true);
     assert!(
         !item_paths(&tree.visible_items()).contains(&root.join("docs/guide.md")),
         "children of a collapsed dir are not listed"
     );
     assert!(!tree.is_expanded(&root.join("docs")));
+    // Root entries not hidden or ignored: a.md, b.txt, docs, img.
+    assert_eq!(tree.entries_read(), 4, "only the root level is read");
+    tree.expand(&root.join("docs"));
+    assert_eq!(tree.entries_read(), 6, "docs/ adds deep and guide.md only");
 }
 
 #[test]
@@ -194,6 +198,23 @@ fn focus_moves_with_ctrl_w() {
     win(&mut app, 'h');
     assert_eq!(app.focus(), Focus::Content);
     assert_eq!(app.status(), OFF_MESSAGE);
+}
+
+#[test]
+fn focus_returns_to_content_when_its_pane_goes() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Split),
+    );
+    win(&mut app, 'w');
+    win(&mut app, 'w');
+    assert_eq!(app.focus(), Focus::Outline);
+    // The sidebar stays shown, but the outline pane is gone.
+    app.set_sidebar_mode(SidebarMode::Files);
+    assert!(app.sidebar_cols() > 0);
+    assert_eq!(app.focus(), Focus::Content);
 }
 
 #[test]

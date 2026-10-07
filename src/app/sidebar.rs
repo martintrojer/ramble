@@ -155,6 +155,8 @@ pub struct Tree {
     /// The followed file when it lies outside the root.
     outside: Option<PathBuf>,
     filter: Option<String>,
+    /// Entries the walker has yielded below a walked dir, at any depth.
+    entries_read: usize,
 }
 
 fn canonical(p: &Path) -> PathBuf {
@@ -180,6 +182,7 @@ impl Tree {
             selected: None,
             outside: None,
             filter: None,
+            entries_read: 0,
         };
         tree.walk(&root);
         tree
@@ -187,6 +190,12 @@ impl Tree {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// How many directory entries have been read so far; shows that a
+    /// walk reads one level only.
+    pub fn entries_read(&self) -> usize {
+        self.entries_read
     }
 
     /// Read one level of `dir`, respecting ignore files (including those
@@ -202,6 +211,8 @@ impl Tree {
             .git_global(false)
             .build()
             .flatten()
+            .filter(|e| e.depth() >= 1)
+            .inspect(|_| self.entries_read += 1)
             .filter(|e| e.depth() == 1)
             .map(|e| Node {
                 path: e.path().to_path_buf(),
