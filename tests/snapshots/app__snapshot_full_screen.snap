@@ -1,0 +1,16 @@
+---
+source: tests/app.rs
+expression: screen(&app)
+---
+"Title                                   "
+"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+"                                        "
+"Para 1 has foo.bar words                "
+"                                        "
+"Para 2 has foo.bar words                "
+"                                        "
+"Para 3 has foo.bar words                "
+"                                        "
+"Para 4 has foo.bar words                "
+"                                        "
+" doc.md  hi                 —  Top  ← 0 "
