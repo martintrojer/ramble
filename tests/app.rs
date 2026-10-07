@@ -2073,6 +2073,118 @@ fn zk_backlinks_land_on_the_first_link_back_not_zks_line() {
     assert_eq!(app.link_under_cursor(), Some(0));
 }
 
+/// A note whose only link, `link` (on its own line 83), comes after a line
+/// 3 reading "para 0" (where zk's substring hit lands).
+fn long_note(link: &str) -> String {
+    let mut long = String::from("# Long\n\npara 0\n");
+    for i in 1..40 {
+        long.push_str(&format!("\npara {i}\n"));
+    }
+    long.push_str(&format!("\n{link} link\n"));
+    assert_eq!(long.lines().position(|l| l.starts_with(link)), Some(82));
+    long
+}
+
+/// zk's backlinks reply: long.md at line 3.
+fn long_md_at_line_3(root: &Path) -> Value {
+    json!({"expect": "textDocument/references", "reply": [
+        {"uri": uri(&root.join("long.md")), "range": {
+            "start": {"line": 2, "character": 0},
+            "end": {"line": 2, "character": 0}}}]})
+}
+
+#[test]
+fn zk_backlinks_land_on_an_extensionless_markdown_link_back() {
+    // `[x](a)` is zk's default link style; long.md's documentLink gets the
+    // fake's null, so only local resolution (a + ".md") finds the link.
+    let long = long_note("[x](a)");
+    let (dir, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[("long.md", &long)], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               long_md_at_line_3(root)])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    keys(&mut app, "grr");
+    pump_until(&mut app, "backlinks", |a| !picker_labels(a).is_empty());
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("long.md"));
+    assert_eq!(
+        row_text(&app, app.cursor().row),
+        "x link",
+        "long.md line 83"
+    );
+    assert_eq!(app.link_under_cursor(), Some(0));
+}
+
+#[test]
+fn zk_backlinks_land_once_the_document_link_reply_arrives() {
+    // `[x](alias)` does not resolve locally; only long.md's documentLink
+    // reply, which arrives after the page opened, says it targets a.md.
+    let long = long_note("[x](alias)");
+    let (dir, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[("long.md", &long)], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               long_md_at_line_3(root),
+               {"expect": "textDocument/documentLink",
+                "reply": [doc_link(82, 0..10, &root.join("a.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    keys(&mut app, "grr");
+    pump_until(&mut app, "backlinks", |a| !picker_labels(a).is_empty());
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("long.md"));
+    assert_eq!(
+        row_text(&app, app.cursor().row),
+        "para 0",
+        "zk's line first"
+    );
+    pump_until(&mut app, "documentLink applied", |a| {
+        a.link_target(0).is_some()
+    });
+    assert_eq!(
+        row_text(&app, app.cursor().row),
+        "x link",
+        "long.md line 83"
+    );
+    assert_eq!(app.link_under_cursor(), Some(0));
+}
+
+#[test]
+fn zk_backlinks_do_not_jump_once_the_cursor_moved() {
+    // As above, but the user moves before the documentLink reply (held
+    // 300 ms) arrives: the cursor stays put.
+    let long = long_note("[x](alias)");
+    let (dir, mut app, _log) = kind_app(ServerKind::Zk, "# A\n", &[("long.md", &long)], |root| {
+        json!([zk_init(), {"expect": "workspace/executeCommand", "reply": {}},
+               long_md_at_line_3(root),
+               {"expect": "textDocument/documentLink", "as": "dl"},
+               {"sleep_ms": 300},
+               {"respond": "dl", "result": [doc_link(82, 0..10, &root.join("a.md"))]}])
+    });
+    let root = dir.path().canonicalize().unwrap();
+    running(&mut app);
+    keys(&mut app, "grr");
+    pump_until(&mut app, "backlinks", |a| !picker_labels(a).is_empty());
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(page_path(&app), root.join("long.md"));
+    keys(&mut app, "j");
+    let moved = app.cursor();
+    pump_until(&mut app, "documentLink applied", |a| {
+        a.link_target(0).is_some()
+    });
+    assert_eq!(app.cursor(), moved);
+}
+
+#[test]
+fn gd_on_an_extensionless_markdown_link_without_lsp_opens_the_md_file() {
+    let (dir, mut app, _fx) = nav_app_with("# A\n\n[x](b)\n");
+    std::fs::write(dir.path().join("b.md"), b_source()).unwrap();
+    goto_text(&mut app, "x");
+    keys(&mut app, "gd");
+    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(app.history_depth(), 1);
+}
+
 #[test]
 fn marksman_backlinks_use_the_first_heading_or_are_hidden() {
     let src = "Intro text\n\n## Topic\n";

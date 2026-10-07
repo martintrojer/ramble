@@ -124,6 +124,10 @@ pub(super) struct LspState {
     broken: BTreeSet<usize>,
     requests: Vec<Request>,
     hover: Option<String>,
+    /// A backlink opened this page but found no link back yet: the page
+    /// it came from and the cursor then. The documentLink reply redoes the
+    /// search if the cursor is still there.
+    backlink: Option<(PathBuf, super::Cursor)>,
 }
 
 impl LspState {
@@ -143,6 +147,7 @@ impl LspState {
             broken: BTreeSet::new(),
             requests: Vec::new(),
             hover: None,
+            backlink: None,
         }
     }
 
@@ -220,6 +225,7 @@ impl App {
         l.broken.clear();
         l.requests.clear();
         l.hover = None;
+        l.backlink = None;
         let Some(path) = self.page.as_ref().and_then(|p| p.path.clone()) else {
             return;
         };
@@ -395,6 +401,11 @@ impl App {
                 if let Ok(v) = result {
                     self.apply_document_links(&v);
                 }
+                if let Some((from, at)) = self.lsp.backlink.take()
+                    && self.cursor == at
+                {
+                    self.land_on_link_to(&from);
+                }
             }
             ReqKind::Definition(i) => {
                 if self.link_under_cursor() != Some(i) {
@@ -559,6 +570,12 @@ impl App {
     }
 
     /// The documentLink target of link `i` on the current page.
+    /// Redo the backlink landing on `from` when this page's documentLink
+    /// reply arrives, if the cursor is still at `at`.
+    pub(super) fn lsp_await_backlink(&mut self, from: PathBuf, at: super::Cursor) {
+        self.lsp.backlink = Some((from, at));
+    }
+
     pub fn link_target(&self, i: usize) -> Option<&Path> {
         self.lsp.targets.get(&i).map(PathBuf::as_path)
     }

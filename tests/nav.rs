@@ -63,6 +63,35 @@ fn resolve_table() {
 }
 
 #[test]
+fn extensionless_markdown_link_gets_md_only_when_that_file_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    std::fs::write(d.join("a.md"), "").unwrap();
+    std::fs::write(d.join("both"), "").unwrap();
+    std::fs::write(d.join("both.md"), "").unwrap();
+    std::fs::create_dir(d.join("sub")).unwrap();
+    std::fs::write(d.join("sub.md"), "").unwrap();
+    let md = LinkKind::Markdown;
+    let at = |name: &str, anchor: Option<&str>| Target::File {
+        path: d.join(name),
+        anchor: anchor.map(str::to_string),
+    };
+    assert_eq!(nav::resolve("a", &md, d), at("a.md", None));
+    assert_eq!(nav::resolve("a#h", &md, d), at("a.md", Some("h")));
+    assert_eq!(
+        nav::resolve("both", &md, d),
+        at("both", None),
+        "bare file wins"
+    );
+    assert_eq!(
+        nav::resolve("sub", &md, d),
+        at("sub", None),
+        "bare dir wins"
+    );
+    assert_eq!(nav::resolve("none", &md, d), at("none", None));
+}
+
+#[test]
 fn is_markdown_extensions() {
     for p in ["a.md", "a.MD", "a.markdown", "a.mdown", "a.mkd"] {
         assert!(nav::is_markdown(Path::new(p)), "{p}");

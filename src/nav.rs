@@ -85,7 +85,9 @@ pub enum Target {
 /// Resolve a link destination as written against `current_dir` (the
 /// current file's directory, or the working directory for stdin).
 ///
-/// Wikilinks without an extension get `.md`; markdown links never do.
+/// Wikilinks without an extension get `.md`. A markdown link without an
+/// extension gets `.md` only when that file exists and the bare one does
+/// not (zk's rule; `[x](a)` is zk's default link style).
 pub fn resolve(dest: &str, kind: &LinkKind, current_dir: &Path) -> Target {
     if let Some(anchor) = dest.strip_prefix('#') {
         return Target::Anchor(percent_decode(anchor));
@@ -116,13 +118,15 @@ pub fn resolve(dest: &str, kind: &LinkKind, current_dir: &Path) -> Target {
         };
     }
     let mut path = percent_decode(path);
-    if *kind == LinkKind::Wiki && Path::new(&path).extension().is_none() {
+    let mut full = current_dir.join(&path);
+    if Path::new(&path).extension().is_none() {
         path.push_str(".md");
+        let with_md = current_dir.join(&path);
+        if *kind == LinkKind::Wiki || (!full.exists() && with_md.is_file()) {
+            full = with_md;
+        }
     }
-    Target::File {
-        path: current_dir.join(path),
-        anchor,
-    }
+    Target::File { path: full, anchor }
 }
 
 /// RFC 3986 scheme (`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`) before the

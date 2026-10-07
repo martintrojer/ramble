@@ -422,16 +422,28 @@ impl App {
     /// page that resolves to `from` (zk reports the line of the first
     /// substring hit of the target's name, often not the link), else to
     /// the server's `line`.
+    /// If no link resolves yet (it may need the page's documentLink reply),
+    /// the search is redone when that reply arrives, unless the cursor has
+    /// moved by then.
     fn open_backlink(&mut self, path: &Path, line: Option<usize>, from: Option<&Path>) {
         let before = self.page_id();
         self.open_path_at(path, line);
         if self.page_id() == before {
             return;
         }
-        let Some(i) = from.and_then(|f| self.first_link_to(f)) else {
-            return;
+        let Some(from) = from else { return };
+        if !self.land_on_link_to(from) {
+            self.lsp_await_backlink(from.to_path_buf(), self.cursor);
+        }
+    }
+
+    /// Put the cursor on the first link to `target` (see
+    /// [`App::first_link_to`]). False when there is none.
+    pub(super) fn land_on_link_to(&mut self, target: &Path) -> bool {
+        let Some(i) = self.first_link_to(target) else {
+            return false;
         };
-        let Some(page) = &self.page else { return };
+        let Some(page) = &self.page else { return false };
         let Some(seg) = page
             .rendered
             .srcmap
@@ -439,11 +451,12 @@ impl App {
             .iter()
             .find(|s| s.link == Some(i))
         else {
-            return;
+            return false;
         };
         let (row, col) = (seg.span.row, seg.span.col_start);
         self.jump_to_row(row);
         self.set_col(col);
+        true
     }
 
     /// Index of the first link on the current page whose target is the
