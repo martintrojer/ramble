@@ -86,7 +86,51 @@ enum Instance {
 /// What background threads send.
 enum Incoming {
     Event(LspEvent),
-    Started(String, Result<Box<Client>, String>),
+    Started(String, Result<Box<Client>, StartError>),
+}
+
+/// Why a server failed to start.
+struct StartError {
+    kind: &'static str,
+    /// The command does not exist (spawn ENOENT): quiet no-LSP mode.
+    not_found: bool,
+    /// The innermost cause, one line, at most [`REASON_MAX`] chars.
+    reason: String,
+}
+
+/// Longest start-failure reason shown in the status line.
+const REASON_MAX: usize = 60;
+
+impl StartError {
+    fn new(kind: Kind, e: &anyhow::Error) -> Self {
+        let not_found = e.chain().any(|c| {
+            c.downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+        });
+        let cause = e.root_cause().to_string();
+        let line = first_line(&cause);
+        let reason = if line.chars().count() > REASON_MAX {
+            let mut r: String = line.chars().take(REASON_MAX - 1).collect();
+            r.push('…');
+            r
+        } else {
+            line.to_string()
+        };
+        Self {
+            kind: spec_kind_label(kind),
+            not_found,
+            reason,
+        }
+    }
+
+    /// The status message: kind only, no instance name or root.
+    fn status(&self) -> String {
+        if self.not_found {
+            format!("{} not installed; no LSP", self.kind)
+        } else {
+            format!("{} failed to start: {}", self.kind, self.reason)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +168,8 @@ pub(super) struct LspState {
     broken: BTreeSet<usize>,
     requests: Vec<Request>,
     hover: Option<String>,
+    /// Kinds whose start failure was already shown this session.
+    start_failures_shown: BTreeSet<&'static str>,
     /// A backlink opened this page but found no link back yet: the page
     /// it came from and the cursor then. The documentLink reply redoes the
     /// search if the cursor is still there.
@@ -147,6 +193,7 @@ impl LspState {
             broken: BTreeSet::new(),
             requests: Vec::new(),
             hover: None,
+            start_failures_shown: BTreeSet::new(),
             backlink: None,
         }
     }
@@ -173,7 +220,7 @@ fn start_in_background(spec: ServerSpec, root: PathBuf, tx: Sender<Incoming>) {
         });
         let result = Client::start(&spec, &root, ev_tx)
             .map(Box::new)
-            .map_err(|e| format!("{e:#}"));
+            .map_err(|e| StartError::new(spec.kind, &e));
         let _ = tx.send(Incoming::Started(spec.name, result));
     });
 }
@@ -292,6 +339,9 @@ impl App {
         match m {
             Incoming::Event(ev) => self.lsp_event(ev),
             Incoming::Started(name, Ok(client)) => {
+                if matches!(self.lsp.instances.get(&name), Some(Instance::Dead)) {
+                    return; // Exited before its start was seen.
+                }
                 self.lsp
                     .instances
                     .insert(name.clone(), Instance::Running(client));
@@ -301,7 +351,10 @@ impl App {
             }
             Incoming::Started(name, Err(e)) => {
                 self.lsp.instances.insert(name, Instance::Dead);
-                self.status = format!("LSP failed to start: {}", first_line(&e));
+                // Once per kind per session.
+                if self.lsp.start_failures_shown.insert(e.kind) {
+                    self.status = e.status();
+                }
             }
         }
     }
@@ -359,7 +412,13 @@ impl App {
                     .collect();
             }
             LspEvent::Exited { server, error } => {
+                let was_running =
+                    matches!(self.lsp.instances.get(&server), Some(Instance::Running(_)));
                 self.lsp.instances.insert(server.clone(), Instance::Dead);
+                // A server that never got running is reported by `Started`.
+                if !was_running {
+                    return;
+                }
                 if self.is_current_instance(&server) {
                     self.lsp.requests.clear();
                 }

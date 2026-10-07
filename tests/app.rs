@@ -1590,11 +1590,8 @@ fn start_failure_is_no_lsp_mode() {
     let mut app = App::new(o, (COLS, ROWS)).unwrap();
     assert_eq!(app.lsp_label(), "zk ○");
     pump_until(&mut app, "start failure", |a| a.lsp_label() == "—");
-    assert!(
-        app.status().contains("LSP failed to start"),
-        "{}",
-        app.status()
-    );
+    // A missing command is quiet: the kind only, no instance name or path.
+    assert_eq!(app.status(), "zk not installed; no LSP");
     // N1: the failure is remembered; visiting another page under the same
     // root, or coming back, must not respawn the server.
     std::fs::write(root.join("b.md"), "# B\n").unwrap();
@@ -1604,6 +1601,72 @@ fn start_failure_is_no_lsp_mode() {
     assert_eq!(app.lsp_label(), "—", "not respawned on revisit");
     pump_for(&mut app, Duration::from_millis(200));
     assert_eq!(app.lsp_label(), "—");
+}
+
+/// An app whose only server, of `kind`, runs `command` for notebooks
+/// marked `.fake`, opened on `a.md` in a fresh notebook.
+fn failing_server_app(kind: ServerKind, command: Vec<String>) -> (TempDir, App) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join(".fake"), "").unwrap();
+    std::fs::write(root.join("a.md"), "# A\n").unwrap();
+    let mut o = opts(&root, StartTarget::File(root.join("a.md")));
+    o.config.lsp.server = vec![ServerConfig {
+        kind,
+        command,
+        root_markers: vec![".fake".into()],
+        position_encoding: None,
+    }];
+    let app = App::new(o, (COLS, ROWS)).unwrap();
+    (dir, app)
+}
+
+#[test]
+fn missing_server_is_reported_once_per_kind() {
+    let (dir, mut app) = failing_server_app(
+        ServerKind::Marksman,
+        vec!["ramble-no-such-lsp-binary".into()],
+    );
+    pump_until(&mut app, "start failure", |a| a.lsp_label() == "—");
+    assert_eq!(app.status(), "marksman not installed; no LSP");
+    // Another root of the same kind: a new instance fails too, quietly.
+    let other = dir.path().canonicalize().unwrap().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join(".fake"), "").unwrap();
+    std::fs::write(other.join("c.md"), "# C\n").unwrap();
+    app.open_file(&other.join("c.md")).unwrap();
+    assert_eq!(
+        app.lsp_label(),
+        "marksman ○",
+        "a new root starts its own server"
+    );
+    app.set_status("");
+    pump_until(&mut app, "second start failure", |a| a.lsp_label() == "—");
+    pump_for(&mut app, Duration::from_millis(100));
+    assert_eq!(app.status(), "", "shown once per kind per session");
+}
+
+#[test]
+fn failing_server_shows_a_short_reason() {
+    let long = "x".repeat(200);
+    let (_dir, mut app) = failing_server_app(
+        ServerKind::Generic,
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("echo {long} >&2; exit 3"),
+        ],
+    );
+    pump_until(&mut app, "start failure", |a| {
+        a.lsp_label() == "—" && !a.status().is_empty()
+    });
+    let status = app.status().to_string();
+    assert!(status.starts_with("generic failed to start: "), "{status}");
+    let reason = status.trim_start_matches("generic failed to start: ");
+    assert!(!reason.is_empty(), "{status}");
+    assert!(reason.chars().count() <= 60, "reason too long: {reason:?}");
+    assert!(!status.contains('@'), "no instance name: {status}");
+    assert!(!status.contains("/bin/sh"), "no command: {status}");
 }
 
 #[test]
