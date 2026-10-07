@@ -25,6 +25,7 @@ impl App {
             cursor_col: self.cursor.col,
             scroll: self.scroll,
             sidebar: Some(self.sidebar_mode()),
+            raw: p.raw,
         })
     }
 
@@ -204,6 +205,7 @@ impl App {
         {
             self.set_sidebar_mode(m);
         }
+        self.relayout_raw(e.raw);
         self.cursor.row = e.cursor_row.min(self.last_row());
         self.set_col(e.cursor_col);
         self.scroll = e.scroll.min(self.max_scroll());

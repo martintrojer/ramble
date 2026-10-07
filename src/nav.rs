@@ -22,6 +22,8 @@ pub struct Entry {
     pub scroll: usize,
     /// Sidebar mode when the page was left (`None`: keep the current one).
     pub sidebar: Option<crate::config::SidebarMode>,
+    /// The page was shown as raw source.
+    pub raw: bool,
 }
 
 /// Browser-style history. The current page is not stored; callers pass it

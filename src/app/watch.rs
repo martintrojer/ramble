@@ -205,10 +205,11 @@ impl App {
             return;
         };
         let anchor = self.cursor_anchor();
-        let (scroll, status) = (self.scroll, self.status.clone());
+        let (scroll, status, raw) = (self.scroll, self.status.clone(), self.raw());
         if !self.open_bytes(&path, &bytes) {
             return;
         }
+        self.relayout_raw(raw);
         self.banner = None;
         if self.status.is_empty() {
             self.status = status;

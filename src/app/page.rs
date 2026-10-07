@@ -8,7 +8,7 @@ use anyhow::Context;
 use super::motion::row_cells;
 use super::{App, Cursor, Page};
 use crate::doc::{self, Document};
-use crate::render::{self, SrcMap};
+use crate::render::{self, RenderedPage, SrcMap};
 
 impl App {
     /// Load and render `path`, cursor to the top. An I/O error is returned;
@@ -41,11 +41,12 @@ impl App {
 
     fn set_page(&mut self, path: Option<PathBuf>, mut doc: Document) {
         self.add_code_path_links(path.as_deref(), &mut doc);
-        let rendered = render::render(&doc, self.render_width(), &self.theme);
+        let rendered = self.render_page(&doc, false);
         self.page = Some(Page {
             path,
             doc,
             rendered,
+            raw: false,
         });
         self.placeholder = None;
         self.rebuild_rows();
@@ -62,6 +63,16 @@ impl App {
         self.review_page_changed();
     }
 
+    /// Lay out `doc` at the current width, as raw source or rendered.
+    pub(super) fn render_page(&self, doc: &Document, raw: bool) -> RenderedPage {
+        let width = self.render_width();
+        if raw {
+            render::render_raw(doc, width, &self.theme)
+        } else {
+            render::render(doc, width, &self.theme)
+        }
+    }
+
     fn render_width(&self) -> u16 {
         let cols = self
             .size
@@ -71,7 +82,7 @@ impl App {
         cols.min(self.config.render.max_width).max(1)
     }
 
-    fn rebuild_rows(&mut self) {
+    pub(super) fn rebuild_rows(&mut self) {
         self.rows = match &self.page {
             None => Vec::new(),
             Some(p) => p.rendered.lines.iter().map(row_cells).collect(),
@@ -113,9 +124,11 @@ impl App {
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let anchor = self.cursor_anchor();
         self.size = (cols, rows);
-        let width = self.render_width();
-        if let Some(p) = &mut self.page {
-            p.rendered = render::render(&p.doc, width, &self.theme);
+        if let Some(p) = &self.page {
+            let rendered = self.render_page(&p.doc, p.raw);
+            if let Some(p) = &mut self.page {
+                p.rendered = rendered;
+            }
         }
         self.rebuild_rows();
         self.refresh_search();

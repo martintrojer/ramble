@@ -20,6 +20,7 @@ mod marks;
 mod motion;
 mod page;
 mod picker;
+mod raw;
 mod review_glue;
 mod run;
 mod scroll;
@@ -94,6 +95,8 @@ pub struct Page {
     pub path: Option<PathBuf>,
     pub doc: Document,
     pub rendered: RenderedPage,
+    /// Shown as raw markdown source (`gR`, `:Raw`).
+    pub raw: bool,
 }
 
 /// Input mode; selects the key table in [`App::keymap`]. Later units add

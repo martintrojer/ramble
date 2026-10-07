@@ -1,0 +1,16 @@
+---
+source: tests/raw.rs
+expression: screen(&app)
+---
+"# Title                                                     "
+"                                                            "
+"Some **bold** text and a [link](b.md) here.                 "
+"                                                            "
+"- item one                                                  "
+"- item    two                                               "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+"                                                            "
+" a.md                                      RAW  —  All  ← 0 "

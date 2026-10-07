@@ -156,6 +156,24 @@ pub fn render_with(
     }
 }
 
+/// Lay out `doc`'s source as-is for the raw view: one source line per row,
+/// soft-wrapped by grapheme at `width`, highlighted with syntect's
+/// Markdown syntax. Segments carry the index of the `doc.links` entry
+/// whose full range holds their bytes, so link actions work unchanged.
+pub fn render_raw(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
+    let _ = theme;
+    let none = |_: Range<usize>| Vec::new();
+    let mut r = Renderer::new(doc, width, &none);
+    r.raw(&doc.links);
+    RenderedPage {
+        lines: r.lines,
+        srcmap: SrcMap {
+            segments: r.segments,
+        },
+        source_lines: r.source_lines,
+    }
+}
+
 /// Write `page` as ANSI-coloured text (truecolor) with a trailing newline
 /// per row. Used by print mode.
 pub fn to_ansi(page: &RenderedPage) -> String {
@@ -910,6 +928,48 @@ impl<'a> Renderer<'a> {
             }
             self.emit(cells, Some(offset));
             offset += line.len();
+        }
+    }
+
+    /// The raw view: every source line, highlighted as Markdown.
+    fn raw(&mut self, links: &[doc::Link]) {
+        let ss = syntaxes();
+        let syntax = ss
+            .find_syntax_by_name("Markdown")
+            .unwrap_or_else(|| ss.find_syntax_plain_text());
+        let mut hl = HighlightLines::new(syntax, code_theme());
+        let mut offset = 0;
+        for line in self.src.split_inclusive('\n') {
+            let end = offset + line.len();
+            let near: Vec<(usize, &Range<usize>)> = links
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.range.start < end && offset < l.range.end)
+                .map(|(i, l)| (i, &l.range))
+                .collect();
+            let pieces = hl
+                .highlight_line(line, ss)
+                .map(|v| {
+                    v.into_iter()
+                        .map(|(st, s)| (syntect_style(st), s))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|_| vec![(base_style(), line)]);
+            let mut cells = Vec::new();
+            let mut b = offset;
+            for (style, piece) in pieces {
+                for (i, g) in piece.grapheme_indices(true) {
+                    if matches!(g, "\n" | "\r\n" | "\r") {
+                        continue;
+                    }
+                    let at = b + i;
+                    let link = near.iter().find(|(_, r)| r.contains(&at)).map(|(i, _)| *i);
+                    self.push_grapheme(&mut cells, g, at, style, link);
+                }
+                b += piece.len();
+            }
+            self.emit(cells, Some(offset));
+            offset = end;
         }
     }
 

@@ -105,6 +105,8 @@ pub enum Action {
     // Review markers.
     /// `]r` (true) / `[r`.
     ReviewJump(bool),
+    /// `gR`: toggle the raw source view.
+    ToggleRaw,
 }
 
 /// What a key sequence means so far.
@@ -215,6 +217,7 @@ impl App {
                 ('g', 'g') => KeyResult::Action(A::GotoTop(count)),
                 ('g', 'd') => KeyResult::Action(A::Follow),
                 ('g', 'x') => KeyResult::Action(A::OpenExternal),
+                ('g', 'R') => KeyResult::Action(A::ToggleRaw),
                 ('z', 'z') => KeyResult::Action(A::CenterCursor),
                 ('z', 't') => KeyResult::Action(A::CursorToTop),
                 ('z', 'b') => KeyResult::Action(A::CursorToBottom),
@@ -350,6 +353,7 @@ impl App {
             A::Picker(a) => self.picker_action(a),
             A::Cmd(a) => self.cmd_action(a),
             A::ReviewJump(fwd) => self.review_jump(fwd),
+            A::ToggleRaw => self.toggle_raw(),
         }
     }
 }

@@ -1,6 +1,6 @@
 //! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
-//! `:Launch <name>`, `:Sidebar <off|files|outline|split>`.
+//! `:Launch <name>`, `:Sidebar <off|files|outline|split>`, `:Raw`.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -94,6 +94,7 @@ impl App {
             "Tags" => self.open_op(Op::Tags, None),
             "Backlinks" => self.open_op(Op::Backlinks, None),
             "Links" => self.open_op(Op::Links, None),
+            "Raw" => self.toggle_raw(),
             "Launch" if arg.is_empty() => self.set_status(":Launch needs a name"),
             "Launch" => self.launch(arg),
             "Sidebar" => match parse_sidebar(arg) {
