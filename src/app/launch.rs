@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
+
 use super::{App, Effect};
 use crate::config::Launcher;
 
@@ -243,26 +245,11 @@ impl App {
 
 /// Default runner: the command in the terminal, stdin from the terminal.
 pub fn system_run(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
-    use super::effect::{EditorStdin, editor_stdin};
-    use anyhow::Context;
     use std::io::IsTerminal;
-    use std::process::Stdio;
-    let (prog, args) = cmd
-        .argv
-        .split_first()
-        .ok_or_else(|| anyhow::anyhow!("empty command"))?;
-    let stdin = match editor_stdin(std::io::stdin().is_terminal()) {
-        EditorStdin::Tty => {
-            std::fs::File::open("/dev/tty").map_or_else(|_| Stdio::inherit(), Stdio::from)
-        }
-        EditorStdin::Inherit => Stdio::inherit(),
-    };
-    let status = std::process::Command::new(prog)
-        .args(args)
-        .current_dir(&cmd.cwd)
-        .stdin(stdin)
+    let stdin_is_tty = std::io::stdin().is_terminal();
+    let status = process(cmd, stdin_is_tty, super::effect::open_tty)?
         .status()
-        .with_context(|| format!("running {prog}"))?;
+        .with_context(|| format!("running {}", cmd.argv[0]))?;
     if let Some(code) = status.code() {
         return Ok(Exit::Code(code));
     }
@@ -274,6 +261,24 @@ pub fn system_run(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
         }
     }
     Ok(Exit::Code(-1))
+}
+
+/// The child process for `cmd`: in its cwd, stdin from the terminal
+/// (`tty()` when our stdin is the document pipe).
+fn process(
+    cmd: &LaunchCommand,
+    stdin_is_tty: bool,
+    tty: impl FnOnce() -> std::io::Result<std::fs::File>,
+) -> anyhow::Result<std::process::Command> {
+    let (prog, args) = cmd
+        .argv
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("empty command"))?;
+    let mut c = std::process::Command::new(prog);
+    c.args(args)
+        .current_dir(&cmd.cwd)
+        .stdin(super::effect::child_stdin(stdin_is_tty, tty));
+    Ok(c)
 }
 
 #[cfg(test)]
@@ -340,5 +345,26 @@ mod tests {
             _ => None,
         };
         assert_eq!(editor_words(&blank_visual), vec!["nano", "-w"]);
+    }
+
+    #[test]
+    fn runner_reads_the_tty_when_stdin_is_the_document_pipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let tty = dir.path().join("tty");
+        std::fs::write(&tty, "from tty").unwrap();
+        let cmd = LaunchCommand {
+            name: "t".into(),
+            argv: s(&["sh", "-c", "pwd; cat"]),
+            cwd: dir.path().to_path_buf(),
+        };
+        let out = process(&cmd, false, || std::fs::File::open(&tty))
+            .unwrap()
+            .output()
+            .unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        let cwd = dir.path().canonicalize().unwrap();
+        assert_eq!(out, format!("{}\nfrom tty", cwd.display()));
+        // Stdin already the terminal: the tty is not opened.
+        process(&cmd, true, || panic!("opened the tty")).unwrap();
     }
 }

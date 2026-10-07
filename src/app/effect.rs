@@ -91,10 +91,26 @@ pub(crate) fn editor_stdin(stdin_is_tty: bool) -> EditorStdin {
     }
 }
 
+/// Stdin for a child run in the terminal: ours when it is the terminal,
+/// else `tty()` (normally `/dev/tty`), falling back to ours if that fails.
+pub(crate) fn child_stdin(
+    stdin_is_tty: bool,
+    tty: impl FnOnce() -> std::io::Result<std::fs::File>,
+) -> std::process::Stdio {
+    use std::process::Stdio;
+    match editor_stdin(stdin_is_tty) {
+        EditorStdin::Tty => tty().map_or_else(|_| Stdio::inherit(), Stdio::from),
+        EditorStdin::Inherit => Stdio::inherit(),
+    }
+}
+
+pub(crate) fn open_tty() -> std::io::Result<std::fs::File> {
+    std::fs::File::open("/dev/tty")
+}
+
 /// Default editor: `$VISUAL`, else `$EDITOR`, else `vi`, in the terminal.
 pub(super) fn system_edit(path: &Path) -> anyhow::Result<()> {
     use std::io::IsTerminal;
-    use std::process::Stdio;
     let cmd = ["VISUAL", "EDITOR"]
         .iter()
         .filter_map(|v| std::env::var(v).ok())
@@ -102,16 +118,10 @@ pub(super) fn system_edit(path: &Path) -> anyhow::Result<()> {
         .unwrap_or_else(|| "vi".into());
     let mut words = cmd.split_whitespace();
     let prog = words.next().unwrap_or("vi");
-    let stdin = match editor_stdin(std::io::stdin().is_terminal()) {
-        EditorStdin::Tty => {
-            std::fs::File::open("/dev/tty").map_or_else(|_| Stdio::inherit(), Stdio::from)
-        }
-        EditorStdin::Inherit => Stdio::inherit(),
-    };
     let status = std::process::Command::new(prog)
         .args(words)
         .arg(path)
-        .stdin(stdin)
+        .stdin(child_stdin(std::io::stdin().is_terminal(), open_tty))
         .status()
         .with_context(|| format!("running {prog}"))?;
     anyhow::ensure!(status.success(), "{prog} exited with {status}");

@@ -46,13 +46,17 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             app.event(ev);
         }
         app.tick(Instant::now());
-        let out = app.take_terminal_output();
-        if !out.is_empty() {
-            use std::io::Write;
-            let mut stdout = std::io::stdout();
-            stdout.write_all(&out)?;
-            stdout.flush()?;
-        }
+        write_terminal_output(app, &mut std::io::stdout())?;
+    }
+    Ok(())
+}
+
+/// Write the bytes the app queued for the terminal (OSC 52) to `out`.
+fn write_terminal_output(app: &mut App, out: &mut impl std::io::Write) -> std::io::Result<()> {
+    let bytes = app.take_terminal_output();
+    if !bytes.is_empty() {
+        out.write_all(&bytes)?;
+        out.flush()?;
     }
     Ok(())
 }
@@ -70,4 +74,37 @@ pub fn suspend_and_run<R>(
     crossterm::terminal::enable_raw_mode()?;
     terminal.clear()?;
     Ok(r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{StartOptions, StartTarget};
+
+    #[test]
+    fn yank_reaches_the_terminal_as_osc52() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.md");
+        std::fs::write(&path, "# A\n").unwrap();
+        let mut app = App::new(
+            StartOptions {
+                target: StartTarget::File(path.clone()),
+                tree_root: dir.path().to_path_buf(),
+                config: Default::default(),
+            },
+            (40, 10),
+        )
+        .unwrap();
+        app.yank();
+        let mut out = Vec::new();
+        write_terminal_output(&mut app, &mut out).unwrap();
+        let abs = std::path::absolute(&path).unwrap();
+        assert_eq!(
+            out,
+            crate::app::osc52(&abs.display().to_string()).into_bytes()
+        );
+        out.clear();
+        write_terminal_output(&mut app, &mut out).unwrap();
+        assert!(out.is_empty(), "queue drained");
+    }
 }

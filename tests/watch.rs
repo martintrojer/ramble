@@ -21,8 +21,12 @@ fn watcher_reports_change_then_removal() {
     })
     .unwrap();
     w.watch(Some(&file));
-    // A sibling file does not count.
+    // A sibling file alone does not count.
     std::fs::write(dir.path().join("other.md"), "x\n").unwrap();
+    assert!(
+        rx.recv_timeout(Duration::from_millis(500)).is_err(),
+        "sibling write reported"
+    );
     std::fs::write(&file, "two\n").unwrap();
     let (path, ev) = rx.recv_timeout(WAIT).expect("change event within 2s");
     assert_eq!(ev, FsEvent::Changed);
@@ -55,6 +59,36 @@ fn app_reloads_through_real_watcher() {
     let ev = rx.recv_timeout(WAIT).expect("fs event within 2s");
     assert!(
         matches!(ev, AppEvent::FsWatch(_, FsEvent::Changed)),
+        "{ev:?}"
+    );
+    app.event(ev);
+    assert!(app.page().unwrap().doc.source.contains("after"));
+}
+
+#[test]
+fn opening_another_page_retargets_the_watcher() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.md");
+    let b = dir.path().join("b.md");
+    std::fs::write(&a, "# A\n").unwrap();
+    std::fs::write(&b, "# B\n\nbefore\n").unwrap();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::File(a.clone()),
+            tree_root: dir.path().to_path_buf(),
+            config: Config::default(),
+        },
+        (40, 10),
+    )
+    .unwrap();
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+    app.set_sender(tx);
+    app.start_watcher().unwrap();
+    app.open_file(&b).unwrap();
+    std::fs::write(&b, "# B\n\nafter\n").unwrap();
+    let ev = rx.recv_timeout(WAIT).expect("fs event for b.md within 2s");
+    assert!(
+        matches!(&ev, AppEvent::FsWatch(p, FsEvent::Changed) if p.file_name() == b.file_name()),
         "{ev:?}"
     );
     app.event(ev);

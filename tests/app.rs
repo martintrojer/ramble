@@ -1064,9 +1064,14 @@ fn hit_across_a_wrap_highlights_both_rows() {
     let app = App::new(opts(dir.path(), StartTarget::File(path)), (20, ROWS)).unwrap();
     let mut app = app;
     type_search(&mut app, '/', "dddd eeee");
-    let rows: std::collections::BTreeSet<usize> =
-        app.search_highlights().iter().map(|s| s.row).collect();
-    assert_eq!(rows.len(), 2, "{:?}", app.search_highlights());
+    // Rows: "aaaa bbbb cccc dddd" / "eeee ffff gggg hhhh" / "iiii".
+    assert_eq!(row_text(&app, 0), "aaaa bbbb cccc dddd");
+    let spans: Vec<(usize, usize, usize)> = app
+        .search_highlights()
+        .iter()
+        .map(|s| (s.row, s.col_start, s.col_end))
+        .collect();
+    assert_eq!(spans, vec![(0, 15, 19), (1, 0, 4)]);
 }
 
 #[test]
