@@ -47,13 +47,13 @@ impl App {
         self.goto_row(row);
     }
 
-    /// `yu`: copy the link destination (as written) under the cursor, else
-    /// the file path.
-    /// `y` has something to copy: a link under the cursor or a file path.
+    /// `yu` has something to copy: a link under the cursor or a file path.
     pub(crate) fn can_yank(&self) -> bool {
         self.link_under_cursor().is_some() || self.page.as_ref().is_some_and(|p| p.path.is_some())
     }
 
+    /// `yu`: copy the link destination (as written) under the cursor, else
+    /// the file path.
     pub(super) fn yank(&mut self) {
         if !self.can_yank() {
             self.set_status("Nothing to yank (stdin has no path)");

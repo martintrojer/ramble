@@ -26,6 +26,8 @@ pub(crate) enum Ctx {
     Picker,
     /// The help overlay is open.
     Help,
+    /// A visual selection is active.
+    Visual,
 }
 
 /// Help sections, in display order.
@@ -37,6 +39,7 @@ pub(crate) enum Group {
     Links,
     History,
     Search,
+    Visual,
     Review,
     Sidebar,
     Pickers,
@@ -46,13 +49,14 @@ pub(crate) enum Group {
 }
 
 impl Group {
-    const ALL: [Group; 12] = [
+    const ALL: [Group; 13] = [
         Group::General,
         Group::Motions,
         Group::Scrolling,
         Group::Links,
         Group::History,
         Group::Search,
+        Group::Visual,
         Group::Review,
         Group::Sidebar,
         Group::Pickers,
@@ -69,6 +73,7 @@ impl Group {
             Group::Links => "Links",
             Group::History => "History",
             Group::Search => "Search & marks",
+            Group::Visual => "Visual & yank",
             Group::Review => "Review",
             Group::Sidebar => "Sidebar",
             Group::Pickers => "Pickers",
@@ -81,7 +86,7 @@ impl Group {
 
 /// One help row. `keys` lists alternatives separated by `", "`; within one
 /// alternative `<leader>` is the leader key, `C-x` is Ctrl+x, `{a-z}` is
-/// any letter of the range, and `Enter Esc Tab Down Up Left Right Home End
+/// any letter of the range, `{motion}` is any motion, and `Enter Esc Tab Down Up Left Right Home End
 /// PgDn PgUp` name keys.
 pub(crate) struct Binding {
     pub keys: &'static str,
@@ -112,7 +117,7 @@ const fn b(
     }
 }
 
-use Ctx::{Any, Normal as N, Picker as P, Sidebar as S};
+use Ctx::{Any, Normal as N, Picker as P, Sidebar as S, Visual as V};
 use Group as G;
 
 /// Every key binding of the normal, sidebar, picker and help keymaps.
@@ -210,13 +215,6 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("]]", N, G::Links, "next heading", App::has_page),
     b("[[", N, G::Links, "previous heading", App::has_page),
     b("K", N, G::Links, "hover preview", App::can_hover),
-    b(
-        "y",
-        N,
-        G::Links,
-        "yank link target or file path",
-        App::can_yank,
-    ),
     // History.
     b("C-o, C-t", N, G::History, "back", App::can_back),
     b("C-i, Tab", N, G::History, "forward", App::can_forward),
@@ -230,6 +228,41 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("Esc", N, G::Search, "clear highlights, close hover", always),
     b("m{a-z}", N, G::Search, "set a mark", App::has_page),
     b("'{a-z}", N, G::Search, "jump to a mark", App::has_page),
+    // Visual mode and the yank operator.
+    b("v", N, G::Visual, "select characters", App::has_page),
+    b("V", N, G::Visual, "select lines", App::has_page),
+    b("C-v", N, G::Visual, "select a block", App::has_page),
+    b("gv", N, G::Visual, "reselect the last selection", |a| {
+        a.has_page() && a.visual.has_last()
+    }),
+    b(
+        "y{motion}",
+        N,
+        G::Visual,
+        "yank the source a motion covers",
+        App::has_page,
+    ),
+    b("yy, Y", N, G::Visual, "yank source lines", App::has_page),
+    b("yf", N, G::Visual, "yank the absolute file path", always),
+    b(
+        "yF",
+        N,
+        G::Visual,
+        "yank the path relative to the root",
+        always,
+    ),
+    b(
+        "yu",
+        N,
+        G::Visual,
+        "yank link target or file path",
+        App::can_yank,
+    ),
+    b("o", V, G::Visual, "in visual: swap the ends", always),
+    b("y", V, G::Visual, "in visual: yank the selection", always),
+    b("Y", V, G::Visual, "in visual: yank whole lines", always),
+    b("v, V, C-v", V, G::Visual, "in visual: switch kind", always),
+    b("Esc", V, G::Visual, "in visual: cancel", always),
     // Review markers.
     b(
         "]r",
@@ -521,6 +554,7 @@ impl App {
             Ctx::Normal => content,
             Ctx::Sidebar => !content,
             Ctx::Any | Ctx::Help => true,
+            Ctx::Visual => content,
             Ctx::Picker => self.can_pick(),
         }
     }
@@ -694,6 +728,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::VisualAction;
     use crate::app::{StartOptions, StartTarget};
     use crate::config::{Config, SidebarMode};
 
@@ -728,6 +763,9 @@ mod tests {
             {
                 out.push(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
                 rest = r[c.len_utf8()..].trim_start();
+            } else if let Some(r) = rest.strip_prefix("{motion}") {
+                out.push(ev('w'));
+                rest = r;
             } else if rest.starts_with('{') && rest.len() > 2 {
                 let c = rest[1..].chars().next().unwrap();
                 out.push(ev(c));
@@ -784,6 +822,12 @@ mod tests {
                 a.help_action(HelpAction::Open);
                 vec![a]
             }
+            Ctx::Visual => {
+                let mut a = app(dir);
+                a.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+                assert!(matches!(a.mode(), Mode::Visual(_)));
+                vec![a]
+            }
         }
     }
 
@@ -792,9 +836,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for b in BINDINGS {
             assert!(!b.desc.trim().is_empty(), "{} has no description", b.keys);
-            for app in contexts(dir.path(), b.context) {
-                for alt in alts(b.keys) {
-                    let keys = parse(alt, app.config.keys.leader);
+            for alt in alts(b.keys) {
+                for mut app in contexts(dir.path(), b.context) {
+                    let all = parse(alt, app.config.keys.leader);
+                    // An operator key (`y`) is an action that enters
+                    // operator-pending mode; the rest resolves there.
+                    let (keys, op) = match all.split_first() {
+                        Some((first, rest))
+                            if !rest.is_empty()
+                                && app.keymap(std::slice::from_ref(first))
+                                    == KeyResult::Action(Action::Visual(
+                                        VisualAction::OpStart(None),
+                                    )) =>
+                        {
+                            app.handle_key(*first);
+                            (rest.to_vec(), true)
+                        }
+                        _ => (all.clone(), false),
+                    };
+                    assert!(!op || app.mode() == Mode::OpPending);
                     let r = app.keymap(&keys);
                     assert!(
                         matches!(r, KeyResult::Action(_) | KeyResult::Count(_)),
@@ -815,11 +875,76 @@ mod tests {
                 .any(|b| ctxs.contains(&b.context) && alts(b.keys).contains(&key))
         };
         let normal = [
-            "h", "j", "k", "l", "w", "b", "e", "0", "$", "{", "}", "gg", "G", "H", "M", "L", "C-d",
-            "C-u", "C-f", "C-b", "C-e", "C-y", "zz", "zt", "zb", "gd", "Enter", "C-]", "gx", "]l",
-            "[l", ";", ",", "]]", "[[", "s", "K", "y", "C-o", "C-t", "C-i", "Tab", "/", "?", "n",
-            "N", "*", "#", "Esc", "m{a-z}", "'{a-z}", "]r", "[r", ":", "grr", "ZZ", "gR", "PgDn",
-            "PgUp", "Home", "End",
+            "h",
+            "j",
+            "k",
+            "l",
+            "w",
+            "b",
+            "e",
+            "0",
+            "$",
+            "{",
+            "}",
+            "gg",
+            "G",
+            "H",
+            "M",
+            "L",
+            "C-d",
+            "C-u",
+            "C-f",
+            "C-b",
+            "C-e",
+            "C-y",
+            "zz",
+            "zt",
+            "zb",
+            "gd",
+            "Enter",
+            "C-]",
+            "gx",
+            "]l",
+            "[l",
+            ";",
+            ",",
+            "]]",
+            "[[",
+            "s",
+            "K",
+            "y{motion}",
+            "C-o",
+            "C-t",
+            "C-i",
+            "Tab",
+            "/",
+            "?",
+            "n",
+            "N",
+            "*",
+            "#",
+            "Esc",
+            "m{a-z}",
+            "'{a-z}",
+            "]r",
+            "[r",
+            ":",
+            "grr",
+            "ZZ",
+            "gR",
+            "PgDn",
+            "PgUp",
+            "Home",
+            "End",
+            "v",
+            "V",
+            "C-v",
+            "gv",
+            "yy",
+            "Y",
+            "yf",
+            "yF",
+            "yu",
         ];
         for k in normal {
             assert!(has(k, &[Ctx::Normal, Ctx::Any]), "no normal row for {k}");
@@ -849,6 +974,9 @@ mod tests {
         ];
         for k in side {
             assert!(has(k, &[Ctx::Sidebar]), "no sidebar row for {k}");
+        }
+        for k in ["o", "y", "Y", "v", "V", "C-v", "Esc"] {
+            assert!(has(k, &[Ctx::Visual]), "no visual row for {k}");
         }
         for k in ["C-n", "C-p", "Enter", "Esc"] {
             assert!(has(k, &[Ctx::Picker]), "no picker row for {k}");

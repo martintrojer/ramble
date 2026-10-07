@@ -188,8 +188,19 @@ fn y_motions() {
     assert_eq!(app.cursor(), at(6, 0));
     keys(&mut app, "y$");
     assert_eq!(last(&clip), "Second para.");
+    // Exclusive, ends in column 0, starts at the first non-blank: linewise
+    // (vim `:help exclusive-linewise`).
     keys(&mut app, "y}");
-    assert_eq!(last(&clip), "Second para.");
+    assert_eq!(last(&clip), "Second para.\n");
+    assert_eq!(app.cursor(), at(6, 0));
+    // Past the first non-blank it stays charwise, ending before column 0.
+    keys(&mut app, "wy}");
+    assert_eq!(last(&clip), "para.");
+    assert_eq!(app.cursor(), at(6, 7));
+    // `yw` over the last word of a line stops at its end.
+    keys(&mut app, "$yw");
+    assert_eq!(last(&clip), ".");
+    keys(&mut app, "0");
     keys(&mut app, "yG");
     assert_eq!(last(&clip), "Second para.\n\n- one\n- two\n");
     assert_eq!(app.cursor().row, 6);
@@ -324,6 +335,13 @@ fn selection_is_drawn_and_wins_on_the_cursor_row() {
             .contains(ratatui::style::Modifier::REVERSED),
         "cursor stays reversed on top"
     );
+    // The cursor is drawn over the cursorline, not the selection.
+    assert_eq!(
+        buf[(3, 6)].bg,
+        buf[(8, 6)].bg,
+        "cursor cell keeps cursorline bg"
+    );
+    assert_ne!(buf[(3, 6)].bg, sel);
     insta::assert_snapshot!(term.backend().to_string());
 }
 
@@ -338,4 +356,34 @@ fn selection_wins_over_search_hits() {
     term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
     let buf = term.backend().buffer();
     assert_eq!(buf[(8, hit_row as u16)].bg, buf[(1, hit_row as u16)].bg);
+}
+
+#[test]
+fn reload_in_visual_mode_drops_the_selection() {
+    let src = "aaa\n\nbbb ccc\n\nddd eee\n";
+    let (dir, mut app, clip) = app_src(src);
+    keys(&mut app, "4jwv");
+    assert_eq!(app.mode(), Mode::Visual(VisualKind::Char));
+    std::fs::write(dir.path().join("sub/a.md"), format!("{src}!\n")).unwrap();
+    app.reload();
+    assert_eq!(app.mode(), Mode::Normal, "reload leaves visual mode");
+    assert!(app.selection_spans().is_empty());
+    keys(&mut app, "y");
+    assert_eq!(app.mode(), Mode::OpPending, "y starts the operator");
+    send(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(clip.0.borrow().is_empty());
+}
+
+#[test]
+fn reload_while_y_is_pending_cancels_it() {
+    let (dir, mut app, clip) = app_src("aaa\n\nbbb\n");
+    keys(&mut app, "y");
+    std::fs::write(dir.path().join("sub/a.md"), "aaa\n\nbbb!\n").unwrap();
+    app.reload();
+    assert_eq!(app.mode(), Mode::Normal);
+    keys(&mut app, "j");
+    assert!(
+        clip.0.borrow().is_empty(),
+        "j after reload is a motion, not yj"
+    );
 }

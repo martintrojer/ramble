@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Context;
 
 use super::motion::row_cells;
-use super::{App, Cursor, Page};
+use super::{App, Cursor, Mode, Page};
 use crate::doc::{self, Document};
 use crate::render::{self, RenderedPage, SrcMap};
 
@@ -59,6 +59,10 @@ impl App {
         self.stdin = None;
         self.banner = None;
         self.visual = Default::default();
+        // The selection anchor and a pending `y` belong to the old page.
+        if matches!(self.mode, Mode::Visual(_) | Mode::OpPending) {
+            self.mode = Mode::Normal;
+        }
         self.refresh_search();
         self.retarget_watch();
         self.lsp_page_changed();

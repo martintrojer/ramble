@@ -79,6 +79,13 @@ pub(super) struct VisualState {
     op_count: Option<usize>,
 }
 
+impl VisualState {
+    /// A selection exists for `gv`.
+    pub(super) fn has_last(&self) -> bool {
+        self.last.is_some()
+    }
+}
+
 /// How a motion extends an operator range (vim `:help exclusive`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MotionKind {
@@ -398,6 +405,7 @@ impl App {
         self.apply(motion);
         let end = self.cursor;
         let (lo, hi) = ordered(start, end);
+        let mut linewise = motion_kind(motion) == MotionKind::Linewise;
         let text = match motion_kind(motion) {
             MotionKind::Linewise => self.lines_text(lo.row, hi.row),
             MotionKind::Inclusive => self.char_text(lo, hi),
@@ -407,11 +415,18 @@ impl App {
                     self.want_col = want;
                     return;
                 }
-                let hi = self.before(hi, lo.row);
-                self.char_text(lo, hi)
+                // `:help exclusive-linewise`: ending in column 0 of a later
+                // row from at or before the first non-blank is linewise.
+                if hi.col == 0 && hi.row > lo.row && lo.col <= self.first_non_blank(lo.row) {
+                    linewise = true;
+                    self.lines_text(lo.row, hi.row - 1)
+                } else {
+                    let hi = self.before(hi, lo.row);
+                    self.char_text(lo, hi)
+                }
             }
         };
-        if motion_kind(motion) == MotionKind::Linewise {
+        if linewise {
             self.cursor.row = lo.row;
             self.want_col = want;
             self.clamp_cursor();
@@ -420,6 +435,18 @@ impl App {
             self.set_col(lo.col);
         }
         self.copy_text(text);
+    }
+
+    /// Column of the first drawn non-blank grapheme of `row` (0 if none).
+    fn first_non_blank(&self, row: usize) -> usize {
+        let Some(line) = self.page.as_ref().and_then(|p| p.rendered.lines.get(row)) else {
+            return 0;
+        };
+        let text = line_text(line);
+        graphemes(&text)
+            .iter()
+            .find(|g| !text[g.text.clone()].trim().is_empty())
+            .map_or(0, |g| g.col)
     }
 
     /// The last position before the exclusive end `hi`. At column 0 of a

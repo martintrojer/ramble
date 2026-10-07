@@ -119,10 +119,13 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
             area.x + cursor.col as u16,
             area.y + (cursor.row - top) as u16,
         );
-        buf.set_style(
-            Rect::new(x, y, 1, 1),
-            Style::new().add_modifier(Modifier::REVERSED),
-        );
+        // Inside a selection the cursor keeps the cursorline background,
+        // so it reads as the cursor rather than a selected cell.
+        let mut style = Style::new().add_modifier(Modifier::REVERSED);
+        if app.visual_kind().is_some() {
+            style = style.bg(CURSORLINE_BG);
+        }
+        buf.set_style(Rect::new(x, y, 1, 1), style);
     }
 
     if let Some(banner) = app.banner() {
