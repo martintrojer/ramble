@@ -9,6 +9,20 @@ use super::{App, Mode};
 use crate::config::SidebarMode;
 use crate::notebook::Op;
 
+/// The `:` commands and what they do, for the help overlay. Keep in step
+/// with [`App::execute`].
+pub(crate) const COMMANDS: &[(&str, &str)] = &[
+    (":e <path>", "open a file (relative to this one)"),
+    (":q", "quit"),
+    (":Notes", "notes picker"),
+    (":Search <query>", "search notes"),
+    (":Tags", "tags picker"),
+    (":Backlinks", "backlinks picker"),
+    (":Links", "links picker"),
+    (":Launch <name>", "run a launcher by name"),
+    (":Sidebar off|files|outline|split", "set the sidebar mode"),
+];
+
 /// Keys while typing a command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmdAction {

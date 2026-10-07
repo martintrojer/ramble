@@ -3,6 +3,7 @@
 
 mod content;
 mod gutter;
+mod help;
 mod hints;
 mod hover;
 mod picker;
@@ -32,5 +33,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     status::draw(frame, app, status);
     sidebar::draw_prompt(frame, app, status);
     picker::draw(frame, app, main);
+    help::draw(frame, app, main);
     picker::draw_cmdline(frame, app, status);
 }

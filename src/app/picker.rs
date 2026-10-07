@@ -204,6 +204,11 @@ impl App {
 
     /// Open the picker for `op`. `query` is the search query (`:Search q`);
     /// without one, search prompts for it first.
+    /// `op` has a source right now.
+    pub(crate) fn can_open(&self, op: Op) -> bool {
+        notebook::available(op, self.sources()).is_ok()
+    }
+
     pub fn open_op(&mut self, op: Op, query: Option<&str>) {
         if let Err(msg) = notebook::available(op, self.sources()) {
             self.set_status(msg);

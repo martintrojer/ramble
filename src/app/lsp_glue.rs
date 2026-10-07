@@ -567,18 +567,22 @@ impl App {
     }
 
     /// `K`: hover for the link under the cursor.
+    /// `K` can ask for a hover: the running server offers hover.
+    pub(crate) fn can_hover(&self) -> bool {
+        self.lsp.client().is_some_and(|c| {
+            c.capabilities()
+                .hover_provider
+                .as_ref()
+                .is_some_and(|p| !matches!(p, lsp_types::HoverProviderCapability::Simple(false)))
+        })
+    }
+
     pub(super) fn hover(&mut self) {
         let Some(i) = self.link_under_cursor() else {
             self.set_status("No link under cursor");
             return;
         };
-        let has_hover = self.lsp.client().is_some_and(|c| {
-            c.capabilities()
-                .hover_provider
-                .as_ref()
-                .is_some_and(|p| !matches!(p, lsp_types::HoverProviderCapability::Simple(false)))
-        });
-        if !has_hover || !self.lsp_link_request("textDocument/hover", i, ReqKind::Hover) {
+        if !self.can_hover() || !self.lsp_link_request("textDocument/hover", i, ReqKind::Hover) {
             self.set_status("No hover (no language server)");
         }
     }

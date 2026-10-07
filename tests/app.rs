@@ -2560,3 +2560,54 @@ fn review_jump_and_gutter_follow_markers() {
     assert_eq!(app.cursor().row, para_row(2));
     assert!(screen(&app).contains("review 1"));
 }
+
+// -------------------------------------------------------------------------
+// The `g?` help overlay with a language server (step 16).
+
+fn help_keys(app: &App) -> Vec<String> {
+    app.help_lines()
+        .into_iter()
+        .filter_map(|l| match l {
+            ramble::app::HelpLine::Item { keys, .. } => Some(keys),
+            ramble::app::HelpLine::Group(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn help_lists_hover_and_backlinks_once_a_zk_server_runs() {
+    let (_dir, mut app, _log) = kind_app(ServerKind::Zk, "# A\n\n[b](b.md)\n", &[], |_| {
+        json!([zk_init()])
+    });
+    running(&mut app);
+    let k = help_keys(&app);
+    for row in [
+        "K",
+        "Space zs",
+        "Space zz",
+        "Space zb",
+        "grr",
+        ":Search <query>",
+    ] {
+        assert!(k.iter().any(|x| x == row), "missing {row}: {k:?}");
+    }
+}
+
+#[test]
+fn esc_in_help_closes_the_hover_first() {
+    let (_dir, mut app, _log) = lsp_app("# A\n\n[b](b.md)\n", |_| {
+        json!([init_step(), {"expect": "textDocument/hover", "reply": {
+            "contents": {"kind": "markdown", "value": "hovered"}}}])
+    });
+    running(&mut app);
+    goto_text(&mut app, "b");
+    keys(&mut app, "K");
+    pump_until(&mut app, "hover", |a| a.hover_popup().is_some());
+    keys(&mut app, "g?");
+    assert_eq!(app.mode(), Mode::Help);
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.hover_popup(), None);
+    assert_eq!(app.mode(), Mode::Help, "first Esc only closed the hover");
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.mode(), Mode::Normal);
+}

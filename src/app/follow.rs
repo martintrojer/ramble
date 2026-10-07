@@ -163,10 +163,25 @@ impl App {
     }
 
     /// `C-o` / `C-t`.
+    /// There is a page behind the current one.
+    pub(crate) fn can_back(&self) -> bool {
+        self.page.is_some() && self.history.depth() > 0
+    }
+
+    /// There is a page ahead of the current one.
+    pub(crate) fn can_forward(&self) -> bool {
+        self.page.is_some() && self.history.forward_depth() > 0
+    }
+
     pub(super) fn back(&mut self) {
+        if !self.can_back() {
+            if self.page.is_some() {
+                self.set_status("At the start of history");
+            }
+            return;
+        }
         let Some(here) = self.entry() else { return };
         let Some(e) = self.history.back(here) else {
-            self.set_status("At the start of history");
             return;
         };
         if let Err(msg) = self.restore(&e) {
@@ -177,9 +192,14 @@ impl App {
 
     /// `C-i` / `Tab`.
     pub(super) fn forward(&mut self) {
+        if !self.can_forward() {
+            if self.page.is_some() {
+                self.set_status("At the end of history");
+            }
+            return;
+        }
         let Some(here) = self.entry() else { return };
         let Some(e) = self.history.forward(here) else {
-            self.set_status("At the end of history");
             return;
         };
         if let Err(msg) = self.restore(&e) {

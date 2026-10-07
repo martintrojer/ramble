@@ -1,7 +1,8 @@
 //! Key dispatch: [`App::keymap`] turns the pending key sequence into a
 //! [`KeyResult`]; [`App::apply`] runs an [`Action`]. A new unit adds
 //! `Action` variants, rows in the table for its mode, and one arm in
-//! `apply` that calls into its own file.
+//! `apply` that calls into its own file. Every new binding also gets a
+//! row in `help::BINDINGS` (a test resolves each row through `keymap`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -107,6 +108,8 @@ pub enum Action {
     ReviewJump(bool),
     /// `gR`: toggle the raw source view.
     ToggleRaw,
+    /// `g?` opens the help overlay; its own keys.
+    Help(super::HelpAction),
 }
 
 /// What a key sequence means so far.
@@ -167,6 +170,7 @@ impl App {
             Mode::Picker => super::picker::picker_keymap(keys),
             Mode::Command => super::cmdline::cmdline_keymap(keys),
             Mode::Hint => super::hints::hint_keymap(keys),
+            Mode::Help => super::help::help_keymap(self, keys),
         }
     }
 
@@ -215,6 +219,7 @@ impl App {
                 ('m', 'a'..='z') => KeyResult::Action(A::SetMark(c)),
                 ('\'', 'a'..='z') => KeyResult::Action(A::GotoMark(c)),
                 ('g', 'g') => KeyResult::Action(A::GotoTop(count)),
+                ('g', '?') => KeyResult::Action(A::Help(super::HelpAction::Open)),
                 ('g', 'd') => KeyResult::Action(A::Follow),
                 ('g', 'x') => KeyResult::Action(A::OpenExternal),
                 ('g', 'R') => KeyResult::Action(A::ToggleRaw),
@@ -354,6 +359,7 @@ impl App {
             A::Cmd(a) => self.cmd_action(a),
             A::ReviewJump(fwd) => self.review_jump(fwd),
             A::ToggleRaw => self.toggle_raw(),
+            A::Help(a) => self.help_action(a),
         }
     }
 }

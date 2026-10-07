@@ -235,8 +235,13 @@ impl App {
     }
 
     /// `n` (`same` = true) / `N`, `count` times.
+    /// `n` / `N` have a previous search to repeat.
+    pub(crate) fn can_search_next(&self) -> bool {
+        !self.search.pattern.is_empty()
+    }
+
     pub(super) fn search_next(&mut self, same: bool, count: usize) {
-        if self.search.pattern.is_empty() {
+        if !self.can_search_next() {
             self.set_status("No previous search");
             return;
         }

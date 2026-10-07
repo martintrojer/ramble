@@ -17,4 +17,4 @@ expression: term.backend().to_string()
 "                        │                                                       "
 "                        │                                                       "
 "                        │                                                       "
-" docs/guide.md                                                      —  All  ← 0 "
+" docs/guide.md                                              g? help —  All  ← 0 "

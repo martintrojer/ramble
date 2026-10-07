@@ -181,7 +181,7 @@ impl App {
     fn build_launch(&self, l: &Launcher) -> Result<LaunchCommand, String> {
         let vars = self.launch_vars();
         let unavailable = |why: &str| format!("{}: unavailable: {why}", l.name);
-        if l.needs_vcs && vars.vcs_root.is_none() {
+        if l.needs_vcs && !self.has_vcs_root() {
             return Err(unavailable("not in a VCS repository"));
         }
         let argv = expand(&l.command, &vars).map_err(|e| unavailable(&e))?;
@@ -203,6 +203,11 @@ impl App {
             Ok(cmd) => self.pending_effect = Some(Effect::Launch(cmd)),
             Err(msg) => self.set_status(msg),
         }
+    }
+
+    /// The current file lies in a VCS repository (`needs_vcs` launchers).
+    pub(crate) fn has_vcs_root(&self) -> bool {
+        self.launch_vars().vcs_root.is_some()
     }
 
     fn launch_vars(&self) -> LaunchVars {

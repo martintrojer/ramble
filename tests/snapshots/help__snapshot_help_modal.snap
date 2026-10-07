@@ -1,0 +1,28 @@
+---
+source: tests/help.rs
+expression: screen(&app)
+---
+"Title                                                                           "
+"━━━━┌ help ────────────────────────────────────────────────────────────────┐━━━━"
+"    │/ filter   q close                                                    │    "
+"See │General                                                               │    "
+"    │  g?                show this help                                    │    "
+"    │  :                 command line                                      │    "
+"    │  q                 quit                                              │    "
+"    │  ZZ                quit                                              │    "
+"    │Motions                                                               │    "
+"    │  h, Left           left                                              │    "
+"    │  l, Right          right                                             │    "
+"    │  j, Down           down                                              │    "
+"    │  k, Up             up                                                │    "
+"    │  w                 next word                                         │    "
+"    │  b                 previous word                                     │    "
+"    │  e                 end of word                                       │    "
+"    │  0, Home           start of line                                     │    "
+"    │  $, End            end of line                                       │    "
+"    │  }                 next paragraph                                    │    "
+"    │  {                 previous paragraph                                │    "
+"    │  gg                first line (or line N)                            │    "
+"    └──────────────────────────────────────────────────────────────────────┘    "
+"                                                                                "
+" doc.md                                                     g? help —  All  ← 0 "

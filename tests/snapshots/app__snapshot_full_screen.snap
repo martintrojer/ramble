@@ -13,4 +13,4 @@ expression: screen(&app)
 "                                        "
 "Para 4 has foo.bar words                "
 "                                        "
-" doc.md  hi                 —  Top  ← 0 "
+" doc.md  hi         g? help —  Top  ← 0 "

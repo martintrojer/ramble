@@ -201,11 +201,16 @@ impl App {
     }
 
     /// `]r` (true) / `[r`: jump to the next / previous commented line.
+    /// `]r` / `[r` have a commented line to go to.
+    pub(crate) fn can_review_jump(&self) -> bool {
+        !self.review_targets().is_empty()
+    }
+
     pub(super) fn review_jump(&mut self, forward: bool) {
-        let targets = self.review_targets();
-        if targets.is_empty() {
+        if !self.can_review_jump() {
             return self.set_status(NO_REVIEW);
         }
+        let targets = self.review_targets();
         let row = self.cursor.row;
         let next = if forward {
             targets.iter().find(|&&r| r > row)

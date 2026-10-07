@@ -1,4 +1,5 @@
-//! The status line: title, status message, LSP, position, history depth.
+//! The status line: title, status message, the `g?` hint, LSP, position,
+//! history depth.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,6 +9,10 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::render::palette;
+
+/// The key that opens the help overlay, shown dimmed left of the right
+/// group while it fits.
+pub const HELP_HINT: &str = "g? help";
 
 /// Background of the status line (Catppuccin Mocha mantle).
 const STATUS_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
@@ -42,8 +47,14 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
     let left_w: usize = spans.iter().map(Span::width).sum();
     let right_w = Span::raw(right.as_str()).width();
-    let pad = (area.width as usize).saturating_sub(left_w + right_w);
+    let hint_w = Span::raw(HELP_HINT).width();
+    let hint = left_w + right_w + hint_w + 2 <= area.width as usize;
+    let used = left_w + right_w + if hint { hint_w } else { 0 };
+    let pad = (area.width as usize).saturating_sub(used);
     spans.push(Span::styled(" ".repeat(pad), base));
+    if hint {
+        spans.push(Span::styled(HELP_HINT, base.fg(palette::OVERLAY)));
+    }
     spans.push(Span::styled(right, base));
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);
 }

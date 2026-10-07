@@ -49,7 +49,16 @@ impl App {
 
     /// `y`: copy the link destination (as written) under the cursor, else
     /// the file path.
+    /// `y` has something to copy: a link under the cursor or a file path.
+    pub(crate) fn can_yank(&self) -> bool {
+        self.link_under_cursor().is_some() || self.page.as_ref().is_some_and(|p| p.path.is_some())
+    }
+
     pub(super) fn yank(&mut self) {
+        if !self.can_yank() {
+            self.set_status("Nothing to yank (stdin has no path)");
+            return;
+        }
         let link = self
             .link_under_cursor()
             .and_then(|i| self.page.as_ref()?.doc.links.get(i))

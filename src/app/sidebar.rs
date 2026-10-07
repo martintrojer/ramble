@@ -425,6 +425,9 @@ impl App {
         }
         match keys {
             [a, b] if plain(a) == Some('g') && plain(b) == Some('g') => act(S::Top),
+            [a, b] if plain(a) == Some('g') && plain(b) == Some('?') => {
+                KeyResult::Action(Action::Help(super::HelpAction::Open))
+            }
             [k] => match (k.code, plain(k)) {
                 (_, Some('j')) | (KeyCode::Down, _) => act(S::Down),
                 (_, Some('k')) | (KeyCode::Up, _) => act(S::Up),
@@ -477,6 +480,11 @@ impl App {
         } else {
             w
         }
+    }
+
+    /// A sidebar pane is shown, so focus can move to it.
+    pub(crate) fn can_focus_sidebar(&self) -> bool {
+        self.sidebar_cols() > 0
     }
 
     /// Share of the sidebar height given to files in split mode.
@@ -598,7 +606,7 @@ impl App {
                 SidebarMode::Outline => SidebarMode::Split,
                 SidebarMode::Split => SidebarMode::Off,
             }),
-            S::FocusLeft | S::FocusNext if self.sidebar_cols() == 0 => {
+            S::FocusLeft | S::FocusNext if !self.can_focus_sidebar() => {
                 let off = self.sidebar.panes().is_empty();
                 self.set_status(if off { OFF_MESSAGE } else { NARROW_MESSAGE });
             }

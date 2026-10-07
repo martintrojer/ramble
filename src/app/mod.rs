@@ -12,6 +12,7 @@ mod cmdline;
 mod codepath;
 mod effect;
 mod follow;
+mod help;
 mod hints;
 mod keys;
 mod launch;
@@ -45,6 +46,7 @@ use crate::render::{RenderedPage, Theme};
 pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
 pub use effect::{Clipboard, Effect, osc52};
+pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
@@ -115,6 +117,8 @@ pub enum Mode {
     Command,
     /// Typing a hint label after `s`.
     Hint,
+    /// The `g?` help overlay is open.
+    Help,
 }
 
 /// Everything the event loop feeds the app. Later units add variants
@@ -194,6 +198,7 @@ pub struct App {
     cmdline: Option<String>,
     hints: hints::Hints,
     review: review_glue::ReviewState,
+    help: help::HelpState,
 }
 
 impl App {
@@ -245,6 +250,7 @@ impl App {
             cmdline: None,
             hints: hints::Hints::default(),
             review: Default::default(),
+            help: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
