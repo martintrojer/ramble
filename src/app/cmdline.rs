@@ -113,7 +113,7 @@ impl App {
             "Launch" if arg.is_empty() => self.set_status(":Launch needs a name"),
             "Launch" => self.launch(arg),
             "Sidebar" => match parse_sidebar(arg) {
-                Some(m) => self.set_sidebar_mode(m),
+                Some(m) => self.pick_sidebar_mode(m),
                 None => self.set_status(":Sidebar off|files|outline|split"),
             },
             _ => self.set_status(format!("Not a command: {cmd}")),

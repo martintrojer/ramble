@@ -14,8 +14,11 @@
 ## Sidebar
 # [sidebar]
 ## auto | off | files | outline | split
-## auto: files for a directory or no argument, outline for a file or stdin.
+## auto: files while no page is loaded (a directory or no argument), then
+## `reading` once a page is shown (a file, stdin, or a file opened later).
 # default = "auto"
+## outline | split: what auto shows while a page is loaded.
+# reading = "outline"
 ## Width in columns.
 # width = 30
 ## Share of the sidebar given to files in split mode.

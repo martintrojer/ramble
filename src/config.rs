@@ -37,6 +37,25 @@ pub struct SidebarConfig {
     pub split_ratio: f32,
     /// Also list non-markdown files in the tree.
     pub show_all: bool,
+    /// What `auto` shows while a page is loaded.
+    pub reading: SidebarReading,
+}
+
+/// `sidebar.reading`: the mode `auto` uses while a page is loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarReading {
+    Outline,
+    Split,
+}
+
+impl From<SidebarReading> for SidebarMode {
+    fn from(r: SidebarReading) -> SidebarMode {
+        match r {
+            SidebarReading::Outline => SidebarMode::Outline,
+            SidebarReading::Split => SidebarMode::Split,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -130,6 +149,7 @@ impl Default for Config {
                 width: 30,
                 split_ratio: 0.5,
                 show_all: false,
+                reading: SidebarReading::Outline,
             },
             keys: KeysConfig { leader: ' ' },
             lsp: LspConfig {
@@ -209,6 +229,7 @@ struct RawSidebar {
     width: Option<u16>,
     split_ratio: Option<f32>,
     show_all: Option<bool>,
+    reading: Option<SidebarReading>,
 }
 
 #[derive(Deserialize)]
@@ -301,6 +322,7 @@ impl Config {
             set(&mut c.sidebar.width, s.width);
             set(&mut c.sidebar.split_ratio, s.split_ratio);
             set(&mut c.sidebar.show_all, s.show_all);
+            set(&mut c.sidebar.reading, s.reading);
         }
         if let Some(k) = raw.keys {
             set(&mut c.keys.leader, k.leader);

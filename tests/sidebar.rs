@@ -4,9 +4,11 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ramble::app::sidebar::{NARROW_MESSAGE, OFF_MESSAGE, Tree, item_paths};
+use ramble::app::sidebar::{
+    NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, OFF_MESSAGE, Tree, item_paths,
+};
 use ramble::app::{App, Effect, Focus, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode};
+use ramble::config::{Config, SidebarMode, SidebarReading};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -141,6 +143,228 @@ fn auto_default_per_start_target() {
         config(SidebarMode::Split),
     );
     assert_eq!(split.sidebar_mode(), SidebarMode::Split, "config wins");
+    let mut c = auto();
+    c.sidebar.reading = SidebarReading::Split;
+    let file = app_on(&root, StartTarget::File(root.join("a.md")), c.clone());
+    assert_eq!(file.sidebar_mode(), SidebarMode::Split, "reading = split");
+    let dir = app_on(&root, StartTarget::Dir(root.clone()), c);
+    assert_eq!(dir.sidebar_mode(), SidebarMode::Files);
+}
+
+/// Dir start in auto, then open a.md from the tree (selected by `G`).
+fn open_a_from_tree(reading: SidebarReading) -> App {
+    let (_d, root) = fixture();
+    let mut c = config(SidebarMode::Auto);
+    c.sidebar.reading = reading;
+    let mut app = app_on(&root, StartTarget::Dir(root.clone()), c);
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    win(&mut app, 'h');
+    keys(&mut app, "G");
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        app.page().unwrap().path.as_deref(),
+        Some(root.join("a.md").as_path())
+    );
+    assert_eq!(app.focus(), Focus::Content);
+    app
+}
+
+#[test]
+fn auto_switches_to_reading_when_a_page_opens() {
+    let app = open_a_from_tree(SidebarReading::Outline);
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
+    assert_eq!(app.status(), "");
+    let app = open_a_from_tree(SidebarReading::Split);
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
+}
+
+#[test]
+fn auto_switch_uses_the_new_width_for_the_first_layout() {
+    let (_d, root) = fixture();
+    let long = "word ".repeat(40);
+    let path = write(&root, "long.md", &format!("{long}\n"));
+    let mut off = app_on(
+        &root,
+        StartTarget::File(path.clone()),
+        config(SidebarMode::Off),
+    );
+    off.set_sidebar_mode(SidebarMode::Outline);
+    let want = off.page().unwrap().rendered.lines.len();
+    let mut app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Auto),
+    );
+    app.open_file(&path).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
+    assert_eq!(app.page().unwrap().rendered.lines.len(), want);
+}
+
+#[test]
+fn auto_does_not_post_narrow_status_on_each_page() {
+    let (_d, root) = fixture();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::Dir(root.clone()),
+            tree_root: root.clone(),
+            config: Config::default(),
+        },
+        (40, 10),
+    )
+    .unwrap();
+    assert_eq!(app.status(), NARROW_MESSAGE);
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
+    assert_eq!(app.status(), "");
+    app.open_file(&root.join("docs/guide.md")).unwrap();
+    assert_eq!(app.status(), "");
+}
+
+#[test]
+fn manual_pick_stops_auto_switching() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Auto),
+    );
+    // <leader>e from files: outline, then split, then off.
+    keys(&mut app, " e e e");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Off);
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Off, "manual mode kept");
+    app.open_file(&root.join("docs/guide.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Off);
+
+    let mut app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Auto),
+    );
+    app.execute("Sidebar files");
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files, ":Sidebar is manual");
+}
+
+#[test]
+fn history_restores_entry_mode_and_manual_survives_back() {
+    let (_d, root) = fixture();
+    let mut c = config(SidebarMode::Auto);
+    c.sidebar.reading = SidebarReading::Split;
+    let mut app = app_on(&root, StartTarget::Dir(root.clone()), c);
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split, "auto");
+    // From the tree, so a.md's entry (split) is pushed before the pick.
+    win(&mut app, 'k');
+    keys(&mut app, "gg");
+    app.handle_key(key(KeyCode::Enter));
+    keys(&mut app, "jj");
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(
+        app.page().unwrap().path.as_deref(),
+        Some(root.join("docs/guide.md").as_path())
+    );
+    app.execute("Sidebar off");
+    app.handle_key(ctrl('o'));
+    assert_eq!(
+        app.page().unwrap().path.as_deref(),
+        Some(root.join("a.md").as_path())
+    );
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split, "entry's mode");
+    // Still manual after C-o: a new page keeps the current mode.
+    app.set_sidebar_mode(SidebarMode::Files);
+    app.open_file(&root.join("docs/guide.md")).unwrap();
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files, "still manual");
+}
+
+#[test]
+fn ctrl_w_j_k_move_between_split_panes() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Split),
+    );
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline, "from content");
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline, "nothing below the outline");
+    win(&mut app, 'k');
+    assert_eq!(app.focus(), Focus::Files);
+    win(&mut app, 'k');
+    assert_eq!(app.focus(), Focus::Files, "nothing above the files");
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline, "from files");
+    win(&mut app, 'l');
+    win(&mut app, 'k');
+    assert_eq!(app.focus(), Focus::Files, "from content");
+    assert_eq!(app.status(), "");
+}
+
+#[test]
+fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Outline),
+    );
+    win(&mut app, 'j');
+    assert_eq!(app.status(), NO_PANE_BELOW);
+    win(&mut app, 'h');
+    win(&mut app, 'k');
+    assert_eq!(app.status(), NO_PANE_ABOVE);
+    assert_eq!(app.focus(), Focus::Outline);
+    app.set_sidebar_mode(SidebarMode::Off);
+    win(&mut app, 'j');
+    assert_eq!(app.status(), OFF_MESSAGE);
+    let mut narrow = App::new(
+        StartOptions {
+            target: StartTarget::File(root.join("a.md")),
+            tree_root: root.clone(),
+            config: config(SidebarMode::Split),
+        },
+        (40, 10),
+    )
+    .unwrap();
+    win(&mut narrow, 'k');
+    assert_eq!(narrow.status(), NARROW_MESSAGE);
+    assert_eq!(narrow.focus(), Focus::Content);
+}
+
+#[test]
+fn ctrl_w_shift_w_reverses_and_p_returns() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Split),
+    );
+    app.handle_key(ctrl('w'));
+    app.handle_key(KeyEvent::new(KeyCode::Char('W'), KeyModifiers::SHIFT));
+    assert_eq!(app.focus(), Focus::Outline);
+    win(&mut app, 'W');
+    assert_eq!(app.focus(), Focus::Files);
+    win(&mut app, 'W');
+    assert_eq!(app.focus(), Focus::Content);
+
+    win(&mut app, 'j');
+    win(&mut app, 'k');
+    assert_eq!(app.focus(), Focus::Files);
+    win(&mut app, 'p');
+    assert_eq!(app.focus(), Focus::Outline);
+    win(&mut app, 'p');
+    assert_eq!(app.focus(), Focus::Files);
+    win(&mut app, 'l');
+    win(&mut app, 'p');
+    assert_eq!(app.focus(), Focus::Files, "back from content");
+    // The previous pane is gone: fall back to the content.
+    win(&mut app, 'j');
+    app.set_sidebar_mode(SidebarMode::Outline);
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Outline);
+    win(&mut app, 'p');
+    assert_eq!(app.focus(), Focus::Content);
 }
 
 #[test]

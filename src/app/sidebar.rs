@@ -1,6 +1,7 @@
 //! The sidebar (spec § Sidebar): modes off / files / outline / split, the
 //! lazily walked file tree, the outline of the current page, focus moves
-//! (`C-w h/l/w`) and the per-pane `/` filter.
+//! (`C-w h/l/w/W/j/k/p`), the per-pane `/` filter, and the `auto` mode
+//! switching from files to `sidebar.reading` when a page is first shown.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,10 @@ use crate::nav::is_markdown;
 pub const NARROW_MESSAGE: &str = "Window too narrow for the sidebar";
 /// Status for a focus move while no sidebar is shown.
 pub const OFF_MESSAGE: &str = "Sidebar is off";
+/// Status for `C-w j` without a pane below.
+pub const NO_PANE_BELOW: &str = "No pane below";
+/// Status for `C-w k` without a pane above.
+pub const NO_PANE_ABOVE: &str = "No pane above";
 /// Columns the content keeps at least before the sidebar is dropped.
 const MIN_CONTENT: u16 = 10;
 
@@ -39,6 +44,14 @@ pub enum SidebarAction {
     FocusRight,
     /// `C-w w`
     FocusNext,
+    /// `C-w W`
+    FocusPrev,
+    /// `C-w j`: the pane below (outline in split mode).
+    FocusBelow,
+    /// `C-w k`: the pane above (files in split mode).
+    FocusAbove,
+    /// `C-w p`: the previously focused pane.
+    FocusLast,
     Down,
     Up,
     Top,
@@ -66,9 +79,16 @@ pub enum SidebarAction {
 pub(super) struct Sidebar {
     /// Never `Auto`: resolved at start.
     mode: SidebarMode,
-    /// What `Auto` means for this start target.
-    auto: SidebarMode,
+    /// `sidebar.default` is `auto`: switch to `reading` when a page shows.
+    auto: bool,
+    /// `sidebar.reading` as a mode (outline or split).
+    reading: SidebarMode,
+    /// The user picked a mode this session (`<leader>e`, `:Sidebar`),
+    /// which stops the `auto` switching.
+    manual: bool,
     focus: Focus,
+    /// The focus before the last focus change, for `C-w p`.
+    prev_focus: Focus,
     /// The sidebar pane `C-w h` returns to.
     last_side: Focus,
     /// Built when the files pane is first shown.
@@ -81,18 +101,19 @@ pub(super) struct Sidebar {
 
 impl Sidebar {
     pub(super) fn new(config: &SidebarConfig, target: &StartTarget) -> Sidebar {
-        let auto = match target {
-            StartTarget::Dir(_) => SidebarMode::Files,
-            StartTarget::File(_) | StartTarget::Stdin(_) => SidebarMode::Outline,
-        };
-        let mode = match config.default {
-            SidebarMode::Auto => auto,
-            m => m,
+        let reading = SidebarMode::from(config.reading);
+        let mode = match (config.default, target) {
+            (SidebarMode::Auto, StartTarget::Dir(_)) => SidebarMode::Files,
+            (SidebarMode::Auto, StartTarget::File(_) | StartTarget::Stdin(_)) => reading,
+            (m, _) => m,
         };
         Sidebar {
             mode,
-            auto,
+            auto: config.default == SidebarMode::Auto,
+            reading,
+            manual: false,
             focus: Focus::Content,
+            prev_focus: Focus::Content,
             last_side: Focus::Files,
             tree: None,
             outline_sel: 0,
@@ -380,7 +401,7 @@ fn act(a: SidebarAction) -> KeyResult {
     KeyResult::Action(Action::Sidebar(a))
 }
 
-/// `C-w h` / `C-w l` / `C-w w` (the second key with or without Ctrl).
+/// `C-w h l w W j k p` (the second key with or without Ctrl).
 pub(super) fn window_keymap(keys: &[KeyEvent]) -> Option<KeyResult> {
     let (first, rest) = keys.split_first()?;
     if !is_ctrl(first, 'w') {
@@ -393,6 +414,10 @@ pub(super) fn window_keymap(keys: &[KeyEvent]) -> Option<KeyResult> {
         KeyCode::Char('h') | KeyCode::Left => act(SidebarAction::FocusLeft),
         KeyCode::Char('l') | KeyCode::Right => act(SidebarAction::FocusRight),
         KeyCode::Char('w') => act(SidebarAction::FocusNext),
+        KeyCode::Char('W') => act(SidebarAction::FocusPrev),
+        KeyCode::Char('j') | KeyCode::Down => act(SidebarAction::FocusBelow),
+        KeyCode::Char('k') | KeyCode::Up => act(SidebarAction::FocusAbove),
+        KeyCode::Char('p') => act(SidebarAction::FocusLast),
         _ => KeyResult::None,
     })
 }
@@ -450,17 +475,39 @@ impl App {
         self.sidebar.mode
     }
 
-    /// Switch the sidebar mode (`Auto` means the start target's default)
-    /// and re-lay out the content for the new width.
+    /// Switch the sidebar mode (`Auto` means files without a page, else
+    /// `sidebar.reading`) and re-lay out the content for the new width.
+    /// Does not count as a manual pick (history restore calls it).
     pub fn set_sidebar_mode(&mut self, mode: SidebarMode) {
         self.sidebar.mode = match mode {
-            SidebarMode::Auto => self.sidebar.auto,
+            SidebarMode::Auto if self.page.is_none() => SidebarMode::Files,
+            SidebarMode::Auto => self.sidebar.reading,
             m => m,
         };
         self.sync_tree();
         let (cols, rows) = self.size;
         self.resize(cols, rows);
         self.sidebar_fit();
+    }
+
+    /// A mode picked by the user (`<leader>e`, `:Sidebar`): stops the
+    /// `auto` switching for the rest of the session.
+    pub(super) fn pick_sidebar_mode(&mut self, mode: SidebarMode) {
+        self.sidebar.manual = true;
+        self.set_sidebar_mode(mode);
+    }
+
+    /// Called by `set_page` before the page is laid out: with
+    /// `sidebar.default = "auto"` and no manual pick, show
+    /// `sidebar.reading`. No re-layout (the caller renders next) and no
+    /// narrow-window status.
+    pub(super) fn sidebar_auto_reading(&mut self) {
+        let s = &self.sidebar;
+        if !s.auto || s.manual || s.mode == s.reading {
+            return;
+        }
+        self.sidebar.mode = self.sidebar.reading;
+        self.sidebar_fit_focus();
     }
 
     /// Which pane receives keys.
@@ -566,21 +613,35 @@ impl App {
     /// After a mode change or resize: give focus back to the content when
     /// its pane is gone, and say so when the sidebar does not fit.
     pub(super) fn sidebar_fit(&mut self) {
+        self.sidebar_fit_focus();
+        if self.sidebar_cols() == 0 && !self.sidebar.panes().is_empty() {
+            self.set_status(NARROW_MESSAGE);
+        }
+    }
+
+    /// Give focus back to the content when its pane is gone or the
+    /// sidebar does not fit.
+    fn sidebar_fit_focus(&mut self) {
         let shown = self.sidebar_cols() > 0;
         if !shown || !self.sidebar.panes().contains(&self.sidebar.focus) {
-            self.sidebar.focus = Focus::Content;
+            self.set_focus(Focus::Content);
         }
         if self.sidebar.focus == Focus::Content && self.mode == Mode::Filter {
             self.sidebar.prompt = None;
             self.mode = Mode::Normal;
         }
-        if !shown && !self.sidebar.panes().is_empty() {
-            self.set_status(NARROW_MESSAGE);
+    }
+
+    /// Change focus, remembering the old one for `C-w p`.
+    fn set_focus(&mut self, f: Focus) {
+        if f != self.sidebar.focus {
+            self.sidebar.prev_focus = self.sidebar.focus;
+            self.sidebar.focus = f;
         }
     }
 
     fn focus_pane(&mut self, f: Focus) {
-        self.sidebar.focus = f;
+        self.set_focus(f);
         if f == Focus::Content {
             return;
         }
@@ -600,13 +661,20 @@ impl App {
     pub(super) fn sidebar_action(&mut self, a: SidebarAction) {
         use SidebarAction as S;
         match a {
-            S::Cycle => self.set_sidebar_mode(match self.sidebar.mode {
+            S::Cycle => self.pick_sidebar_mode(match self.sidebar.mode {
                 SidebarMode::Off | SidebarMode::Auto => SidebarMode::Files,
                 SidebarMode::Files => SidebarMode::Outline,
                 SidebarMode::Outline => SidebarMode::Split,
                 SidebarMode::Split => SidebarMode::Off,
             }),
-            S::FocusLeft | S::FocusNext if !self.can_focus_sidebar() => {
+            S::FocusLeft
+            | S::FocusNext
+            | S::FocusPrev
+            | S::FocusBelow
+            | S::FocusAbove
+            | S::FocusLast
+                if !self.can_focus_sidebar() =>
+            {
                 let off = self.sidebar.panes().is_empty();
                 self.set_status(if off { OFF_MESSAGE } else { NARROW_MESSAGE });
             }
@@ -626,6 +694,39 @@ impl App {
                 let i = order.iter().position(|&f| f == self.sidebar.focus);
                 let next = order[i.map_or(0, |i| (i + 1) % order.len())];
                 self.focus_pane(next);
+            }
+            S::FocusPrev => {
+                let mut order = self.sidebar.panes().to_vec();
+                order.push(Focus::Content);
+                let n = order.len();
+                let i = order.iter().position(|&f| f == self.sidebar.focus);
+                let prev = order[i.map_or(n - 1, |i| (i + n - 1) % n)];
+                self.focus_pane(prev);
+            }
+            S::FocusBelow => {
+                if self.sidebar.panes().len() < 2 {
+                    self.set_status(NO_PANE_BELOW);
+                } else if self.sidebar.focus != Focus::Outline {
+                    self.focus_pane(Focus::Outline);
+                }
+            }
+            S::FocusAbove => {
+                if self.sidebar.panes().len() < 2 {
+                    self.set_status(NO_PANE_ABOVE);
+                } else if self.sidebar.focus != Focus::Files {
+                    self.focus_pane(Focus::Files);
+                }
+            }
+            S::FocusLast => {
+                let p = self.sidebar.prev_focus;
+                let p = if p == Focus::Content || self.sidebar.panes().contains(&p) {
+                    p
+                } else {
+                    Focus::Content
+                };
+                if p != self.sidebar.focus {
+                    self.focus_pane(p);
+                }
             }
             S::Down => self.pane_move(1),
             S::Up => self.pane_move(-1),
@@ -781,7 +882,7 @@ impl App {
                 if let Some(o) = self.outline().get(self.sidebar.outline_sel) {
                     let row = o.row;
                     self.jump_to_row(row);
-                    self.sidebar.focus = Focus::Content;
+                    self.set_focus(Focus::Content);
                 }
             }
             Focus::Content => {}
@@ -801,7 +902,7 @@ impl App {
         if let Some(e) = here {
             self.history.push(e);
         }
-        self.sidebar.focus = Focus::Content;
+        self.set_focus(Focus::Content);
     }
 }
 

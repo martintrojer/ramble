@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use ramble::config::{self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode};
+use ramble::config::{
+    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading,
+};
 
 fn load_str(src: &str) -> anyhow::Result<Config> {
     let dir = tempfile::tempdir().unwrap();
@@ -35,6 +37,7 @@ fn defaults_match_spec() {
     assert_eq!(c.sidebar.width, 30);
     assert_eq!(c.sidebar.split_ratio, 0.5);
     assert!(!c.sidebar.show_all);
+    assert_eq!(c.sidebar.reading, SidebarReading::Outline);
     assert_eq!(c.keys.leader, ' ');
     assert_eq!(c.lsp.server.len(), 2);
     assert_eq!(c.lsp.server[0].kind, ServerKind::Zk);
@@ -192,6 +195,14 @@ fn syntax_error_reports_line_and_path() {
 #[test]
 fn bad_enum_value_is_an_error() {
     let e = err_str("[sidebar]\ndefault = \"left\"\n");
+    assert!(e.contains("line 2"), "{e}");
+}
+
+#[test]
+fn sidebar_reading_parses() {
+    let c = load_str("[sidebar]\nreading = \"split\"\n").unwrap();
+    assert_eq!(c.sidebar.reading, SidebarReading::Split);
+    let e = err_str("[sidebar]\nreading = \"files\"\n");
     assert!(e.contains("line 2"), "{e}");
 }
 

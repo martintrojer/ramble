@@ -41,6 +41,8 @@ impl App {
 
     fn set_page(&mut self, path: Option<PathBuf>, mut doc: Document) {
         self.add_code_path_links(path.as_deref(), &mut doc);
+        // Before the layout, so the first render uses the right width.
+        self.sidebar_auto_reading();
         let rendered = self.render_page(&doc, false);
         self.page = Some(Page {
             path,
