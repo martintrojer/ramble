@@ -268,29 +268,9 @@ fn relative(path: &Path, root: &Path) -> String {
     p.strip_prefix(&r).unwrap_or(&p).display().to_string()
 }
 
-/// The first heading of the file at `path`, skipping YAML front matter
-/// (the doc parser would read its closing `---` as a setext underline).
+/// The first heading of the file at `path` (front matter is metadata, not a
+/// heading: see `doc`).
 fn first_heading(path: &Path) -> Option<String> {
     let doc = crate::doc::from_bytes(&std::fs::read(path).ok()?)?;
-    let body = strip_front_matter(&doc.source);
-    if body.len() == doc.source.len() {
-        return doc.headings.first().map(|h| h.text.clone());
-    }
-    let doc = crate::doc::parse(body.to_string());
     doc.headings.first().map(|h| h.text.clone())
-}
-
-/// `src` without a leading `---` ... `---` block.
-pub fn strip_front_matter(src: &str) -> &str {
-    let Some(rest) = src.strip_prefix("---\n") else {
-        return src;
-    };
-    let mut offset = 0;
-    for line in rest.split_inclusive('\n') {
-        offset += line.len();
-        if line.trim_end() == "---" {
-            return &rest[offset..];
-        }
-    }
-    src
 }

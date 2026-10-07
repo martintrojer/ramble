@@ -207,15 +207,6 @@ fn fuzzy_filter_ranks_and_keeps_order_for_empty_queries() {
 
 #[test]
 fn front_matter_is_not_a_heading_for_labels() {
-    assert_eq!(
-        notebook::strip_front_matter("---\ntags: [x]\n---\n# T\n"),
-        "# T\n"
-    );
-    assert_eq!(notebook::strip_front_matter("# T\n---\n"), "# T\n---\n");
-    assert_eq!(
-        notebook::strip_front_matter("---\nunclosed\n"),
-        "---\nunclosed\n"
-    );
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     std::fs::write(root.join("t.md"), "---\ntags: [project]\n---\n# Tagged\n").unwrap();
@@ -228,4 +219,21 @@ fn front_matter_is_not_a_heading_for_labels() {
         &root,
     );
     assert_eq!(items[0].label, "Tagged");
+}
+
+/// Front matter is metadata: the marksman backlinks position is the note's
+/// real first heading, not a line inside the YAML block.
+#[test]
+fn marksman_backlinks_position_skips_front_matter() {
+    let src = std::fs::read_to_string("tests/fixtures/zk/tagged.md").unwrap();
+    assert!(src.starts_with("---\n"), "fixture must have front matter");
+    let doc = ramble::doc::parse(src.clone());
+    let pos = ramble::notebook::backlinks_position(
+        ramble::lsp::Kind::Marksman,
+        &doc,
+        ramble::lsp::Encoding::Utf16,
+    )
+    .unwrap();
+    let line = src.lines().nth(pos.line as usize).unwrap();
+    assert!(line.starts_with("# "), "position lands on {line:?}");
 }
