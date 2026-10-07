@@ -6,11 +6,13 @@ rust-version = "1.90"
 description = "A read-only TUI markdown reader backed by markdown language servers"
 license = "MIT"
 authors = ["Martin Trojer <martin.trojer@gmail.com>"]
+default-run = "ramble"
 
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = { version = "0.29", features = ["use-dev-tty"] }
+lsp-types = "0.97"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +23,14 @@ two-face = { version = "0.5", default-features = false, features = ["syntect-fan
 unicode-general-category = "1.1.0"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+url = "2"
+
+# Scripted fake language server for tests/lsp.rs. Not a test target itself.
+[[bin]]
+name = "fake-lsp"
+path = "tests/support/fake_lsp.rs"
+test = false
+doc = false
 
 [dev-dependencies]
 insta = "1"
