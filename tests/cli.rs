@@ -1,8 +1,10 @@
 //! cli unit tests: `plan`, `tree_root`, `print_width` with an injected `Env`.
 
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::Parser;
 use ramble::app::StartTarget;
@@ -76,16 +78,32 @@ fn interactive(p: Plan) -> ramble::app::StartOptions {
     }
 }
 
+/// Stdin that records whether anything read from it.
+struct SpyStdin(Arc<AtomicBool>);
+
+impl Read for SpyStdin {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.store(true, Ordering::SeqCst);
+        Ok(0)
+    }
+}
+
 #[test]
 fn file_arg_wins_over_piped_stdin() {
     let f = fixture();
-    let mut e = piped(env(&f.home, &f.home), "# other\n");
+    let mut e = piped(env(&f.home, &f.home), "");
+    let was_read = Arc::new(AtomicBool::new(false));
+    e.stdin = Box::new(SpyStdin(was_read.clone()));
     let o = interactive(plan(
         &args(&[f.file.to_str().unwrap()]),
         &mut e,
         &Config::default(),
     ));
     assert_eq!(o.target, StartTarget::File(f.file.clone()));
+    assert!(
+        !was_read.load(Ordering::SeqCst),
+        "stdin must not be read when a file argument is given"
+    );
 }
 
 #[test]
@@ -246,6 +264,27 @@ fn tree_root_dir_arg_is_that_dir() {
 fn tree_root_no_arg_finds_vcs_root() {
     let f = fixture();
     assert_eq!(tree_root(None, &f.nested, &f.home), f.repo);
+}
+
+fn assert_marker_is_root(marker: &str) {
+    let tmp = TempDir::new().unwrap();
+    let repo = canon(tmp.path()).join("repo");
+    let cwd = repo.join("a/b");
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir(repo.join(marker)).unwrap();
+    let home = canon(tmp.path()).join("home");
+    fs::create_dir(&home).unwrap();
+    assert_eq!(tree_root(None, &cwd, &home), repo, "marker {marker}");
+}
+
+#[test]
+fn tree_root_no_arg_finds_git_root() {
+    assert_marker_is_root(".git");
+}
+
+#[test]
+fn tree_root_no_arg_finds_sl_root() {
+    assert_marker_is_root(".sl");
 }
 
 #[test]
