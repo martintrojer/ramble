@@ -86,20 +86,35 @@ fn title(text: String, focused: bool) -> Line<'static> {
     Line::from(Span::styled(text, style))
 }
 
-/// Draw `rows` under `head`, scrolled so `selected` is visible; returns
-/// where the items went (for mouse hit-testing).
+/// The first item to draw: `prev` (the last frame's) moved only as far as
+/// needed to show `selected` in `body` rows, so a click does not shift the
+/// list under the pointer. No selection draws from the top.
+fn list_skip(prev: usize, selected: Option<usize>, body: usize, len: usize) -> usize {
+    let Some(s) = selected else { return 0 };
+    let prev = prev.min(len.saturating_sub(body));
+    if s < prev {
+        s
+    } else if s >= prev + body {
+        (s + 1).saturating_sub(body)
+    } else {
+        prev
+    }
+}
+
+/// Draw `rows` under `head`, scrolled from `prev` so `selected` is visible;
+/// returns where the items went (for mouse hit-testing).
 fn draw_list(
     frame: &mut Frame,
     area: Rect,
     head: Line,
     rows: Vec<Line>,
-    selected: Option<usize>,
+    (selected, prev): (Option<usize>, usize),
 ) -> ListArea {
     if area.height == 0 {
         return ListArea::default();
     }
     let body = (area.height - 1) as usize;
-    let skip = selected.map_or(0, |s| (s + 1).saturating_sub(body));
+    let skip = list_skip(prev, selected, body, rows.len());
     let shown = rows.len().saturating_sub(skip).min(body) as u16;
     let list = ListArea {
         pane: area,
@@ -151,7 +166,10 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
         area,
         title(clip_middle(&app.sidebar_files_title(), width), focused),
         rows,
-        tree.selected_index(&items),
+        (
+            tree.selected_index(&items),
+            app.layout().files.map_or(0, |l| l.skip),
+        ),
     ))
 }
 
@@ -199,7 +217,10 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
         area,
         title(clip_end(OUTLINE_TITLE, width), focused),
         rows,
-        app.outline_selected(),
+        (
+            app.outline_selected(),
+            app.layout().outline.map_or(0, |l| l.skip),
+        ),
     ))
 }
 
@@ -214,4 +235,20 @@ pub(super) fn draw_prompt(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
     frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_skip;
+
+    #[test]
+    fn list_skip_keeps_the_offset_while_the_selection_is_visible() {
+        // 30 items, 6 rows.
+        assert_eq!(list_skip(0, Some(29), 6, 30), 24, "jump to the end");
+        assert_eq!(list_skip(24, Some(26), 6, 30), 24, "visible: stays");
+        assert_eq!(list_skip(24, Some(20), 6, 30), 20, "above: scrolls up");
+        assert_eq!(list_skip(10, Some(16), 6, 30), 11, "below: scrolls down");
+        assert_eq!(list_skip(28, Some(27), 6, 30), 24, "clamped to the end");
+        assert_eq!(list_skip(9, None, 6, 30), 0);
+    }
 }

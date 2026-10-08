@@ -70,7 +70,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
             ]))
         })
         .collect();
-    let mut state = ListState::default().with_selected(Some(p.selected));
+    // Start from the last frame's offset, so a click does not shift the
+    // list under the pointer; ratatui scrolls only to show the selection.
+    let prev = app.layout().picker.map_or(0, |l| l.skip);
+    let mut state = ListState::default()
+        .with_selected(Some(p.selected))
+        .with_offset(prev);
     frame.render_stateful_widget(
         List::new(rows)
             .style(base)

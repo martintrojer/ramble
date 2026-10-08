@@ -796,3 +796,88 @@ fn a_text_click_drops_the_count() {
     t.keys("j");
     assert_eq!(t.app.cursor().row, row + 1);
 }
+
+// --- mouse_scrolled_list_double_click ---------------------------------------
+
+/// A tree of 30 files f00.md..f29.md plus a page with 30 headings and 30
+/// links, sidebar in split mode.
+fn many() -> T {
+    let mut t = setup_with(SidebarMode::Files, |_| {});
+    let mut page = String::from("# Many\n\n");
+    for i in 0..30 {
+        write(&t.root, &format!("f{i:02}.md"), &format!("# F{i}\n"));
+        page.push_str(&format!("## H{i:02}\n\n[l{i:02}](f{i:02}.md)\n\n"));
+    }
+    std::fs::write(t.root.join("a.md"), page).unwrap();
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    t.draw();
+    t
+}
+
+fn opened(t: &T) -> String {
+    let p = t.app.page().unwrap().path.clone().unwrap();
+    p.file_name().unwrap().to_string_lossy().into_owned()
+}
+
+#[test]
+fn clicks_in_a_scrolled_files_list_hit_the_drawn_row_and_it_stays_put() {
+    let mut t = many();
+    let files = t.app.layout().files.unwrap();
+    t.click((files.pane.x + 3, files.pane.y + 1), 0);
+    t.keys("G");
+    t.draw();
+    assert!(t.app.layout().files.unwrap().skip > 0, "list scrolled");
+    let at = t.find_in(files.pane, "f20.md");
+    t.click(at, 1000);
+    assert_eq!(t.selected_file(), Some(t.root.join("f20.md")));
+    t.draw();
+    assert_eq!(t.find_in(files.pane, "f20.md"), at, "the list did not move");
+    t.click(at, 1100);
+    assert_eq!(opened(&t), "f20.md");
+}
+
+#[test]
+fn clicks_in_a_scrolled_outline_hit_the_drawn_row() {
+    let mut t = many();
+    t.keys(" E"); // split: files over outline
+    t.draw();
+    let outline = t.app.layout().outline.expect("outline drawn").pane;
+    t.click((outline.x + 3, outline.y + 1), 0);
+    t.keys("G");
+    t.draw();
+    t.draw();
+    assert!(t.app.layout().outline.unwrap().skip > 0, "outline scrolled");
+    let at = t.find_in(outline, "H25");
+    t.click(at, 1000);
+    t.draw();
+    assert_eq!(t.find_in(outline, "H25"), at, "the outline did not move");
+    t.click(at, 1100);
+    let row = t
+        .app
+        .outline()
+        .iter()
+        .find(|o| o.text == "H25")
+        .unwrap()
+        .row;
+    assert_eq!(t.app.cursor().row, row);
+}
+
+#[test]
+fn clicks_in_a_scrolled_picker_hit_the_drawn_row() {
+    let mut t = many();
+    t.keys(" zl");
+    for _ in 0..29 {
+        t.app
+            .handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL));
+    }
+    t.draw();
+    let picker = t.app.layout().picker.unwrap();
+    assert!(picker.skip > 0, "picker scrolled");
+    let at = t.find_in(picker.pane, "l20");
+    t.click(at, 0);
+    t.draw();
+    assert_eq!(t.find_in(picker.pane, "l20"), at, "the picker did not move");
+    t.click(at, 100);
+    assert_eq!(opened(&t), "f20.md");
+}
