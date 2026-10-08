@@ -11,10 +11,9 @@ use crate::render::palette;
 /// Background of the popup (Catppuccin Mocha base).
 const POPUP_BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 
-pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(text) = app.hover_popup() else {
-        return;
-    };
+/// Draw the hover popup; returns its rect.
+pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
+    let text = app.hover_popup()?;
     let width = area.width.saturating_sub(4).clamp(1, 60);
     let inner = width.saturating_sub(2).max(1) as usize;
     let rows: usize = text
@@ -44,4 +43,5 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
             ),
         rect,
     );
+    Some(rect)
 }

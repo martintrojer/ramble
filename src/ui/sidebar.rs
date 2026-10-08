@@ -10,7 +10,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use super::clip::{clip_end, clip_middle};
 use crate::app::sidebar::OUTLINE_TITLE;
 use crate::app::sidebar_width::{GUTTER_COLS, ICON_COLS as ICON};
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, ListArea};
 use crate::render::palette;
 
 /// Background of the selected row (Catppuccin Mocha surface0).
@@ -35,6 +35,13 @@ pub(crate) fn row_prefix(depth: usize, width: usize, lead: usize) -> (usize, usi
     (indent, GUTTER_COLS + indent)
 }
 
+/// Column, from the files pane's left edge, of the 2-column `▸ `/`▾ `
+/// cell of a folder row at `depth` in a pane `width` wide (after the
+/// marker gutter and the capped indent; see [`row_prefix`]).
+pub fn arrow_col(depth: usize, width: u16) -> u16 {
+    row_prefix(depth, width as usize, ICON).1 as u16
+}
+
 /// The marker gutter of a row: `▎` in peach on the current row.
 fn gutter(current: bool) -> Span<'static> {
     if current {
@@ -44,7 +51,12 @@ fn gutter(current: bool) -> Span<'static> {
     }
 }
 
-pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
+/// Draw the sidebar; returns where the files and outline lists went.
+pub(super) fn draw(
+    frame: &mut Frame,
+    app: &App,
+    area: Rect,
+) -> (Option<ListArea>, Option<ListArea>) {
     let block = Block::new()
         .borders(Borders::RIGHT)
         .border_style(Style::new().fg(palette::OVERLAY));
@@ -56,11 +68,13 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
             let pct = (app.sidebar_split_ratio() * 100.0).round() as u16;
             let [top, bottom] =
                 Layout::vertical([Constraint::Percentage(pct), Constraint::Fill(1)]).areas(inner);
-            draw_files(frame, app, top);
-            draw_outline(frame, app, bottom);
+            (
+                draw_files(frame, app, top),
+                draw_outline(frame, app, bottom),
+            )
         }
-        [Focus::Files] if files => draw_files(frame, app, inner),
-        _ => draw_outline(frame, app, inner),
+        [Focus::Files] if files => (draw_files(frame, app, inner), None),
+        _ => (None, draw_outline(frame, app, inner)),
     }
 }
 
@@ -72,13 +86,26 @@ fn title(text: String, focused: bool) -> Line<'static> {
     Line::from(Span::styled(text, style))
 }
 
-/// Draw `rows` under `head`, scrolled so `selected` is visible.
-fn draw_list(frame: &mut Frame, area: Rect, head: Line, rows: Vec<Line>, selected: Option<usize>) {
+/// Draw `rows` under `head`, scrolled so `selected` is visible; returns
+/// where the items went (for mouse hit-testing).
+fn draw_list(
+    frame: &mut Frame,
+    area: Rect,
+    head: Line,
+    rows: Vec<Line>,
+    selected: Option<usize>,
+) -> ListArea {
     if area.height == 0 {
-        return;
+        return ListArea::default();
     }
     let body = (area.height - 1) as usize;
     let skip = selected.map_or(0, |s| (s + 1).saturating_sub(body));
+    let shown = rows.len().saturating_sub(skip).min(body) as u16;
+    let list = ListArea {
+        pane: area,
+        items: Rect::new(area.x, area.y + 1, area.width, shown),
+        skip,
+    };
     let mut lines = vec![head];
     lines.extend(rows.into_iter().skip(skip).take(body));
     frame.render_widget(Paragraph::new(lines), area);
@@ -91,10 +118,11 @@ fn draw_list(frame: &mut Frame, area: Rect, head: Line, rows: Vec<Line>, selecte
             Style::new().bg(SELECTED_BG),
         );
     }
+    list
 }
 
-fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(tree) = app.tree() else { return };
+fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
+    let tree = app.tree()?;
     let items = tree.visible_items();
     let width = area.width as usize;
     let open = app.sidebar_current_file();
@@ -118,13 +146,13 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     let focused = app.focus() == Focus::Files;
-    draw_list(
+    Some(draw_list(
         frame,
         area,
         title(clip_middle(&app.sidebar_files_title(), width), focused),
         rows,
         tree.selected_index(&items),
-    );
+    ))
 }
 
 /// The review marker of a tree row with `room` columns after the indent
@@ -148,7 +176,7 @@ fn review_mark(app: &App, path: &std::path::Path, room: usize, name_w: usize) ->
     }
 }
 
-fn draw_outline(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     let width = area.width as usize;
     let rows = app
         .outline()
@@ -166,13 +194,13 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     let focused = app.focus() == Focus::Outline;
-    draw_list(
+    Some(draw_list(
         frame,
         area,
         title(clip_end(OUTLINE_TITLE, width), focused),
         rows,
         app.outline_selected(),
-    );
+    ))
 }
 
 /// The filter prompt over the status row while one is being typed.

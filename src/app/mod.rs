@@ -1,12 +1,12 @@
 //! Owns state, applies actions, runs the event loop
-//! (key | fs-watch | lsp | review | resize).
+//! (key | mouse | fs-watch | lsp | review | resize).
 //!
 //! Layout: `keys` (key → [`Action`] table and dispatch), `motion` (cursor
 //! motions), `follow` (links and history), `page` (loading and layout),
 //! `effect` (side effects run outside the TUI), `run` (terminal and loop),
 //! `search` (`/ ? n N * #`), `marks` (marks, path/link yank), `visual`
 //! (visual mode, the `y` operator), `launch` (launchers), `watch` (live
-//! reload).
+//! reload), `mouse` (clicks, drag, wheel) over `layout` (hit-testing).
 //! Later units add a file and register in the tables here and in `keys`.
 
 mod clue;
@@ -18,9 +18,11 @@ mod help;
 mod hints;
 mod keys;
 mod launch;
+mod layout;
 mod lsp_glue;
 mod marks;
 mod motion;
+mod mouse;
 mod page;
 mod picker;
 mod raw;
@@ -40,7 +42,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEvent};
 
 use crate::config::Config;
 use crate::doc::Document;
@@ -55,10 +57,12 @@ pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
+pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
+pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use review_glue::{MARKER as REVIEW_MARKER, NO_MORE_REVIEW, NO_REVIEW};
-pub use run::{run, suspend_and_run};
+pub use run::{TermCmd, mouse_setup, mouse_teardown, run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
 pub use visual::{VisualAction, VisualKind};
@@ -144,6 +148,8 @@ pub enum AppEvent {
     Lsp(crate::lsp::LspEvent),
     /// New comment markers from the review thread.
     Review(crate::review::Markers),
+    /// A mouse event and when it arrived (double clicks are timed with it).
+    Mouse(MouseEvent, Instant),
 }
 
 /// Runs an editor on a file (at a line, if given) outside the TUI.
@@ -215,6 +221,9 @@ pub struct App {
     clear_request: bool,
     visual: visual::VisualState,
     clue: clue::ClueState,
+    /// Where the last frame drew everything; set by `ui::draw`.
+    layout: std::cell::Cell<Layout>,
+    mouse: mouse::MouseState,
 }
 
 impl App {
@@ -275,6 +284,8 @@ impl App {
             clear_request: false,
             visual: Default::default(),
             clue: Default::default(),
+            layout: Default::default(),
+            mouse: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -360,6 +371,7 @@ impl App {
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
             AppEvent::Review(m) => self.review_event(m),
+            AppEvent::Mouse(m, now) => self.mouse(m, now),
         }
     }
 

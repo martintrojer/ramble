@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, ListArea};
 use crate::render::palette;
 
 /// Background of the overlay (Catppuccin Mocha base).
@@ -15,8 +15,9 @@ const BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 /// Background of the selected row (Catppuccin Mocha surface0).
 const SEL_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 
-pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(p) = app.picker() else { return };
+/// Draw the open picker; returns its box and item list.
+pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
+    let p = app.picker()?;
     let width = area.width.saturating_sub(4).clamp(1, 80);
     let height = area.height.saturating_sub(2).clamp(1, 20);
     let rect = Rect::new(
@@ -49,10 +50,16 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         None
     };
+    let mut hit = ListArea {
+        pane: rect,
+        items: Rect::default(),
+        skip: 0,
+    };
     if let Some(note) = note {
         frame.render_widget(Paragraph::new(note).style(base.fg(palette::OVERLAY)), list);
-        return;
+        return Some(hit);
     }
+    let count = p.items.len();
     let rows: Vec<ListItem> = p
         .items
         .iter()
@@ -71,6 +78,10 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         list,
         &mut state,
     );
+    hit.skip = state.offset();
+    let shown = count.saturating_sub(hit.skip).min(list.height as usize) as u16;
+    hit.items = Rect::new(list.x, list.y, list.width, shown);
+    Some(hit)
 }
 
 /// The `:` prompt over the status line while typing a command.

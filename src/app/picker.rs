@@ -382,6 +382,15 @@ impl App {
         }
     }
 
+    /// Select the open picker's item `i` (the mouse).
+    pub(super) fn picker_select(&mut self, i: usize) {
+        if let Some(p) = self.picker.open.as_mut()
+            && i < p.filtered.len()
+        {
+            p.selected = i;
+        }
+    }
+
     fn picker_accept(&mut self) {
         let Some(p) = self.picker.open.as_ref() else {
             return;

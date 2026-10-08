@@ -44,6 +44,7 @@ fn defaults_match_spec() {
     assert!(!c.sidebar.show_all);
     assert_eq!(c.sidebar.reading, SidebarReading::Outline);
     assert_eq!(c.keys.leader, ' ');
+    assert!(c.mouse.enabled);
     assert_eq!(c.lsp.server.len(), 2);
     assert_eq!(c.lsp.server[0].kind, ServerKind::Zk);
     assert_eq!(c.lsp.server[0].command, ["zk", "lsp"]);
@@ -249,6 +250,13 @@ fn legacy_default_off_means_hidden_auto() {
 }
 
 #[test]
+fn mouse_can_be_turned_off() {
+    let c = load_str("[mouse]\nenabled = false\n").unwrap();
+    assert!(!c.mouse.enabled);
+    assert!(err_str("[mouse]\nwheel = 3\n").contains("unknown field"));
+}
+
+#[test]
 fn write_default_creates_dirs_and_refuses_overwrite() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a").join("b").join("config.toml");
@@ -291,6 +299,7 @@ fn uncommented_default_file_equals_defaults() {
         "[sidebar]",
         "[keys]",
         "[review]",
+        "[mouse]",
         "[[lsp.server]]",
         "[[launch]]",
     ] {

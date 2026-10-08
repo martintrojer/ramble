@@ -69,9 +69,10 @@ fn layout(rows: &[ClueRow], per: usize, width: usize) -> Vec<Col<'_>> {
     cols
 }
 
-pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
+/// Draw the key clue box; returns its rect.
+pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     if !app.clue_visible() || area.width < 6 || area.height < 3 {
-        return;
+        return None;
     }
     let rows = app.clue_rows();
     let max_h = (area.height / 2).max(3);
@@ -123,4 +124,5 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(Paragraph::new(lines).style(base), r);
         x = x.saturating_add(cw + GAP as u16);
     }
+    Some(rect)
 }

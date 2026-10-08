@@ -1,0 +1,585 @@
+//! Mouse (docs/specs/2026-10-08-mouse.md): clicks, double and triple
+//! clicks, drag-to-copy, the wheel, popups. Every test draws once into a
+//! TestBackend so the recorded layout is real, then injects synthetic
+//! `MouseEvent`s with their `Instant`s. Temp dirs only.
+
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ramble::app::{
+    App, AppEvent, Clipboard, Effect, Focus, Hit, Layout, Mode, StartOptions, StartTarget,
+    VisualKind,
+};
+use ramble::config::{Config, SidebarMode, SidebarWidth};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use tempfile::TempDir;
+
+const SIZE: (u16, u16) = (90, 16);
+
+#[derive(Clone, Default)]
+struct RecClip(Rc<RefCell<Vec<String>>>);
+
+impl Clipboard for RecClip {
+    fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+        self.0.borrow_mut().push(text.to_string());
+        Ok(())
+    }
+}
+
+impl RecClip {
+    fn all(&self) -> Vec<String> {
+        self.0.borrow().clone()
+    }
+}
+
+fn page_src() -> String {
+    let mut s = String::from(
+        "# Title\n\nAlpha beta [link](b.md) gamma.\n\n日本語 wide\n\nSee [other](c.md) too.\n\n## Second\n\n",
+    );
+    for i in 0..40 {
+        s.push_str(&format!("line {i}\n\n"));
+    }
+    s
+}
+
+fn write(root: &Path, rel: &str, body: &str) -> PathBuf {
+    let p = root.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, body).unwrap();
+    p
+}
+
+struct T {
+    _dir: TempDir,
+    root: PathBuf,
+    app: App,
+    clip: RecClip,
+    t0: Instant,
+}
+
+fn setup_with(mode: SidebarMode, edit: impl FnOnce(&mut Config)) -> T {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let a = write(&root, "a.md", &page_src());
+    write(&root, "b.md", "# B\n");
+    write(&root, "c.md", "# C\n");
+    write(&root, "d.md", "# D\n");
+    write(&root, "e.md", "# E\n");
+    write(&root, "docs/guide.md", "# Guide\n");
+    let mut config = Config::default();
+    config.lsp.server = vec![];
+    config.review.enabled = false;
+    config.sidebar.default = mode;
+    edit(&mut config);
+    let clip = RecClip::default();
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::File(a),
+            tree_root: root.clone(),
+            config,
+        },
+        SIZE,
+    )
+    .unwrap()
+    .with_clipboard(clip.clone())
+    .with_effects(|_| {}, |_| Ok(()));
+    let mut t = T {
+        _dir: dir,
+        root,
+        app,
+        clip,
+        t0: Instant::now(),
+    };
+    t.draw();
+    t
+}
+
+fn setup() -> T {
+    setup_with(SidebarMode::Split, |_| {})
+}
+
+impl T {
+    /// Draw a frame (records the layout); returns the screen rows.
+    fn draw(&mut self) -> Vec<String> {
+        let mut term = Terminal::new(TestBackend::new(SIZE.0, SIZE.1)).unwrap();
+        term.draw(|f| ramble::ui::draw(f, &self.app)).unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..SIZE.1)
+            .map(|y| {
+                (0..SIZE.0)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Screen cell of the first `text` drawn inside `area` (one cell per
+    /// column; ASCII `text`).
+    fn find_in(&mut self, area: ratatui::layout::Rect, text: &str) -> (u16, u16) {
+        let mut term = Terminal::new(TestBackend::new(SIZE.0, SIZE.1)).unwrap();
+        term.draw(|f| ramble::ui::draw(f, &self.app)).unwrap();
+        let buf = term.backend().buffer();
+        for y in area.top()..area.bottom() {
+            let row: Vec<&str> = (area.left()..area.right())
+                .map(|x| buf[(x, y)].symbol())
+                .collect();
+            let n = text.chars().count();
+            for i in 0..row.len().saturating_sub(n - 1) {
+                if row[i..i + n].concat() == text {
+                    return (area.x + i as u16, y);
+                }
+            }
+        }
+        panic!("{text:?} not drawn in {area:?}");
+    }
+
+    fn text_cell(&mut self, text: &str) -> (u16, u16) {
+        let area = self.app.layout().text.expect("text drawn");
+        self.find_in(area, text)
+    }
+
+    fn mouse(&mut self, kind: MouseEventKind, (col, row): (u16, u16), at_ms: u64) {
+        let ev = MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let now = self.t0 + Duration::from_millis(at_ms);
+        self.app.event(AppEvent::Mouse(ev, now));
+    }
+
+    fn press(&mut self, at: (u16, u16), ms: u64) {
+        self.mouse(MouseEventKind::Down(MouseButton::Left), at, ms);
+    }
+
+    fn release(&mut self, at: (u16, u16), ms: u64) {
+        self.mouse(MouseEventKind::Up(MouseButton::Left), at, ms);
+    }
+
+    fn click(&mut self, at: (u16, u16), ms: u64) {
+        self.press(at, ms);
+        self.release(at, ms);
+    }
+
+    fn drag(&mut self, at: (u16, u16), ms: u64) {
+        self.mouse(MouseEventKind::Drag(MouseButton::Left), at, ms);
+    }
+
+    fn keys(&mut self, s: &str) {
+        for c in s.chars() {
+            self.app
+                .handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+    }
+
+    fn selected_file(&self) -> Option<PathBuf> {
+        self.app.tree()?.selected().map(Path::to_path_buf)
+    }
+}
+
+#[test]
+fn no_layout_means_no_effect() {
+    let mut t = setup();
+    t.app.set_layout(Layout::default());
+    let before = (t.app.cursor(), t.app.focus(), t.app.scroll());
+    assert_eq!(t.app.hit(40, 5), Hit::None);
+    for at in [(40, 5), (2, 2), (45, 12)] {
+        t.click(at, 0);
+        t.mouse(MouseEventKind::ScrollDown, at, 0);
+    }
+    assert_eq!((t.app.cursor(), t.app.focus(), t.app.scroll()), before);
+}
+
+#[test]
+fn click_puts_the_cursor_on_the_cell_and_cancels_visual() {
+    let mut t = setup();
+    t.keys("vj");
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    let (x, y) = t.text_cell("gamma");
+    t.click((x + 2, y), 0);
+    assert_eq!(t.app.mode(), Mode::Normal);
+    let row = t.app.scroll() + (y - t.app.layout().text.unwrap().y) as usize;
+    let col = (x + 2 - t.app.layout().text.unwrap().x) as usize;
+    assert_eq!(t.app.cursor().row, row);
+    assert_eq!(t.app.cursor().col, col);
+    assert_eq!(t.app.focus(), Focus::Content);
+}
+
+#[test]
+fn click_past_the_line_end_clamps_and_wide_chars_land_on_their_start() {
+    let mut t = setup();
+    let text = t.app.layout().text.unwrap();
+    let (x, y) = t.text_cell("wide");
+    // "日本語 wide": 日 at cols 0-1, 本 at 2-3. The right half of 本 → col 2.
+    let start = x - 7;
+    t.click((start + 3, y), 0);
+    assert_eq!(t.app.cursor().col, 2);
+    // Far right of the row: the last grapheme ("e" of "wide").
+    t.click((text.right() - 1, y), 1000);
+    assert_eq!(t.app.cursor().col, 10);
+}
+
+#[test]
+fn click_a_files_row_focuses_and_selects_it_and_the_arrow_expands() {
+    let mut t = setup();
+    let files = t.app.layout().files.unwrap().pane;
+    let at = t.find_in(files, "c.md");
+    t.click(at, 0);
+    assert_eq!(t.app.focus(), Focus::Files);
+    assert_eq!(t.selected_file(), Some(t.root.join("c.md")));
+    assert!(
+        t.app
+            .page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("a.md")
+    );
+
+    let docs = t.find_in(files, "docs");
+    assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+    // A click on the name selects without toggling.
+    t.click(docs, 2000);
+    assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+    // The `▸ ` cell, two columns left of the name.
+    t.click((docs.0 - 2, docs.1), 4000);
+    assert!(t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+    t.draw();
+    t.click((docs.0 - 1, docs.1), 6000);
+    assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+}
+
+/// Screen cell of the folder arrow (`▸`/`▾`) on the drawn files row `y`.
+fn arrow_on_row(t: &mut T, y: u16) -> u16 {
+    let files = t.app.layout().files.unwrap().pane;
+    let rows = t.draw();
+    let row: Vec<char> = rows[y as usize].chars().collect();
+    (files.left()..files.right())
+        .find(|&x| matches!(row[x as usize], '▸' | '▾'))
+        .unwrap_or_else(|| panic!("no arrow on row {y}: {}", rows[y as usize]))
+}
+
+#[test]
+fn arrow_clicks_follow_the_marker_gutter_and_the_indent_cap() {
+    let mut t = setup_with(SidebarMode::Files, |c| {
+        c.sidebar.width = SidebarWidth::Fixed(20)
+    });
+    write(&t.root, "n1/n2/n3/n4/n5/n6/deep.md", "# Deep\n");
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    t.draw();
+    let files = t.app.layout().files.unwrap().pane;
+    let tree = |t: &T, rel: &str| t.app.tree().unwrap().is_expanded(&t.root.join(rel));
+
+    // Depth 0: the arrow sits right after the 1-column marker gutter.
+    let (_, y) = t.find_in(files, "n1");
+    let x = arrow_on_row(&mut t, y);
+    assert_eq!(x, files.x + 1, "depth-0 arrow after the gutter");
+    t.click((x - 1, y), 0); // the gutter: selects, no toggle
+    assert!(!tree(&t, "n1"));
+    t.click((x, y), 1000);
+    assert!(tree(&t, "n1"));
+
+    // Open down to depth 5 by clicking each arrow's second column.
+    let mut path = String::from("n1");
+    for d in 2..=6 {
+        path.push_str(&format!("/n{d}"));
+        let (_, y) = t.find_in(files, &format!("n{d}"));
+        let x = arrow_on_row(&mut t, y);
+        t.click((x + 1, y), 2000 + 1000 * d);
+        assert!(tree(&t, &path), "depth {} arrow at {x}", d - 1);
+    }
+    // n5 (depth 4) and n6 (depth 5) are past the cap: same arrow column.
+    let (_, y5) = t.find_in(files, "n5");
+    let (_, y6) = t.find_in(files, "n6");
+    let (x5, x6) = (arrow_on_row(&mut t, y5), arrow_on_row(&mut t, y6));
+    assert_eq!(x5, x6, "capped indent");
+    // The column right after the arrow cell is the name: no toggle.
+    t.click((x6 + 2, y6), 20_000);
+    assert!(tree(&t, &path));
+    t.click((x6, y6), 22_000);
+    assert!(!tree(&t, &path), "deep arrow toggles");
+}
+
+#[test]
+fn double_click_a_file_opens_it_but_not_after_the_timeout() {
+    let mut t = setup();
+    let files = t.app.layout().files.unwrap().pane;
+    let at = t.find_in(files, "b.md");
+    t.click(at, 0);
+    t.click(at, 401);
+    assert!(
+        t.app
+            .page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("a.md")
+    );
+    t.click(at, 700);
+    assert!(
+        t.app
+            .page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("b.md")
+    );
+    assert_eq!(t.app.history_depth(), 1);
+}
+
+#[test]
+fn double_click_a_non_markdown_file_edits_it() {
+    let mut t = setup_with(SidebarMode::Files, |c| c.sidebar.show_all = true);
+    write(&t.root, "z.txt", "plain\n");
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    t.draw();
+    let files = t.app.layout().files.unwrap().pane;
+    let at = t.find_in(files, "z.txt");
+    t.click(at, 0);
+    t.click(at, 100);
+    assert_eq!(
+        t.app.pending_effect(),
+        Some(&Effect::Edit {
+            path: t.root.join("z.txt"),
+            line: None
+        })
+    );
+}
+
+#[test]
+fn outline_click_selects_and_double_click_jumps() {
+    let mut t = setup();
+    let outline = t.app.layout().outline.unwrap().pane;
+    let at = t.find_in(outline, "Second");
+    t.click(at, 0);
+    assert_eq!(t.app.focus(), Focus::Outline);
+    assert_eq!(t.app.outline_selected(), Some(1));
+    t.draw();
+    let at = t.find_in(outline, "Second");
+    t.click(at, 1000);
+    t.click(at, 1100);
+    assert_eq!(t.app.focus(), Focus::Content);
+    let second = t.app.outline()[1].row;
+    assert_eq!(t.app.cursor().row, second);
+}
+
+#[test]
+fn double_click_a_link_follows_it() {
+    let mut t = setup();
+    let at = t.text_cell("link");
+    t.click(at, 0);
+    assert_eq!(t.app.history_depth(), 0);
+    t.click(at, 100);
+    assert!(
+        t.app
+            .page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("b.md")
+    );
+    assert_eq!(t.app.history_depth(), 1);
+}
+
+#[test]
+fn double_click_yanks_the_word_and_triple_click_the_line() {
+    let mut t = setup();
+    let at = t.text_cell("beta");
+    t.click((at.0 + 1, at.1), 0);
+    t.click((at.0 + 1, at.1), 100);
+    assert_eq!(t.clip.all(), ["beta"]);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    assert_eq!(t.app.status(), "Copied beta");
+    t.click((at.0 + 1, at.1), 200);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Line));
+    assert_eq!(
+        t.clip.all().last().unwrap(),
+        "Alpha beta [link](b.md) gamma.\n"
+    );
+    // A fourth press starts over as a single click.
+    t.click((at.0 + 1, at.1), 300);
+    assert_eq!(t.app.mode(), Mode::Normal);
+    assert_eq!(t.clip.all().len(), 2);
+}
+
+#[test]
+fn drag_selects_and_copies_on_release_keeping_visual() {
+    let mut t = setup();
+    let a = t.text_cell("Alpha");
+    let g = t.text_cell("gamma");
+    t.press(a, 0);
+    t.drag((a.0 + 3, a.1), 10);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    t.drag((g.0 + 4, g.1), 20);
+    t.release((g.0 + 4, g.1), 30);
+    assert_eq!(t.clip.all(), ["Alpha beta [link](b.md) gamma"]);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    let text = t.app.layout().text.unwrap();
+    assert_eq!(t.app.cursor().col, (g.0 + 4 - text.x) as usize);
+}
+
+#[test]
+fn press_and_release_without_moving_copies_nothing() {
+    let mut t = setup();
+    let a = t.text_cell("Alpha");
+    t.press(a, 0);
+    t.drag(a, 10); // same cell: no selection yet
+    t.release(a, 20);
+    assert!(t.clip.all().is_empty());
+    assert_eq!(t.app.mode(), Mode::Normal);
+}
+
+#[test]
+fn dragging_below_the_text_scrolls() {
+    let mut t = setup();
+    let a = t.text_cell("Alpha");
+    let below = t.app.layout().status.unwrap();
+    t.press(a, 0);
+    for i in 0..5 {
+        t.drag((a.0, below.y), 10 + i);
+    }
+    assert_eq!(t.app.scroll(), 5);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    let vh = t.app.viewport_height();
+    assert_eq!(t.app.cursor().row, 5 + vh - 1);
+}
+
+#[test]
+fn drag_from_the_sidebar_is_ignored() {
+    let mut t = setup();
+    let files = t.app.layout().files.unwrap().pane;
+    let at = t.find_in(files, "b.md");
+    let g = t.text_cell("gamma");
+    t.press(at, 0);
+    t.drag(g, 10);
+    t.release(g, 20);
+    assert_eq!(t.app.mode(), Mode::Normal);
+    assert!(t.clip.all().is_empty());
+}
+
+#[test]
+fn wheel_scrolls_the_pane_under_the_pointer_without_focusing_it() {
+    let mut t = setup();
+    let files = t.app.layout().files.unwrap().pane;
+    let b = t.find_in(files, "b.md");
+    t.click(b, 0);
+    assert_eq!(t.app.focus(), Focus::Files);
+    let a = t.text_cell("Alpha");
+    t.mouse(MouseEventKind::ScrollDown, a, 1000);
+    assert_eq!(t.app.scroll(), 3);
+    assert_eq!(t.app.focus(), Focus::Files);
+    t.mouse(MouseEventKind::ScrollUp, a, 1100);
+    assert_eq!(t.app.scroll(), 0);
+
+    // Over the files pane: its selection moves 3 rows (b.md → e.md).
+    t.mouse(MouseEventKind::ScrollDown, b, 1200);
+    assert_eq!(t.selected_file(), Some(t.root.join("e.md")));
+    // Over the outline while files has focus: focus stays.
+    let outline = t.app.layout().outline.unwrap().pane;
+    t.mouse(
+        MouseEventKind::ScrollDown,
+        (outline.x + 1, outline.y + 1),
+        1300,
+    );
+    assert_eq!(t.app.focus(), Focus::Files);
+    // Horizontal wheel does nothing.
+    t.mouse(MouseEventKind::ScrollRight, a, 1400);
+    assert_eq!(t.app.scroll(), 0);
+}
+
+#[test]
+fn picker_click_selects_double_click_opens_and_wheel_moves() {
+    let mut t = setup();
+    t.keys(" zl");
+    assert_eq!(t.app.mode(), Mode::Picker);
+    t.draw();
+    let picker = t.app.layout().picker.unwrap();
+    let other = t.find_in(picker.pane, "other");
+    t.click(other, 0);
+    assert_eq!(t.app.picker().unwrap().selected, 1);
+    t.mouse(MouseEventKind::ScrollDown, other, 1000);
+    assert_eq!(t.app.picker().unwrap().selected, 0);
+    t.mouse(MouseEventKind::ScrollUp, other, 1100);
+    assert_eq!(t.app.picker().unwrap().selected, 1);
+    t.click(other, 2000);
+    t.click(other, 2100);
+    assert!(t.app.picker().is_none());
+    assert!(
+        t.app
+            .page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("c.md")
+    );
+}
+
+#[test]
+fn a_click_outside_the_picker_or_help_closes_it_and_does_nothing_else() {
+    let mut t = setup();
+    t.keys(" zl");
+    t.draw();
+    let before = t.app.cursor();
+    t.click((0, 0), 0);
+    assert!(t.app.picker().is_none());
+    assert_eq!(t.app.mode(), Mode::Normal);
+    assert_eq!(t.app.focus(), Focus::Content);
+    assert_eq!(t.app.cursor(), before);
+
+    t.keys("g?");
+    assert_eq!(t.app.mode(), Mode::Help);
+    t.draw();
+    let help = t.app.layout().help.unwrap();
+    t.click((help.x + 2, help.y + 3), 1000);
+    assert_eq!(t.app.mode(), Mode::Help, "a click inside keeps it");
+    t.mouse(MouseEventKind::ScrollDown, (help.x + 2, help.y + 3), 1100);
+    assert_eq!(t.app.help_view().unwrap().scroll, 3);
+    t.click((0, SIZE.1 - 1), 2000);
+    assert_eq!(t.app.mode(), Mode::Normal);
+}
+
+#[test]
+fn status_line_clicks_and_other_buttons_do_nothing() {
+    let mut t = setup();
+    let before = (t.app.cursor(), t.app.focus(), t.app.mode());
+    t.click((40, SIZE.1 - 1), 0);
+    let a = t.text_cell("gamma");
+    t.mouse(MouseEventKind::Down(MouseButton::Right), a, 1000);
+    t.mouse(MouseEventKind::Down(MouseButton::Middle), a, 1100);
+    t.mouse(MouseEventKind::Moved, a, 1200);
+    assert_eq!((t.app.cursor(), t.app.focus(), t.app.mode()), before);
+}
+
+#[test]
+fn typing_modes_ignore_clicks() {
+    let mut t = setup();
+    t.keys("/al");
+    assert_eq!(t.app.mode(), Mode::Search);
+    let before = t.app.cursor();
+    let g = t.text_cell("gamma");
+    t.click(g, 0);
+    assert_eq!(t.app.mode(), Mode::Search);
+    assert_eq!(t.app.cursor(), before);
+}
+
+#[test]
+fn disabled_mouse_ignores_events() {
+    let mut t = setup_with(SidebarMode::Split, |c| c.mouse.enabled = false);
+    let before = (t.app.cursor(), t.app.focus(), t.app.scroll());
+    let g = t.text_cell("gamma");
+    t.click(g, 0);
+    t.mouse(MouseEventKind::ScrollDown, g, 10);
+    assert_eq!((t.app.cursor(), t.app.focus(), t.app.scroll()), before);
+}

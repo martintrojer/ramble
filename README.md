@@ -64,6 +64,17 @@ can follow it.
 - Copies go to the system clipboard over OSC 52, so they work over SSH and
   inside tmux.
 
+**Mouse**
+- Click to place the cursor, pick a file or heading, or select a picker
+  item. Click a folder's `▸` to open or close it.
+- Double-click a link to follow it, a file to open it, a heading to jump
+  there, or a word to copy it. Triple-click copies the line.
+- Drag over text to select and copy it, like visual `y`; dragging past the
+  edge scrolls.
+- The wheel scrolls whatever is under the pointer without moving focus.
+- Shift+drag still makes your terminal's own selection. Set
+  `[mouse] enabled = false` to leave the mouse to the terminal or tmux.
+
 **Following links**
 - `gd`, `Enter` or `C-]` follows the link under the cursor: markdown files
   open in ramble, `#anchors` jump to the heading, URLs open in your browser,
@@ -163,6 +174,9 @@ reading = "outline"          # what auto shows while you read: outline | split
 [keys]
 leader = " "
 clue = true                  # after a pause mid-sequence, show the next keys
+
+[mouse]
+enabled = true               # false leaves the mouse to the terminal / tmux
 
 [[lsp.server]]               # replaces the default server list
 kind = "zk"

@@ -15,10 +15,11 @@ const BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 /// Columns given to the keys column (wider keys push the description).
 const KEYS_W: usize = 18;
 
-pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(view) = app.help_view() else { return };
+/// Draw the help overlay; returns its rect.
+pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
+    let view = app.help_view()?;
     if area.width < 3 || area.height < 3 {
-        return;
+        return None;
     }
     let rect = help_rect(area);
     frame.render_widget(Clear, rect);
@@ -51,7 +52,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Paragraph::new("No matches").style(base.fg(palette::OVERLAY)),
             list,
         );
-        return;
+        return Some(rect);
     }
     let lines: Vec<Line> = view
         .lines
@@ -80,4 +81,5 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).style(base), list);
+    Some(rect)
 }

@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use crossterm::event::{self, Event};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::DefaultTerminal;
 
 use super::{App, AppEvent, StartOptions};
@@ -16,19 +16,60 @@ const POLL: Duration = Duration::from_millis(100);
 /// Run the interactive TUI until the user quits.
 pub fn run(opts: StartOptions) -> anyhow::Result<()> {
     let size = crossterm::terminal::size().context("reading terminal size")?;
+    let mouse = opts.config.mouse.enabled;
     let mut app = App::new(opts, size)?;
     push_title();
     // Installs a panic hook that restores the terminal before unwinding.
     let mut terminal = ratatui::try_init().context("initialising terminal")?;
+    term_cmds(&mouse_setup(mouse))?;
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        let _ = term_cmds(&mouse_teardown(mouse));
         pop_title();
         hook(info);
     }));
-    let result = event_loop(&mut terminal, &mut app);
+    let result = event_loop(&mut terminal, &mut app, mouse);
+    let _ = term_cmds(&mouse_teardown(mouse));
     ratatui::restore();
     pop_title();
     result
+}
+
+/// A terminal mode change made around the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermCmd {
+    EnableMouse,
+    DisableMouse,
+}
+
+/// What entering the TUI (or coming back from a launched program) sends
+/// for the mouse: capture it when `enabled` (`[mouse] enabled`).
+pub fn mouse_setup(enabled: bool) -> Vec<TermCmd> {
+    if enabled {
+        vec![TermCmd::EnableMouse]
+    } else {
+        Vec::new()
+    }
+}
+
+/// What leaving the TUI (exit, panic, launching a program) sends.
+pub fn mouse_teardown(enabled: bool) -> Vec<TermCmd> {
+    if enabled {
+        vec![TermCmd::DisableMouse]
+    } else {
+        Vec::new()
+    }
+}
+
+fn term_cmds(cmds: &[TermCmd]) -> std::io::Result<()> {
+    let mut out = std::io::stdout();
+    for c in cmds {
+        match c {
+            TermCmd::EnableMouse => crossterm::execute!(out, EnableMouseCapture)?,
+            TermCmd::DisableMouse => crossterm::execute!(out, DisableMouseCapture)?,
+        }
+    }
+    Ok(())
 }
 
 /// XTWINOPS: save the terminal title on the terminal's title stack.
@@ -64,7 +105,7 @@ fn update_title(app: &App, last: &mut Option<String>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<()> {
+fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<AppEvent>();
     app.set_sender(tx);
     if let Err(e) = app.start_watcher() {
@@ -75,7 +116,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
     while !app.should_quit() {
         update_title(app, &mut title)?;
         if app.pending_effect().is_some() {
-            suspend_and_run(terminal, || app.run_pending_effect())?;
+            suspend_and_run(terminal, mouse, || app.run_pending_effect())?;
             title = None; // the command may have set its own title
         }
         if app.take_clear_request() {
@@ -86,6 +127,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> anyhow::Result<(
             match event::read()? {
                 Event::Key(key) => app.event(AppEvent::Key(key)),
                 Event::Resize(cols, rows) => app.event(AppEvent::Resize(cols, rows)),
+                Event::Mouse(m) => app.event(AppEvent::Mouse(m, Instant::now())),
                 _ => {}
             }
         }
@@ -109,17 +151,21 @@ fn write_terminal_output(app: &mut App, out: &mut impl std::io::Write) -> std::i
     Ok(())
 }
 
-/// Leave raw mode and the alternate screen, run `f` (which may use the
-/// terminal), then re-enter and clear so the next draw repaints fully.
+/// Leave raw mode, mouse capture (when `mouse`) and the alternate screen,
+/// run `f` (which may use the terminal), then re-enter and clear so the
+/// next draw repaints fully.
 pub fn suspend_and_run<R>(
     terminal: &mut DefaultTerminal,
+    mouse: bool,
     f: impl FnOnce() -> R,
 ) -> anyhow::Result<R> {
+    term_cmds(&mouse_teardown(mouse))?;
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
     let r = f();
     crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     crossterm::terminal::enable_raw_mode()?;
+    term_cmds(&mouse_setup(mouse))?;
     terminal.clear()?;
     Ok(r)
 }
@@ -128,6 +174,14 @@ pub fn suspend_and_run<R>(
 mod tests {
     use super::*;
     use crate::app::{StartOptions, StartTarget};
+
+    #[test]
+    fn mouse_capture_follows_the_config() {
+        assert_eq!(mouse_setup(true), [TermCmd::EnableMouse]);
+        assert_eq!(mouse_teardown(true), [TermCmd::DisableMouse]);
+        assert!(mouse_setup(false).is_empty());
+        assert!(mouse_teardown(false).is_empty());
+    }
 
     #[test]
     fn title_is_sent_only_when_it_changes() {

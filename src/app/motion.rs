@@ -99,6 +99,27 @@ impl App {
             .unwrap_or(0)
     }
 
+    /// First and last column of the vim `iw` word at (`row`, `col`): the
+    /// run of cells on the row with the same class as the one under `col`.
+    /// `None` on an empty row.
+    pub(super) fn word_at(&self, row: usize, col: usize) -> Option<(usize, usize)> {
+        let cells = self.cells(row);
+        if cells.is_empty() {
+            return None;
+        }
+        let i = self.cell_index(row, col);
+        let class = cells[i].class;
+        let first = cells[..i]
+            .iter()
+            .rposition(|c| c.class != class)
+            .map_or(0, |j| j + 1);
+        let last = cells[i..]
+            .iter()
+            .position(|c| c.class != class)
+            .map_or(cells.len() - 1, |j| i + j - 1);
+        Some((cells[first].col, cells[last].col))
+    }
+
     pub(super) fn pos(&self) -> Pos {
         Pos {
             row: self.cursor.row,

@@ -48,6 +48,12 @@
 # clue = true
 
 ## ---------------------------------------------------------------------------
+## Mouse: click, double-click, drag to copy, wheel. Shift+drag still makes
+## a native terminal selection; false leaves the mouse to the terminal/tmux.
+# [mouse]
+# enabled = true
+
+## ---------------------------------------------------------------------------
 ## Review markers from a live tuicr session.
 # [review]
 # enabled = true

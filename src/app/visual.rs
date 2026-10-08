@@ -347,30 +347,12 @@ impl App {
                 self.clamp_cursor();
             }
             V::Yank | V::YankLines => {
-                let Some(s) = self.selection() else { return };
+                let Some(start) = self.yank_selection(a == V::YankLines) else {
+                    return;
+                };
                 self.visual_cancel();
-                let (lo, hi) = ordered(s.anchor, s.cursor);
-                let text = match (a, s.kind) {
-                    (V::YankLines, _) | (_, VisualKind::Line) => self.lines_text(lo.row, hi.row),
-                    (_, VisualKind::Char) => self.char_text(lo, hi),
-                    (_, VisualKind::Block) => {
-                        let (c1, c2) = (
-                            s.anchor.col.min(s.cursor.col),
-                            s.anchor.col.max(s.cursor.col),
-                        );
-                        self.block_text(lo.row..=hi.row, c1, c2)
-                    }
-                };
-                let start = match s.kind {
-                    VisualKind::Block => Cursor {
-                        row: lo.row,
-                        col: s.anchor.col.min(s.cursor.col),
-                    },
-                    _ => lo,
-                };
                 self.cursor = start;
                 self.set_col(start.col);
-                self.copy_text(text);
             }
             V::OpStart(count) => {
                 if self.page.is_some() {
@@ -394,6 +376,52 @@ impl App {
                 self.yank();
             }
             V::OpCancel => self.mode = Mode::Normal,
+        }
+    }
+
+    /// Copy the active selection (whole lines if `lines`) and return where
+    /// visual `y` puts the cursor. Visual mode stays on (mouse yanks keep
+    /// the selection visible; `V::Yank` cancels after).
+    pub(super) fn yank_selection(&mut self, lines: bool) -> Option<Cursor> {
+        let s = self.selection()?;
+        let (lo, hi) = ordered(s.anchor, s.cursor);
+        let text = match s.kind {
+            _ if lines => self.lines_text(lo.row, hi.row),
+            VisualKind::Line => self.lines_text(lo.row, hi.row),
+            VisualKind::Char => self.char_text(lo, hi),
+            VisualKind::Block => {
+                let (c1, c2) = (
+                    s.anchor.col.min(s.cursor.col),
+                    s.anchor.col.max(s.cursor.col),
+                );
+                self.block_text(lo.row..=hi.row, c1, c2)
+            }
+        };
+        self.copy_text(text);
+        Some(match s.kind {
+            VisualKind::Block => Cursor {
+                row: lo.row,
+                col: s.anchor.col.min(s.cursor.col),
+            },
+            _ => lo,
+        })
+    }
+
+    /// Start a `kind` selection from `anchor` to `cursor` (the mouse).
+    pub(super) fn visual_select(&mut self, kind: VisualKind, anchor: Cursor, cursor: Cursor) {
+        if self.page.is_none() {
+            return;
+        }
+        self.visual.anchor = anchor;
+        self.mode = Mode::Visual(kind);
+        self.cursor = cursor;
+        self.set_col(cursor.col);
+    }
+
+    /// Leave visual mode as `Esc` does.
+    pub(super) fn visual_leave(&mut self) {
+        if self.visual_kind().is_some() {
+            self.visual_cancel();
         }
     }
 

@@ -1066,7 +1066,34 @@ impl App {
     /// Move the focused pane's selection; `isize::MIN` / `MAX` mean the
     /// first / last row.
     fn pane_move(&mut self, delta: isize) {
-        match self.sidebar.focus {
+        self.pane_move_in(self.sidebar.focus, delta);
+    }
+
+    /// Focus pane `f` (the mouse) and select its row `i`.
+    pub(super) fn pane_select(&mut self, f: Focus, i: usize) {
+        self.focus_pane(f);
+        match f {
+            Focus::Files => {
+                if let Some(t) = &mut self.sidebar.tree {
+                    t.select_index(i);
+                }
+            }
+            Focus::Outline => {
+                self.sidebar.outline_sel = i.min(self.outline().len().saturating_sub(1));
+            }
+            Focus::Content => {}
+        }
+    }
+
+    /// The files pane's row `i`, if it is a folder: its depth.
+    pub(super) fn folder_depth(&self, i: usize) -> Option<usize> {
+        let item = self.tree()?.visible_items().into_iter().nth(i)?;
+        item.is_dir.then_some(item.depth)
+    }
+
+    /// Move pane `f`'s selection without focusing it (the wheel).
+    pub(super) fn pane_move_in(&mut self, f: Focus, delta: isize) {
+        match f {
             Focus::Files => {
                 let Some(t) = &mut self.sidebar.tree else {
                     return;

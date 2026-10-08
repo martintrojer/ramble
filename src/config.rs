@@ -1,5 +1,5 @@
 //! Config loading over built-in defaults: servers, leader key, launchers,
-//! render, sidebar and review options.
+//! render, sidebar, review and mouse options.
 //!
 //! A user file overrides the defaults one field at a time. `[[lsp.server]]`
 //! replaces the default server list; `[[launch]]` entries merge by name.
@@ -20,6 +20,14 @@ pub struct Config {
     pub lsp: LspConfig,
     pub launch: Vec<Launcher>,
     pub review: ReviewConfig,
+    pub mouse: MouseConfig,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MouseConfig {
+    /// Capture the mouse (click, drag-to-copy, wheel); false leaves it to
+    /// the terminal or tmux.
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -262,6 +270,7 @@ impl Default for Config {
                 enabled: true,
                 command: "tuicr".into(),
             },
+            mouse: MouseConfig { enabled: true },
         }
     }
 }
@@ -277,6 +286,13 @@ struct RawConfig {
     lsp: Option<RawLsp>,
     launch: Option<Vec<toml::Spanned<RawLauncher>>>,
     review: Option<RawReview>,
+    mouse: Option<RawMouse>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMouse {
+    enabled: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -424,6 +440,9 @@ impl Config {
         if let Some(r) = raw.review {
             set(&mut c.review.enabled, r.enabled);
             set(&mut c.review.command, r.command);
+        }
+        if let Some(m) = raw.mouse {
+            set(&mut c.mouse.enabled, m.enabled);
         }
         for entry in raw.launch.unwrap_or_default() {
             let at = entry.span().start;
