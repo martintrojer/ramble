@@ -89,8 +89,9 @@ pub struct StartOptions {
     pub config: Config,
 }
 
-/// Message shown in the content area when no file is loaded.
-pub const NO_FILE_MESSAGE: &str = "No file loaded. Pick one in the file tree (C-w h, then Enter).";
+/// Message shown in the content area when no file is loaded; see
+/// [`App::placeholder`] for the key hint after it.
+pub const NO_FILE_MESSAGE: &str = "No file loaded. Pick one in the file tree";
 
 /// Cursor position in rendered-row coordinates (display columns).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -409,9 +410,20 @@ impl App {
         (self.size.1 as usize).saturating_sub(1).max(1)
     }
 
-    /// Centered message for the content area when nothing is loaded.
-    pub fn placeholder(&self) -> Option<&str> {
-        self.placeholder
+    /// Centered message for the content area when nothing is loaded, with
+    /// the keys to reach a file: `Enter` while the tree has focus, else
+    /// the `C-w` key pointing at the sidebar's side first (D9).
+    pub fn placeholder(&self) -> Option<String> {
+        let msg = self.placeholder?;
+        let to_sidebar = match self.sidebar_side() {
+            crate::config::SidebarSide::Left => "C-w h",
+            crate::config::SidebarSide::Right => "C-w l",
+        };
+        Some(if self.focus() == Focus::Content {
+            format!("{msg} ({to_sidebar}, then Enter).")
+        } else {
+            format!("{msg} (Enter).")
+        })
     }
 
     /// Index into the page's `doc.links` for the link under the cursor.

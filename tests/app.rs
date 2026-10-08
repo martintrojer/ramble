@@ -1872,8 +1872,38 @@ fn injected_lsp_event_for_another_server_is_ignored() {
 }
 
 #[test]
-fn dir_placeholder_points_at_the_file_tree() {
-    assert!(ramble::app::NO_FILE_MESSAGE.contains("file tree"));
+fn dir_placeholder_points_at_the_file_tree_with_the_key_for_its_side() {
+    use ramble::config::SidebarSide;
+    for (side, back, to_tree) in [
+        (SidebarSide::Left, 'l', "C-w h"),
+        (SidebarSide::Right, 'h', "C-w l"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut o = opts(dir.path(), StartTarget::Dir(dir.path().into()));
+        o.config.sidebar.side = side;
+        let mut app = App::new(o, (COLS, ROWS)).unwrap();
+        assert_eq!(app.focus(), ramble::app::Focus::Files);
+        assert_eq!(
+            app.placeholder().unwrap(),
+            "No file loaded. Pick one in the file tree (Enter).",
+            "{side:?}: the tree has focus, no C-w key needed"
+        );
+        send(&mut app, ctrl('w'));
+        keys(&mut app, &back.to_string());
+        assert_eq!(app.focus(), ramble::app::Focus::Content, "{side:?}");
+        assert_eq!(
+            app.placeholder().unwrap(),
+            format!("No file loaded. Pick one in the file tree ({to_tree}, then Enter)."),
+            "{side:?}"
+        );
+        send(&mut app, ctrl('w'));
+        keys(&mut app, &to_tree[4..]);
+        assert_eq!(
+            app.focus(),
+            ramble::app::Focus::Files,
+            "{side:?}: the hint works"
+        );
+    }
 }
 
 // -------------------------------------------------------------------------

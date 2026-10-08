@@ -210,12 +210,20 @@ fn ctrl_w_lists_window_keys_per_focus() {
 
 #[test]
 fn ctrl_w_with_the_sidebar_hidden_shows_no_box() {
-    let (_d, mut app) = app_sized(config(), (30, 20));
-    assert_eq!(app.sidebar_cols(), 0, "too narrow for the sidebar");
-    app.handle_key(ctrl('w'));
-    wait(&mut app);
-    assert!(app.clue_rows().is_empty());
-    assert!(!app.clue_visible());
+    for side in [SidebarSide::Left, SidebarSide::Right] {
+        let mut c = config();
+        c.sidebar.side = side;
+        let (_d, mut app) = app_sized(c, (30, 20));
+        assert_eq!(app.sidebar_cols(), 0, "too narrow for the sidebar");
+        app.handle_key(ctrl('w'));
+        wait(&mut app);
+        assert!(
+            app.clue_rows().is_empty(),
+            "{side:?}: {:?}",
+            app.clue_rows()
+        );
+        assert!(!app.clue_visible(), "{side:?}");
+    }
 }
 
 #[test]
