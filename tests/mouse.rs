@@ -744,3 +744,55 @@ fn a_drag_after_switching_to_linewise_visual_is_ignored() {
     assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Line));
     assert!(t.clip.all().is_empty());
 }
+
+// --- mouse_click_clears_pending_keys -----------------------------------------
+
+#[test]
+fn a_clue_click_keeps_the_pending_leader_sequence() {
+    let mut t = setup();
+    t.keys(" ");
+    t.app.tick(Instant::now() + ramble::app::CLUE_DELAY * 2);
+    assert!(t.app.clue_visible());
+    t.draw();
+    let clue = t.app.layout().clue.expect("clue drawn");
+    t.click((clue.x + 2, clue.y + 1), 0);
+    assert!(t.app.clue_visible(), "the clue box stays open");
+    t.keys("zl");
+    assert_eq!(
+        t.app.mode(),
+        Mode::Picker,
+        "<leader>zl opened the links picker"
+    );
+}
+
+#[test]
+fn status_gutter_and_border_clicks_keep_the_count_and_pending_keys() {
+    let mut t = setup();
+    let border = t.app.layout().sidebar.unwrap();
+    let status = t.app.layout().status.unwrap();
+    let border = (border.right() - 1, border.y + 2);
+    let status = (status.x + 40, status.y);
+    // Count, then a status click, then `j`: moves 5 rows.
+    t.keys("5");
+    t.click(status, 0);
+    t.click(border, 1000);
+    t.keys("j");
+    assert_eq!(t.app.cursor().row, 5);
+    // Pending `g`, a border click, `g`: `gg` back to the top.
+    t.keys("g");
+    t.click(border, 2000);
+    t.click(status, 3000);
+    t.keys("g");
+    assert_eq!(t.app.cursor().row, 0);
+}
+
+#[test]
+fn a_text_click_drops_the_count() {
+    let mut t = setup();
+    let g = t.text_cell("gamma");
+    t.keys("5");
+    t.click(g, 0);
+    let row = t.app.cursor().row;
+    t.keys("j");
+    assert_eq!(t.app.cursor().row, row + 1);
+}

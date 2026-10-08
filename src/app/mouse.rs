@@ -97,7 +97,6 @@ impl App {
         if self.close_popup_outside(hit) {
             return;
         }
-        let in_popup = matches!(self.mode, Mode::Picker | Mode::Help);
         let typing = matches!(
             self.mode,
             Mode::Search | Mode::Filter | Mode::Command | Mode::Hint | Mode::OpPending
@@ -106,7 +105,9 @@ impl App {
             return;
         }
         let n = self.click_count(col, row, now);
-        if !in_popup {
+        // Only clicks that act drop a half-typed key sequence and count;
+        // status, clue, gutter and border clicks leave them (D3, D7).
+        if matches!(hit, Hit::Text { .. } | Hit::Files { .. } | Hit::Outline(_)) {
             self.pending.clear();
             self.count = None;
         }
