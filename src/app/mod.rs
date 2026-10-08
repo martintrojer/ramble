@@ -9,6 +9,7 @@
 //! reload).
 //! Later units add a file and register in the tables here and in `keys`.
 
+mod clue;
 mod cmdline;
 mod codepath;
 mod effect;
@@ -45,6 +46,7 @@ use crate::doc::Document;
 use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
 
+pub use clue::{CLUE_DELAY, ClueRow};
 pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
 pub use effect::{Clipboard, Effect, osc52};
@@ -211,6 +213,7 @@ pub struct App {
     /// `C-l` asked `run` to clear the terminal before the next draw.
     clear_request: bool,
     visual: visual::VisualState,
+    clue: clue::ClueState,
 }
 
 impl App {
@@ -270,6 +273,7 @@ impl App {
             help: Default::default(),
             clear_request: false,
             visual: Default::default(),
+            clue: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -360,9 +364,10 @@ impl App {
     }
 
     /// Called once per loop iteration (at least every 100 ms): advances the
-    /// clock used for the slow-request spinner.
+    /// clock used for the slow-request spinner and opens the key clue.
     pub fn tick(&mut self, now: Instant) {
         self.now = now;
+        self.clue_tick(now);
     }
 
     pub fn mode(&self) -> Mode {

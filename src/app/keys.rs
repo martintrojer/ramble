@@ -141,6 +141,11 @@ fn is_ctrl_l(key: &KeyEvent) -> bool {
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
+        self.handle_key_inner(key);
+        self.clue_sync();
+    }
+
+    fn handle_key_inner(&mut self, key: KeyEvent) {
         if key.kind == KeyEventKind::Release {
             return;
         }

@@ -1,6 +1,7 @@
 //! ratatui widgets only, no logic. `draw` lays out the screen and calls one
 //! widget per area; later units add a file and one call here.
 
+mod clue;
 mod content;
 mod gutter;
 mod help;
@@ -32,6 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hints::draw(frame, app, content);
     status::draw(frame, app, status);
     sidebar::draw_prompt(frame, app, status);
+    clue::draw(frame, app, main);
     picker::draw(frame, app, main);
     help::draw(frame, app, main);
     picker::draw_cmdline(frame, app, status);

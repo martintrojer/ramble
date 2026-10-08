@@ -91,6 +91,8 @@ enum RawSidebarMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeysConfig {
     pub leader: char,
+    /// Show the next-key box after a pause in a key sequence.
+    pub clue: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,7 +176,10 @@ impl Default for Config {
                 reading: SidebarReading::Outline,
                 auto_hide_below: 80,
             },
-            keys: KeysConfig { leader: ' ' },
+            keys: KeysConfig {
+                leader: ' ',
+                clue: true,
+            },
             lsp: LspConfig {
                 server: vec![
                     ServerConfig {
@@ -262,6 +267,7 @@ struct RawSidebar {
 #[serde(deny_unknown_fields)]
 struct RawKeys {
     leader: Option<char>,
+    clue: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -367,6 +373,7 @@ impl Config {
         }
         if let Some(k) = raw.keys {
             set(&mut c.keys.leader, k.leader);
+            set(&mut c.keys.clue, k.clue);
         }
         if let Some(l) = raw.lsp {
             set(&mut c.lsp.server, l.server);

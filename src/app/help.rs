@@ -65,7 +65,7 @@ impl Group {
         Group::Help,
     ];
 
-    fn title(self) -> &'static str {
+    pub(super) fn title(self) -> &'static str {
         match self {
             Group::General => "General",
             Group::Motions => "Motions",
@@ -397,6 +397,85 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("q, Esc, g?", Ctx::Help, G::Help, "close", always),
 ];
 
+/// Named keys of the `keys` notation, as whole alternatives.
+pub(super) const NAMED: [(&str, KeyCode); 11] = [
+    ("Enter", KeyCode::Enter),
+    ("Esc", KeyCode::Esc),
+    ("Tab", KeyCode::Tab),
+    ("Down", KeyCode::Down),
+    ("Up", KeyCode::Up),
+    ("Left", KeyCode::Left),
+    ("Right", KeyCode::Right),
+    ("Home", KeyCode::Home),
+    ("End", KeyCode::End),
+    ("PgDn", KeyCode::PageDown),
+    ("PgUp", KeyCode::PageUp),
+];
+
+/// One token of a row's key alternative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Tok<'a> {
+    Key(KeyEvent),
+    /// `{a-z}`, `{motion}`, `{1-9}`, braces included.
+    Placeholder(&'a str),
+}
+
+/// One alternative of a row's `keys` as tokens.
+pub(super) fn tokens(alt: &str, leader: char) -> Vec<Tok<'_>> {
+    let ev = |c| Tok::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    if let Some(&(_, code)) = NAMED.iter().find(|(n, _)| *n == alt) {
+        return vec![Tok::Key(KeyEvent::new(code, KeyModifiers::NONE))];
+    }
+    let mut out = Vec::new();
+    let mut rest = alt;
+    while !rest.is_empty() {
+        if let Some(r) = rest.strip_prefix("<leader>") {
+            out.push(ev(leader));
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix("C-")
+            && let Some(c) = r.chars().next()
+        {
+            out.push(Tok::Key(KeyEvent::new(
+                KeyCode::Char(c),
+                KeyModifiers::CONTROL,
+            )));
+            rest = r[c.len_utf8()..].trim_start();
+        } else if rest.starts_with('{') && rest.len() > 2 {
+            let end = rest.find('}').expect("closing }") + 1;
+            out.push(Tok::Placeholder(&rest[..end]));
+            rest = &rest[end..];
+        } else {
+            let c = rest.chars().next().unwrap();
+            out.push(ev(c));
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// A key that stands for a placeholder: `w` for `{motion}`, else the
+/// first character of the range (`{a-z}` → `a`).
+pub(super) fn placeholder_key(p: &str) -> KeyEvent {
+    let c = match p {
+        "{motion}" => 'w',
+        _ => p[1..].chars().next().unwrap_or('a'),
+    };
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+/// A key as the help shows it: `Space` for a space leader, `C-w`, `Esc`.
+pub(super) fn show_key(key: &KeyEvent, leader: char) -> String {
+    if let Some(&(name, _)) = NAMED.iter().find(|(_, c)| *c == key.code) {
+        return name.to_string();
+    }
+    match key.code {
+        KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => format!("C-{c}"),
+        KeyCode::Char(' ') if leader == ' ' => "Space".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
 /// Keys while the help overlay is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpAction {
@@ -541,7 +620,7 @@ impl App {
     /// The `<leader>` sequence in `keys` reaches its built-in binding: no
     /// launcher key takes or extends it, and none sits on a prefix of it
     /// (dispatch launches as soon as the typed prefix matches).
-    fn leader_free(&self, keys: &str) -> bool {
+    pub(super) fn leader_free(&self, keys: &str) -> bool {
         let Some(rest) = keys.strip_prefix("<leader>") else {
             return true;
         };
@@ -555,7 +634,7 @@ impl App {
     }
 
     /// Whether a row of context `ctx` applies with the current focus.
-    fn ctx_shown(&self, ctx: Ctx) -> bool {
+    pub(super) fn ctx_shown(&self, ctx: Ctx) -> bool {
         let content = self.focus() == Focus::Content;
         match ctx {
             Ctx::Normal => content,
@@ -739,51 +818,16 @@ mod tests {
     use crate::app::{StartOptions, StartTarget};
     use crate::config::{Config, SidebarMode};
 
-    const NAMED: [(&str, KeyCode); 11] = [
-        ("Enter", KeyCode::Enter),
-        ("Esc", KeyCode::Esc),
-        ("Tab", KeyCode::Tab),
-        ("Down", KeyCode::Down),
-        ("Up", KeyCode::Up),
-        ("Left", KeyCode::Left),
-        ("Right", KeyCode::Right),
-        ("Home", KeyCode::Home),
-        ("End", KeyCode::End),
-        ("PgDn", KeyCode::PageDown),
-        ("PgUp", KeyCode::PageUp),
-    ];
-
-    /// One alternative of a row's `keys` as key events.
+    /// One alternative of a row's `keys` as key events (a placeholder
+    /// becomes a representative key).
     fn parse(alt: &str, leader: char) -> Vec<KeyEvent> {
-        let ev = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-        if let Some(&(_, code)) = NAMED.iter().find(|(n, _)| *n == alt) {
-            return vec![KeyEvent::new(code, KeyModifiers::NONE)];
-        }
-        let mut out = Vec::new();
-        let mut rest = alt;
-        while !rest.is_empty() {
-            if let Some(r) = rest.strip_prefix("<leader>") {
-                out.push(ev(leader));
-                rest = r;
-            } else if let Some(r) = rest.strip_prefix("C-")
-                && let Some(c) = r.chars().next()
-            {
-                out.push(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL));
-                rest = r[c.len_utf8()..].trim_start();
-            } else if let Some(r) = rest.strip_prefix("{motion}") {
-                out.push(ev('w'));
-                rest = r;
-            } else if rest.starts_with('{') && rest.len() > 2 {
-                let c = rest[1..].chars().next().unwrap();
-                out.push(ev(c));
-                rest = &rest[rest.find('}').expect("closing }") + 1..];
-            } else {
-                let c = rest.chars().next().unwrap();
-                out.push(ev(c));
-                rest = &rest[c.len_utf8()..];
-            }
-        }
-        out
+        tokens(alt, leader)
+            .into_iter()
+            .map(|t| match t {
+                Tok::Key(k) => k,
+                Tok::Placeholder(p) => placeholder_key(p),
+            })
+            .collect()
     }
 
     fn alts(keys: &str) -> Vec<&str> {

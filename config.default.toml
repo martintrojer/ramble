@@ -38,6 +38,8 @@
 ## Keys
 # [keys]
 # leader = " "
+## After a pause in a key sequence, show the keys that can come next.
+# clue = true
 
 ## ---------------------------------------------------------------------------
 ## Review markers from a live tuicr session.

@@ -110,6 +110,8 @@ can follow it.
 - The window or tmux pane title shows the file you're reading.
 - `g?` lists every key that works right now. The list is tested against the
   real keymap, so it can't drift.
+- Pause after the first key of a sequence (`g`, `<leader>`, `C-w`, `y`) and a
+  small box in the corner lists the keys that can come next.
 
 ## Install
 
@@ -157,6 +159,7 @@ reading = "outline"          # what auto shows while you read: outline | split
 
 [keys]
 leader = " "
+clue = true                  # after a pause mid-sequence, show the next keys
 
 [[lsp.server]]               # replaces the default server list
 kind = "zk"
