@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Effect, StartOptions, StartTarget, resolve_code_path};
-use ramble::config::{Config, ServerConfig, ServerKind, SidebarMode};
+use ramble::config::{Config, ServerConfig, ServerKind};
 use ramble::doc::{Link, LinkKind};
 use serde_json::json;
 use tempfile::TempDir;
@@ -17,7 +17,7 @@ const ROWS: u16 = 12;
 
 fn opts(tree_root: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.default = SidebarMode::Off;
+    config.sidebar.show = false;
     config.lsp.server = vec![];
     StartOptions {
         target,

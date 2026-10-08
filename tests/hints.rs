@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Mode, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode};
+use ramble::config::Config;
 use ramble::render::ScreenSpan;
 use tempfile::TempDir;
 
@@ -16,7 +16,7 @@ fn app_with(source: &str) -> (TempDir, App) {
     let path = dir.path().join("a.md");
     std::fs::write(&path, source).unwrap();
     let mut config = Config::default();
-    config.sidebar.default = SidebarMode::Off;
+    config.sidebar.show = false;
     config.lsp.server = vec![];
     let opts = StartOptions {
         target: StartTarget::File(path),

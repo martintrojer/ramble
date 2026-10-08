@@ -1,11 +1,13 @@
 //! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
-//! `:Launch <name>`, `:Sidebar <off|files|outline|split>`, `:Raw`, and
+//! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`
+//! (`off` = `hide`), `:Raw`, and
 //! `:e` / `:Refresh` without an argument (refresh, as `C-l`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::keys::{Action, KeyResult};
+use super::sidebar::SidebarAction;
 use super::{App, Mode};
 use crate::config::SidebarMode;
 use crate::notebook::Op;
@@ -23,7 +25,14 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     (":Backlinks", "backlinks picker"),
     (":Links", "links picker"),
     (":Launch <name>", "run a launcher by name"),
-    (":Sidebar off|files|outline|split", "set the sidebar mode"),
+    (
+        ":Sidebar files|outline|split",
+        "set the sidebar mode and show it",
+    ),
+    (
+        ":Sidebar toggle|show|hide",
+        "show or hide the sidebar (off = hide)",
+    ),
     (":Raw", "toggle the raw source view"),
 ];
 
@@ -116,20 +125,31 @@ impl App {
             "Launch" if arg.is_empty() => self.set_status(":Launch needs a name"),
             "Launch" => self.launch(arg),
             "Sidebar" => match parse_sidebar(arg) {
-                Some(m) => self.pick_sidebar_mode(m),
-                None => self.set_status(":Sidebar off|files|outline|split"),
+                Some(SidebarCmd::Mode(m)) => self.pick_sidebar_mode(m),
+                Some(SidebarCmd::Toggle) => self.sidebar_action(SidebarAction::Toggle),
+                Some(SidebarCmd::Show(show)) => self.show_sidebar(show),
+                None => self.set_status(":Sidebar files|outline|split|toggle|show|hide"),
             },
             _ => self.set_status(format!("Not a command: {cmd}")),
         }
     }
 }
 
-fn parse_sidebar(s: &str) -> Option<SidebarMode> {
+enum SidebarCmd {
+    Mode(SidebarMode),
+    Toggle,
+    Show(bool),
+}
+
+fn parse_sidebar(s: &str) -> Option<SidebarCmd> {
+    use SidebarCmd as C;
     Some(match s {
-        "off" => SidebarMode::Off,
-        "files" => SidebarMode::Files,
-        "outline" => SidebarMode::Outline,
-        "split" => SidebarMode::Split,
+        "files" => C::Mode(SidebarMode::Files),
+        "outline" => C::Mode(SidebarMode::Outline),
+        "split" => C::Mode(SidebarMode::Split),
+        "toggle" => C::Toggle,
+        "show" => C::Show(true),
+        "hide" | "off" => C::Show(false),
         _ => return None,
     })
 }

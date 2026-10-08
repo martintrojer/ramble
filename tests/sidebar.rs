@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::sidebar::{
-    NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, OFF_MESSAGE, Tree, item_paths,
+    HIDDEN_MESSAGE, NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, TREE_STAYS_MESSAGE, Tree,
+    item_paths,
 };
 use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarMode, SidebarReading};
@@ -183,13 +184,12 @@ fn auto_switch_uses_the_new_width_for_the_first_layout() {
     let (_d, root) = fixture();
     let long = "word ".repeat(40);
     let path = write(&root, "long.md", &format!("{long}\n"));
-    let mut off = app_on(
+    let outline = app_on(
         &root,
         StartTarget::File(path.clone()),
-        config(SidebarMode::Off),
+        config(SidebarMode::Outline),
     );
-    off.set_sidebar_mode(SidebarMode::Outline);
-    let want = off.page().unwrap().rendered.lines.len();
+    let want = outline.page().unwrap().rendered.lines.len();
     let mut app = app_on(
         &root,
         StartTarget::Dir(root.clone()),
@@ -212,9 +212,10 @@ fn auto_does_not_post_narrow_status_on_each_page() {
         (40, 10),
     )
     .unwrap();
-    assert_eq!(app.status(), NARROW_MESSAGE);
+    assert_eq!(app.status(), "");
     app.open_file(&root.join("a.md")).unwrap();
     assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
+    assert!(!app.sidebar_visible(), "auto-hidden below 80 columns");
     assert_eq!(app.status(), "");
     app.open_file(&root.join("docs/guide.md")).unwrap();
     assert_eq!(app.status(), "");
@@ -228,13 +229,13 @@ fn manual_pick_stops_auto_switching() {
         StartTarget::Dir(root.clone()),
         config(SidebarMode::Auto),
     );
-    // <leader>e from files: outline, then split, then off.
-    keys(&mut app, " e e e");
-    assert_eq!(app.sidebar_mode(), SidebarMode::Off);
+    // <leader>E from files: split.
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
     app.open_file(&root.join("a.md")).unwrap();
-    assert_eq!(app.sidebar_mode(), SidebarMode::Off, "manual mode kept");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split, "manual mode kept");
     app.open_file(&root.join("docs/guide.md")).unwrap();
-    assert_eq!(app.sidebar_mode(), SidebarMode::Off);
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
 
     let mut app = app_on(
         &root,
@@ -264,13 +265,16 @@ fn history_restores_entry_mode_and_manual_survives_back() {
         app.page().unwrap().path.as_deref(),
         Some(root.join("docs/guide.md").as_path())
     );
+    app.execute("Sidebar files");
     app.execute("Sidebar off");
+    assert!(!app.sidebar_visible());
     app.handle_key(ctrl('o'));
     assert_eq!(
         app.page().unwrap().path.as_deref(),
         Some(root.join("a.md").as_path())
     );
     assert_eq!(app.sidebar_mode(), SidebarMode::Split, "entry's mode");
+    assert!(!app.sidebar_visible(), "history never shows the sidebar");
     // Still manual after C-o: a new page keeps the current mode.
     app.set_sidebar_mode(SidebarMode::Files);
     app.open_file(&root.join("docs/guide.md")).unwrap();
@@ -315,18 +319,28 @@ fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
     win(&mut app, 'k');
     assert_eq!(app.status(), NO_PANE_ABOVE);
     assert_eq!(app.focus(), Focus::Outline);
-    app.set_sidebar_mode(SidebarMode::Off);
+    app.execute("Sidebar hide");
     win(&mut app, 'j');
-    assert_eq!(app.status(), OFF_MESSAGE);
-    let mut narrow = App::new(
-        StartOptions {
-            target: StartTarget::File(root.join("a.md")),
-            tree_root: root.clone(),
-            config: config(SidebarMode::Split),
-        },
-        (40, 10),
-    )
-    .unwrap();
+    assert_eq!(app.status(), HIDDEN_MESSAGE);
+    let narrow_app = |auto_hide_below| {
+        let mut c = config(SidebarMode::Split);
+        c.sidebar.auto_hide_below = auto_hide_below;
+        App::new(
+            StartOptions {
+                target: StartTarget::File(root.join("a.md")),
+                tree_root: root.clone(),
+                config: c,
+            },
+            (40, 10),
+        )
+        .unwrap()
+    };
+    let mut narrow = narrow_app(80);
+    win(&mut narrow, 'k');
+    assert_eq!(narrow.status(), HIDDEN_MESSAGE, "auto-hidden");
+    assert_eq!(narrow.focus(), Focus::Content);
+    // Auto-hide off: the MIN_CONTENT guard drops it instead.
+    let mut narrow = narrow_app(0);
     win(&mut narrow, 'k');
     assert_eq!(narrow.status(), NARROW_MESSAGE);
     assert_eq!(narrow.focus(), Focus::Content);
@@ -367,28 +381,354 @@ fn ctrl_w_shift_w_reverses_and_p_returns() {
     assert_eq!(app.focus(), Focus::Content);
 }
 
+fn hidden() -> Config {
+    let mut c = Config::default();
+    c.sidebar.show = false;
+    c
+}
+
 #[test]
-fn leader_e_cycles_modes_and_rerenders_width() {
+fn leader_e_shows_and_hides_and_rerenders_width() {
     let (_d, root) = fixture();
     let long = "word ".repeat(40);
     let path = write(&root, "long.md", &format!("{long}\n"));
-    let mut app = app_on(&root, StartTarget::File(path), config(SidebarMode::Off));
+    let mut app = app_on(&root, StartTarget::File(path), hidden());
     let rows_full = app.page().unwrap().rendered.lines.len();
+    assert!(!app.sidebar_visible());
     assert_eq!(app.sidebar_cols(), 0);
     keys(&mut app, " e");
-    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(app.sidebar_visible());
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline, "mode unchanged");
     assert_eq!(app.sidebar_cols(), 31);
     assert!(
         app.page().unwrap().rendered.lines.len() > rows_full,
         "narrower content wraps into more rows"
     );
     keys(&mut app, " e");
+    assert!(!app.sidebar_visible());
     assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
-    keys(&mut app, " e");
-    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
-    keys(&mut app, " e");
-    assert_eq!(app.sidebar_mode(), SidebarMode::Off);
     assert_eq!(app.page().unwrap().rendered.lines.len(), rows_full);
+}
+
+#[test]
+fn leader_shift_e_cycles_outline_files_split() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline);
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(app.tree().is_some(), "the tree is built for the files pane");
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Outline, "never off");
+    assert!(app.sidebar_visible());
+}
+
+#[test]
+fn leader_shift_e_while_hidden_changes_mode_and_shows() {
+    let (_d, root) = fixture();
+    let mut app = app_on(&root, StartTarget::File(root.join("a.md")), hidden());
+    assert!(!app.sidebar_visible());
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(app.sidebar_visible());
+    assert!(app.sidebar_cols() > 0);
+}
+
+#[test]
+fn sidebar_commands_set_mode_and_visibility() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    app.execute("Sidebar hide");
+    assert!(!app.sidebar_visible());
+    app.execute("Sidebar show");
+    assert!(app.sidebar_visible());
+    app.execute("Sidebar toggle");
+    assert!(!app.sidebar_visible());
+    app.execute("Sidebar toggle");
+    assert!(app.sidebar_visible());
+    app.execute("Sidebar off");
+    assert!(!app.sidebar_visible(), "off is hide");
+    assert_eq!(
+        app.sidebar_mode(),
+        SidebarMode::Outline,
+        "hide keeps the mode"
+    );
+    app.execute("Sidebar split");
+    assert!(app.sidebar_visible(), "a mode shows it");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Split);
+    app.execute("Sidebar left");
+    assert!(app.status().starts_with(":Sidebar files|outline|split"));
+}
+
+#[test]
+fn no_page_draws_the_tree_with_focus_despite_hidden_and_narrow() {
+    let (_d, root) = fixture();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::Dir(root.clone()),
+            tree_root: root.clone(),
+            config: hidden(),
+        },
+        (60, 10),
+    )
+    .unwrap();
+    assert!(app.sidebar_visible());
+    assert_eq!(app.sidebar_cols(), 31);
+    assert_eq!(app.focus(), Focus::Files);
+    assert_eq!(
+        app.tree().unwrap().selected(),
+        Some(root.join("docs").as_path()),
+        "first row selected"
+    );
+    assert_eq!(app.status(), "");
+    let mut term = Terminal::new(TestBackend::new(60, 10)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    assert!(term.backend().to_string().contains("a.md"));
+    // j/k/Enter work right away.
+    keys(&mut app, "jj");
+    assert_eq!(
+        app.tree().unwrap().selected(),
+        Some(root.join("a.md").as_path())
+    );
+    // <leader>e cannot hide the only thing on screen.
+    keys(&mut app, " e");
+    assert!(app.sidebar_visible());
+    assert_eq!(app.status(), TREE_STAYS_MESSAGE);
+    // The first page applies steps 2-4: hidden (show = false), focus moves.
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.page().is_some());
+    assert!(!app.sidebar_visible());
+    assert_eq!(app.focus(), Focus::Content);
+    // Laid out at full width: no sidebar was counted.
+    assert_eq!(app.sidebar_cols(), 0);
+}
+
+#[test]
+fn first_page_from_the_command_line_moves_focus_to_the_content() {
+    let (_d, root) = fixture();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::Dir(root.clone()),
+            tree_root: root.clone(),
+            config: config(SidebarMode::Files),
+        },
+        (100, 16),
+    )
+    .unwrap();
+    assert_eq!(app.focus(), Focus::Files);
+    app.execute(&format!("e {}", root.join("a.md").display()));
+    assert!(app.page().is_some());
+    assert!(app.sidebar_visible(), "files pane stays");
+    assert_eq!(app.focus(), Focus::Content);
+}
+
+#[test]
+fn no_page_with_outline_mode_shows_the_files_pane() {
+    let (_d, root) = fixture();
+    let app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Outline),
+    );
+    assert_eq!(app.sidebar_panes(), [Focus::Files]);
+    assert!(app.tree().is_some());
+    assert_eq!(app.focus(), Focus::Files);
+}
+
+#[test]
+fn no_page_tree_fits_a_tiny_terminal() {
+    let (_d, root) = fixture();
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::Dir(root.clone()),
+            tree_root: root.clone(),
+            config: Config::default(),
+        },
+        (20, 10),
+    )
+    .unwrap();
+    assert_eq!(app.sidebar_cols(), 20, "clamped to the terminal");
+    assert_eq!(app.focus(), Focus::Files);
+    assert_eq!(app.status(), "", "no narrow message with no page");
+    let mut term = Terminal::new(TestBackend::new(20, 10)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    assert!(term.backend().to_string().contains("a.md"));
+}
+
+fn resize(app: &mut App, cols: u16) {
+    app.event(AppEvent::Resize(cols, SIZE.1));
+}
+
+#[test]
+fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
+    let (_d, root) = fixture();
+    let long = "word ".repeat(40);
+    let path = write(&root, "long.md", &format!("{long}\n"));
+    let mut c = Config::default();
+    c.sidebar.auto_hide_below = 0;
+    c.sidebar.show = false;
+    let full = App::new(
+        StartOptions {
+            target: StartTarget::File(path.clone()),
+            tree_root: root.clone(),
+            config: c,
+        },
+        (60, 16),
+    )
+    .unwrap();
+    let want = full.page().unwrap().rendered.lines.len();
+    let mut app = App::new(
+        StartOptions {
+            target: StartTarget::Dir(root.clone()),
+            tree_root: root.clone(),
+            config: Config::default(),
+        },
+        (60, 16),
+    )
+    .unwrap();
+    assert_eq!(app.sidebar_cols(), 31, "tree drawn with no page");
+    app.open_file(&path).unwrap();
+    assert!(!app.sidebar_visible());
+    assert_eq!(app.page().unwrap().rendered.lines.len(), want);
+    assert_eq!(app.focus(), Focus::Content);
+}
+
+#[test]
+fn narrow_terminal_hides_and_widening_shows_again() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    assert!(app.sidebar_visible());
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Outline);
+    resize(&mut app, 60);
+    assert!(!app.sidebar_visible());
+    assert_eq!(app.sidebar_cols(), 0);
+    assert_eq!(app.focus(), Focus::Content, "focus leaves a hidden pane");
+    assert_eq!(app.status(), "", "auto-hide is silent");
+    resize(&mut app, 100);
+    assert!(app.sidebar_visible());
+    assert_eq!(app.sidebar_cols(), 31);
+}
+
+#[test]
+fn narrow_start_hides_the_sidebar() {
+    let (_d, root) = fixture();
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::File(root.join("a.md")),
+            tree_root: root.clone(),
+            config: Config::default(),
+        },
+        (79, 16),
+    )
+    .unwrap();
+    assert!(!app.sidebar_visible());
+    assert_eq!(app.status(), "");
+    let mut c = Config::default();
+    c.sidebar.auto_hide_below = 0;
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::File(root.join("a.md")),
+            tree_root: root.clone(),
+            config: c,
+        },
+        (79, 16),
+    )
+    .unwrap();
+    assert!(app.sidebar_visible(), "0 disables auto-hide");
+}
+
+#[test]
+fn user_hide_survives_widening() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    keys(&mut app, " e");
+    assert!(!app.sidebar_visible());
+    resize(&mut app, 60);
+    resize(&mut app, 120);
+    assert!(!app.sidebar_visible(), "the user hid it");
+    // Shown, then hidden while narrow, then widened: hidden is the flag.
+    keys(&mut app, " e");
+    assert!(app.sidebar_visible());
+    resize(&mut app, 60);
+    keys(&mut app, " e");
+    assert!(app.sidebar_visible(), "shown while narrow");
+    keys(&mut app, " e");
+    assert!(!app.sidebar_visible(), "hidden while narrow");
+    resize(&mut app, 120);
+    assert!(!app.sidebar_visible(), "a hide while narrow sticks");
+}
+
+#[test]
+fn leader_e_while_narrow_shows_until_the_next_resize() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    resize(&mut app, 60);
+    assert!(!app.sidebar_visible());
+    keys(&mut app, " e");
+    assert!(app.sidebar_visible(), "the user's choice wins while narrow");
+    assert_eq!(app.sidebar_cols(), 31);
+    // Internal re-layouts (a mode change) keep the override.
+    app.set_sidebar_mode(SidebarMode::Split);
+    assert!(app.sidebar_visible());
+    // The same width again is not a resize.
+    resize(&mut app, 60);
+    assert!(app.sidebar_visible());
+    resize(&mut app, 70);
+    assert!(!app.sidebar_visible(), "a resize ends the override");
+    // <leader>E while narrow shows it too.
+    keys(&mut app, " E");
+    assert!(app.sidebar_visible());
+    resize(&mut app, 65);
+    assert!(!app.sidebar_visible());
+}
+
+#[test]
+fn history_restore_never_changes_visibility() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    app.execute("Sidebar split");
+    app.open_file(&root.join("docs/guide.md")).unwrap();
+    app.handle_key(ctrl('o'));
+    assert!(app.sidebar_visible());
+    // Hidden, then back and forward: still hidden, the mode is restored.
+    app.execute("Sidebar files");
+    keys(&mut app, " e");
+    app.handle_key(key(KeyCode::Tab));
+    assert_eq!(
+        app.page().unwrap().path.as_deref(),
+        Some(root.join("docs/guide.md").as_path())
+    );
+    assert!(!app.sidebar_visible());
+    app.handle_key(ctrl('o'));
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(!app.sidebar_visible());
 }
 
 #[test]
@@ -416,12 +756,12 @@ fn focus_moves_with_ctrl_w() {
         Focus::Outline,
         "C-w h returns to the last pane"
     );
-    // Turning the sidebar off while it has focus gives focus back.
-    app.set_sidebar_mode(SidebarMode::Off);
+    // Hiding the sidebar while it has focus gives focus back.
+    keys(&mut app, " e");
     assert_eq!(app.focus(), Focus::Content);
     win(&mut app, 'h');
     assert_eq!(app.focus(), Focus::Content);
-    assert_eq!(app.status(), OFF_MESSAGE);
+    assert_eq!(app.status(), HIDDEN_MESSAGE);
 }
 
 #[test]
@@ -442,18 +782,20 @@ fn focus_returns_to_content_when_its_pane_goes() {
 }
 
 #[test]
-fn narrow_window_drops_the_sidebar() {
+fn min_content_guard_drops_the_sidebar_and_says_so() {
     let (_d, root) = fixture();
+    let mut c = Config::default();
+    c.sidebar.auto_hide_below = 0;
     let app = App::new(
         StartOptions {
-            target: StartTarget::Dir(root.clone()),
+            target: StartTarget::File(root.join("a.md")),
             tree_root: root.clone(),
-            config: Config::default(),
+            config: c,
         },
         (40, 10),
     )
     .unwrap();
-    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(app.sidebar_visible());
     assert_eq!(app.sidebar_cols(), 0);
     assert_eq!(app.status(), NARROW_MESSAGE);
 }

@@ -77,7 +77,11 @@ can follow it.
 - A file tree (respects `.gitignore`, walks lazily, so pointing it at `$HOME`
   is fine), the current page's outline, or both stacked.
 - On `auto` it shows the tree until you open something, then the outline.
-  `<leader>e` cycles modes, `C-w h/l/j/k` moves between panes.
+  `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
+  split, `C-w h/l/j/k` moves between panes.
+- It hides on terminals narrower than 80 columns and comes back when the
+  terminal grows, unless you hid it. With no file open, the tree always
+  shows and has focus.
 
 **Pickers**
 - Notes (`<leader>zf`) and the links on this page (`<leader>zl`) work
@@ -146,7 +150,9 @@ max_width = 100              # cap the reading width
 math = true                  # false shows LaTeX source as written
 
 [sidebar]
-default = "auto"             # auto | off | files | outline | split
+show = true                  # shown at start; <leader>e toggles
+default = "auto"             # auto | files | outline | split
+auto_hide_below = 80         # hide below this many columns; 0 never hides
 reading = "outline"          # what auto shows while you read: outline | split
 
 [keys]

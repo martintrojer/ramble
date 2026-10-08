@@ -22,15 +22,15 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let files = app.tree().is_some();
-    match app.sidebar_mode() {
-        crate::config::SidebarMode::Split if files => {
+    match app.sidebar_panes() {
+        [Focus::Files, Focus::Outline] if files => {
             let pct = (app.sidebar_split_ratio() * 100.0).round() as u16;
             let [top, bottom] =
                 Layout::vertical([Constraint::Percentage(pct), Constraint::Fill(1)]).areas(inner);
             draw_files(frame, app, top);
             draw_outline(frame, app, bottom);
         }
-        crate::config::SidebarMode::Files if files => draw_files(frame, app, inner),
+        [Focus::Files] if files => draw_files(frame, app, inner),
         _ => draw_outline(frame, app, inner),
     }
 }

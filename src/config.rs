@@ -33,6 +33,8 @@ pub struct RenderConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SidebarConfig {
+    /// Shown at start (a start with no page shows the tree regardless).
+    pub show: bool,
     pub default: SidebarMode,
     pub width: u16,
     /// Share of the sidebar given to files in split mode.
@@ -41,6 +43,9 @@ pub struct SidebarConfig {
     pub show_all: bool,
     /// What `auto` shows while a page is loaded.
     pub reading: SidebarReading,
+    /// Hide the sidebar while the terminal is narrower than this many
+    /// columns (0 disables).
+    pub auto_hide_below: u16,
 }
 
 /// `sidebar.reading`: the mode `auto` uses while a page is loaded.
@@ -60,9 +65,22 @@ impl From<SidebarReading> for SidebarMode {
     }
 }
 
+/// What the sidebar shows. Whether it is shown is separate
+/// (`sidebar.show`, `<leader>e`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarMode {
+    Auto,
+    Files,
+    Outline,
+    Split,
+}
+
+/// `sidebar.default` as written: [`SidebarMode`] plus the legacy `off`,
+/// which means `show = false` with `default = "auto"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RawSidebarMode {
     Auto,
     Off,
     Files,
@@ -148,11 +166,13 @@ impl Default for Config {
                 math: true,
             },
             sidebar: SidebarConfig {
+                show: true,
                 default: SidebarMode::Auto,
                 width: 30,
                 split_ratio: 0.5,
                 show_all: false,
                 reading: SidebarReading::Outline,
+                auto_hide_below: 80,
             },
             keys: KeysConfig { leader: ' ' },
             lsp: LspConfig {
@@ -229,11 +249,13 @@ struct RawRender {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSidebar {
-    default: Option<SidebarMode>,
+    show: Option<bool>,
+    default: Option<RawSidebarMode>,
     width: Option<u16>,
     split_ratio: Option<f32>,
     show_all: Option<bool>,
     reading: Option<SidebarReading>,
+    auto_hide_below: Option<u16>,
 }
 
 #[derive(Deserialize)]
@@ -323,11 +345,25 @@ impl Config {
             set(&mut c.render.math, r.math);
         }
         if let Some(s) = raw.sidebar {
-            set(&mut c.sidebar.default, s.default);
+            if let Some(d) = s.default {
+                c.sidebar.default = match d {
+                    RawSidebarMode::Off => {
+                        c.sidebar.show = false;
+                        SidebarMode::Auto
+                    }
+                    RawSidebarMode::Auto => SidebarMode::Auto,
+                    RawSidebarMode::Files => SidebarMode::Files,
+                    RawSidebarMode::Outline => SidebarMode::Outline,
+                    RawSidebarMode::Split => SidebarMode::Split,
+                };
+            }
+            // After the legacy `off`, so an explicit `show` wins.
+            set(&mut c.sidebar.show, s.show);
             set(&mut c.sidebar.width, s.width);
             set(&mut c.sidebar.split_ratio, s.split_ratio);
             set(&mut c.sidebar.show_all, s.show_all);
             set(&mut c.sidebar.reading, s.reading);
+            set(&mut c.sidebar.auto_hide_below, s.auto_hide_below);
         }
         if let Some(k) = raw.keys {
             set(&mut c.keys.leader, k.leader);

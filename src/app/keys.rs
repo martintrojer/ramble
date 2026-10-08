@@ -205,6 +205,9 @@ impl App {
             LeaderMatch::Pending => KeyResult::Pending,
             // Built-in, unless a launcher took the key.
             LeaderMatch::NoMapping if typed == ['e'] => {
+                KeyResult::Action(Action::Sidebar(SidebarAction::Toggle))
+            }
+            LeaderMatch::NoMapping if typed == ['E'] => {
                 KeyResult::Action(Action::Sidebar(SidebarAction::Cycle))
             }
             LeaderMatch::NoMapping => {

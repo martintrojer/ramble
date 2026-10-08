@@ -359,10 +359,18 @@ const ROWS: u16 = 14;
 /// Line numbers: 1 "# Title", 3 "alpha", 5 "beta", 7 "gamma", 9 "delta".
 const DOC: &str = "# Title\n\nalpha\n\nbeta\n\ngamma\n\ndelta\n";
 
-fn config(review_cmd: Option<&Path>, sidebar: SidebarMode) -> Config {
+fn config(review_cmd: Option<&Path>, sidebar: Option<SidebarMode>) -> Config {
     let mut c = Config::default();
     c.lsp.server = vec![];
-    c.sidebar.default = sidebar;
+    // None: the sidebar hidden.
+    match sidebar {
+        Some(m) => {
+            c.sidebar.default = m;
+            // COLS is below the default auto-hide threshold.
+            c.sidebar.auto_hide_below = 0;
+        }
+        None => c.sidebar.show = false,
+    }
     if let Some(cmd) = review_cmd {
         c.review.command = cmd.display().to_string();
     }
@@ -421,22 +429,19 @@ fn review_thread_needs_enabled_and_a_resolvable_command() {
 
     let mut missing = app_in(
         &tmp.path().join("m"),
-        config(Some(&tmp.path().join("nope/tuicr")), SidebarMode::Off),
+        config(Some(&tmp.path().join("nope/tuicr")), None),
     );
     missing.set_sender(tx.clone());
     assert!(!missing.start_review());
     assert!(!missing.review_running());
 
-    let mut c = config(Some(&fake.command()), SidebarMode::Off);
+    let mut c = config(Some(&fake.command()), None);
     c.review.enabled = false;
     let mut off = app_in(&tmp.path().join("o"), c);
     off.set_sender(tx.clone());
     assert!(!off.start_review());
 
-    let mut on = app_in(
-        &tmp.path().join("y"),
-        config(Some(&fake.command()), SidebarMode::Off),
-    );
+    let mut on = app_in(&tmp.path().join("y"), config(Some(&fake.command()), None));
     on.set_sender(tx);
     assert!(on.start_review());
     assert!(on.review_running());
@@ -446,7 +451,7 @@ fn review_thread_needs_enabled_and_a_resolvable_command() {
 fn gutter_status_and_jumps() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
-    let mut app = app_in(&dir, config(None, SidebarMode::Off));
+    let mut app = app_in(&dir, config(None, None));
     let before = screen(&app);
     assert!(!before.iter().any(|l| l.contains('●')));
     assert_eq!(app.review_gutter(), 0);
@@ -511,7 +516,7 @@ fn para_app(dir: &Path, cols: u16) -> App {
         StartOptions {
             target: StartTarget::File(dir.join("p.md")),
             tree_root: dir.to_path_buf(),
-            config: config(None, SidebarMode::Off),
+            config: config(None, None),
         },
         (cols, ROWS),
     )
@@ -563,7 +568,7 @@ fn comments_inside_a_reflowed_paragraph_mark_and_target_its_rows() {
 fn file_level_comments_count_but_get_no_gutter() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
-    let mut app = app_in(&dir, config(None, SidebarMode::Off));
+    let mut app = app_in(&dir, config(None, None));
     app.event(AppEvent::Review(markers(
         &dir,
         &[("doc.md", marks(1, &[]))],
@@ -577,7 +582,7 @@ fn file_level_comments_count_but_get_no_gutter() {
 fn tree_marks_files_with_counts_and_folders() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
-    let mut app = app_in(&dir, config(None, SidebarMode::Files));
+    let mut app = app_in(&dir, config(None, Some(SidebarMode::Files)));
     app.event(AppEvent::Review(markers(
         &dir,
         &[("sub/b.md", marks(2, &[(1, 1)]))],
@@ -595,13 +600,13 @@ fn tree_marks_files_with_counts_and_folders() {
 fn app_tracks_the_discovery_dir_and_stdin_has_none() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
-    let app = app_in(&dir, config(None, SidebarMode::Off));
+    let app = app_in(&dir, config(None, None));
     assert_eq!(app.review_dirs(), vec![std::path::absolute(&dir).unwrap()]);
     let s = App::new(
         StartOptions {
             target: StartTarget::Stdin("# S\n".into()),
             tree_root: dir.clone(),
-            config: config(None, SidebarMode::Off),
+            config: config(None, None),
         },
         (COLS, ROWS),
     )
@@ -627,7 +632,7 @@ fn a_launcher_pauses_the_thread_and_it_polls_on_return() {
         discovery: Duration::from_millis(50),
         comments: Duration::from_millis(50),
     };
-    let app = app_in(&dir, config(Some(&fake.command()), SidebarMode::Off));
+    let app = app_in(&dir, config(Some(&fake.command()), None));
     let (tx, rx) = mpsc::channel();
     let fake_for_runner = Fake {
         dir: fake_dir.clone(),
@@ -682,7 +687,7 @@ fn a_session_keyed_to_the_files_folder_below_the_repo_root_is_found() {
     fake.only(&notes);
     fake.sessions(&[("rr", true)]);
     fake.comments("rr", &format!("[{}]", line("doc.md", 5, 5, "new")));
-    let mut app = app_in(&notes, config(Some(&fake.command()), SidebarMode::Off));
+    let mut app = app_in(&notes, config(Some(&fake.command()), None));
     let (tx, rx) = mpsc::channel();
     app.set_sender(tx);
     let short = Intervals {
@@ -700,7 +705,7 @@ fn a_session_keyed_to_the_files_folder_below_the_repo_root_is_found() {
 fn back_jump_goes_to_the_nearest_previous_comment() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("nb");
-    let mut app = app_in(&dir, config(None, SidebarMode::Off));
+    let mut app = app_in(&dir, config(None, None));
     let (alpha, beta, gamma) = (
         row_of(&app, "alpha"),
         row_of(&app, "beta"),

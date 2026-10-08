@@ -83,8 +83,7 @@ pub struct StartOptions {
 }
 
 /// Message shown in the content area when no file is loaded.
-pub const NO_FILE_MESSAGE: &str =
-    "No file loaded. Pick one in the file tree (C-w h, then Enter; <leader>e shows it).";
+pub const NO_FILE_MESSAGE: &str = "No file loaded. Pick one in the file tree (C-w h, then Enter).";
 
 /// Cursor position in rendered-row coordinates (display columns).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -279,6 +278,7 @@ impl App {
         }
         app.sync_tree();
         app.sidebar_fit();
+        app.sidebar_focus_tree();
         if !key_errors.is_empty() {
             app.set_status(key_errors.join("; "));
         }
@@ -348,6 +348,7 @@ impl App {
         match ev {
             AppEvent::Key(key) => self.handle_key(key),
             AppEvent::Resize(cols, rows) => {
+                self.sidebar_terminal_resized(cols);
                 self.resize(cols, rows);
                 self.sidebar_fit();
             }

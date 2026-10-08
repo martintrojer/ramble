@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Effect, Exit, LaunchCommand, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode};
+use ramble::config::Config;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -20,7 +20,7 @@ const SRC: &str =
 
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.default = SidebarMode::Off;
+    config.sidebar.show = false;
     config.lsp.server = vec![];
     StartOptions {
         target,

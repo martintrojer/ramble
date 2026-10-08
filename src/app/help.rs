@@ -283,7 +283,14 @@ pub(crate) static BINDINGS: &[Binding] = &[
         "<leader>e",
         Any,
         G::Sidebar,
-        "cycle the sidebar mode",
+        "show or hide the sidebar",
+        always,
+    ),
+    b(
+        "<leader>E",
+        Any,
+        G::Sidebar,
+        "cycle sidebar: outline, files, split",
         always,
     ),
     b(
@@ -954,6 +961,7 @@ mod tests {
             "g?",
             "C-l",
             "<leader>e",
+            "<leader>E",
             "C-w h",
             "C-w w",
             "C-w W",

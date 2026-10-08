@@ -15,7 +15,10 @@
 ## ---------------------------------------------------------------------------
 ## Sidebar
 # [sidebar]
-## auto | off | files | outline | split
+## Show the sidebar at start (<leader>e shows or hides it). A start with no
+## page (a directory or no argument) always shows the file tree.
+# show = true
+## auto | files | outline | split (<leader>E cycles outline, files, split)
 ## auto: files while no page is loaded (a directory or no argument), then
 ## `reading` once a page is shown (a file, stdin, or a file opened later).
 # default = "auto"
@@ -27,6 +30,9 @@
 # split_ratio = 0.5
 ## Also list non-markdown files in the tree.
 # show_all = false
+## Hide the sidebar while the terminal is narrower than this many columns;
+## it comes back when the terminal grows, unless you hid it. 0 disables.
+# auto_hide_below = 80
 
 ## ---------------------------------------------------------------------------
 ## Keys

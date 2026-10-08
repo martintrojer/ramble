@@ -1,7 +1,9 @@
-//! The sidebar (spec § Sidebar): modes off / files / outline / split, the
-//! lazily walked file tree, the outline of the current page, focus moves
-//! (`C-w h/l/w/W/j/k/p`), the per-pane `/` filter, and the `auto` mode
-//! switching from files to `sidebar.reading` when a page is first shown.
+//! The sidebar (spec § Sidebar, docs/specs/2026-10-07-sidebar-layout.md):
+//! visibility (`<leader>e`, narrow auto-hide), modes files / outline /
+//! split (`<leader>E`), the lazily walked file tree, the outline of the
+//! current page, focus moves (`C-w h/l/w/W/j/k/p`), the per-pane `/`
+//! filter, and the `auto` mode switching from files to `sidebar.reading`
+//! when a page is first shown.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -13,10 +15,13 @@ use super::{App, Mode, StartTarget};
 use crate::config::{SidebarConfig, SidebarMode};
 use crate::nav::is_markdown;
 
-/// Status when the terminal cannot fit the sidebar next to the content.
+/// Status when the sidebar is meant to show but the content would get
+/// fewer than `MIN_CONTENT` columns (the last-resort guard).
 pub const NARROW_MESSAGE: &str = "Window too narrow for the sidebar";
-/// Status for a focus move while no sidebar is shown.
-pub const OFF_MESSAGE: &str = "Sidebar is off";
+/// Status for a focus move while the sidebar is hidden.
+pub const HIDDEN_MESSAGE: &str = "Sidebar is hidden";
+/// Status for `<leader>e` with no page: the tree is all there is.
+pub const TREE_STAYS_MESSAGE: &str = "No file loaded: the file tree stays shown";
 /// Status for `C-w j` without a pane below.
 pub const NO_PANE_BELOW: &str = "No pane below";
 /// Status for `C-w k` without a pane above.
@@ -36,7 +41,9 @@ pub enum Focus {
 /// Sidebar actions, bound in [`App::keymap`] and run by [`App::apply`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarAction {
-    /// `<leader>e`: off → files → outline → split → off.
+    /// `<leader>e`: show or hide the sidebar.
+    Toggle,
+    /// `<leader>E`: outline → files → split → outline, and show it.
     Cycle,
     /// `C-w h`
     FocusLeft,
@@ -83,9 +90,16 @@ pub(super) struct Sidebar {
     auto: bool,
     /// `sidebar.reading` as a mode (outline or split).
     reading: SidebarMode,
-    /// The user picked a mode this session (`<leader>e`, `:Sidebar`),
+    /// The user picked a mode this session (`<leader>E`, `:Sidebar`),
     /// which stops the `auto` switching.
     manual: bool,
+    /// The user's visibility flag (D3 step 4); starts at `sidebar.show`.
+    shown: bool,
+    /// A visibility choice made while the terminal was narrower than
+    /// `auto_hide_below` (D3 step 2); cleared by a terminal resize.
+    narrow_override: Option<bool>,
+    /// `set_page` is laying out a page: count it as loaded.
+    loading: bool,
     focus: Focus,
     /// The focus before the last focus change, for `C-w p`.
     prev_focus: Focus,
@@ -112,6 +126,9 @@ impl Sidebar {
             auto: config.default == SidebarMode::Auto,
             reading,
             manual: false,
+            shown: config.show,
+            narrow_override: None,
+            loading: false,
             focus: Focus::Content,
             prev_focus: Focus::Content,
             last_side: Focus::Files,
@@ -122,13 +139,24 @@ impl Sidebar {
         }
     }
 
-    /// The panes the mode shows, top to bottom.
-    fn panes(&self) -> &'static [Focus] {
+    /// The panes the mode shows, top to bottom. With no page the files
+    /// pane is always among them (an outline alone becomes files).
+    fn panes(&self, no_page: bool) -> &'static [Focus] {
         match self.mode {
+            SidebarMode::Outline if no_page => &[Focus::Files],
             SidebarMode::Files => &[Focus::Files],
             SidebarMode::Outline => &[Focus::Outline],
             SidebarMode::Split => &[Focus::Files, Focus::Outline],
-            SidebarMode::Off | SidebarMode::Auto => &[],
+            SidebarMode::Auto => &[],
+        }
+    }
+
+    /// The next mode for `<leader>E`.
+    fn next_mode(&self) -> SidebarMode {
+        match self.mode {
+            SidebarMode::Outline => SidebarMode::Files,
+            SidebarMode::Files => SidebarMode::Split,
+            SidebarMode::Split | SidebarMode::Auto => SidebarMode::Outline,
         }
     }
 }
@@ -520,7 +548,8 @@ impl App {
 
     /// Switch the sidebar mode (`Auto` means files without a page, else
     /// `sidebar.reading`) and re-lay out the content for the new width.
-    /// Does not count as a manual pick (history restore calls it).
+    /// Does not count as a manual pick and never shows or hides the
+    /// sidebar (history restore calls it).
     pub fn set_sidebar_mode(&mut self, mode: SidebarMode) {
         self.sidebar.mode = match mode {
             SidebarMode::Auto if self.page.is_none() => SidebarMode::Files,
@@ -533,11 +562,91 @@ impl App {
         self.sidebar_fit();
     }
 
-    /// A mode picked by the user (`<leader>e`, `:Sidebar`): stops the
-    /// `auto` switching for the rest of the session.
+    /// A mode picked by the user (`<leader>E`, `:Sidebar`): stops the
+    /// `auto` switching for the rest of the session, and shows the sidebar.
     pub(super) fn pick_sidebar_mode(&mut self, mode: SidebarMode) {
         self.sidebar.manual = true;
-        self.set_sidebar_mode(mode);
+        self.sidebar.mode = mode;
+        self.show_sidebar(true);
+    }
+
+    /// A visibility choice by the user (`<leader>e`, `<leader>E`,
+    /// `:Sidebar`). While the terminal is narrow it holds until the next
+    /// resize (D3 step 2).
+    pub(super) fn show_sidebar(&mut self, show: bool) {
+        self.sidebar.shown = show;
+        if self.narrow() {
+            self.sidebar.narrow_override = Some(show);
+        }
+        self.sync_tree();
+        let (cols, rows) = self.size;
+        self.resize(cols, rows);
+        self.sidebar_fit();
+    }
+
+    /// A terminal resize from the event loop: a change of width ends the
+    /// step-2 override.
+    pub(super) fn sidebar_terminal_resized(&mut self, cols: u16) {
+        if cols != self.size.0 {
+            self.sidebar.narrow_override = None;
+        }
+    }
+
+    /// The terminal is narrower than `sidebar.auto_hide_below`.
+    fn narrow(&self) -> bool {
+        let below = self.config.sidebar.auto_hide_below;
+        below > 0 && self.size.0 < below
+    }
+
+    /// No page is loaded or being laid out (D3 step 1).
+    fn no_page(&self) -> bool {
+        self.page.is_none() && !self.sidebar.loading
+    }
+
+    /// Whether the sidebar should be drawn, in the order of D3: no page
+    /// (always), a choice made while narrow, narrow auto-hide, then the
+    /// user's flag. The `MIN_CONTENT` guard is applied by
+    /// [`App::sidebar_cols`], not here.
+    pub fn sidebar_visible(&self) -> bool {
+        if self.no_page() {
+            return true;
+        }
+        if let Some(v) = self.sidebar.narrow_override {
+            return v;
+        }
+        !self.narrow() && self.sidebar.shown
+    }
+
+    /// The panes shown when the sidebar is visible, top to bottom.
+    pub fn sidebar_panes(&self) -> &'static [Focus] {
+        self.sidebar.panes(self.no_page())
+    }
+
+    /// Called by `set_page` before the page is laid out; returns whether
+    /// this is the first page (none was loaded).
+    pub(super) fn sidebar_page_loading(&mut self) -> bool {
+        self.sidebar.loading = true;
+        self.page.is_none()
+    }
+
+    /// Called by `set_page` once the page is set. The first page moves
+    /// focus to the content.
+    pub(super) fn sidebar_page_loaded(&mut self, first: bool) {
+        self.sidebar.loading = false;
+        if first {
+            self.set_focus(Focus::Content);
+        }
+        self.sidebar_fit_focus();
+    }
+
+    /// Start with no page: focus the files pane, first row selected.
+    pub(super) fn sidebar_focus_tree(&mut self) {
+        if self.no_page()
+            && self.can_focus_sidebar()
+            && self.sidebar_panes().contains(&Focus::Files)
+        {
+            self.focus_pane(Focus::Files);
+        }
     }
 
     /// Called by `set_page` before the page is laid out: with
@@ -558,14 +667,19 @@ impl App {
         self.sidebar.focus
     }
 
-    /// Columns the sidebar takes, its border included; 0 when it is off or
-    /// does not fit.
+    /// Columns the sidebar takes, its border included; 0 when it is hidden
+    /// or does not fit. With no page the tree is all there is to show, so
+    /// it skips the `MIN_CONTENT` guard and only clamps to the terminal.
     pub fn sidebar_cols(&self) -> u16 {
-        if self.sidebar.panes().is_empty() {
+        if !self.sidebar_visible() || self.sidebar_panes().is_empty() {
             return 0;
         }
+        let cols = self.size.0;
+        if self.no_page() {
+            return self.config.sidebar.width.min(cols.saturating_sub(1)) + 1;
+        }
         let w = self.config.sidebar.width.saturating_add(1);
-        if w >= self.size.0.saturating_sub(MIN_CONTENT) {
+        if w >= cols.saturating_sub(MIN_CONTENT) {
             0
         } else {
             w
@@ -641,7 +755,7 @@ impl App {
     /// Build the tree if the files pane is shown, and follow the current
     /// file in it.
     pub(super) fn sync_tree(&mut self) {
-        if !self.sidebar.panes().contains(&Focus::Files) {
+        if !self.sidebar_panes().contains(&Focus::Files) {
             return;
         }
         let tree = self
@@ -659,10 +773,12 @@ impl App {
     }
 
     /// After a mode change or resize: give focus back to the content when
-    /// its pane is gone, and say so when the sidebar does not fit.
+    /// its pane is gone, and say so when the sidebar should show but
+    /// leaves the content fewer than `MIN_CONTENT` columns. Auto-hide is
+    /// silent.
     pub(super) fn sidebar_fit(&mut self) {
         self.sidebar_fit_focus();
-        if self.sidebar_cols() == 0 && !self.sidebar.panes().is_empty() {
+        if self.sidebar_cols() == 0 && self.sidebar_visible() && !self.sidebar_panes().is_empty() {
             self.set_status(NARROW_MESSAGE);
         }
     }
@@ -671,7 +787,7 @@ impl App {
     /// sidebar does not fit.
     fn sidebar_fit_focus(&mut self) {
         let shown = self.sidebar_cols() > 0;
-        if !shown || !self.sidebar.panes().contains(&self.sidebar.focus) {
+        if !shown || !self.sidebar_panes().contains(&self.sidebar.focus) {
             self.set_focus(Focus::Content);
         }
         if self.sidebar.focus == Focus::Content && self.mode == Mode::Filter {
@@ -709,12 +825,9 @@ impl App {
     pub(super) fn sidebar_action(&mut self, a: SidebarAction) {
         use SidebarAction as S;
         match a {
-            S::Cycle => self.pick_sidebar_mode(match self.sidebar.mode {
-                SidebarMode::Off | SidebarMode::Auto => SidebarMode::Files,
-                SidebarMode::Files => SidebarMode::Outline,
-                SidebarMode::Outline => SidebarMode::Split,
-                SidebarMode::Split => SidebarMode::Off,
-            }),
+            S::Toggle if self.no_page() => self.set_status(TREE_STAYS_MESSAGE),
+            S::Toggle => self.show_sidebar(!self.sidebar_visible()),
+            S::Cycle => self.pick_sidebar_mode(self.sidebar.next_mode()),
             S::FocusLeft
             | S::FocusNext
             | S::FocusPrev
@@ -723,11 +836,15 @@ impl App {
             | S::FocusLast
                 if !self.can_focus_sidebar() =>
             {
-                let off = self.sidebar.panes().is_empty();
-                self.set_status(if off { OFF_MESSAGE } else { NARROW_MESSAGE });
+                let hidden = !self.sidebar_visible();
+                self.set_status(if hidden {
+                    HIDDEN_MESSAGE
+                } else {
+                    NARROW_MESSAGE
+                });
             }
             S::FocusLeft => {
-                let panes = self.sidebar.panes();
+                let panes = self.sidebar_panes();
                 let f = if panes.contains(&self.sidebar.last_side) {
                     self.sidebar.last_side
                 } else {
@@ -737,14 +854,14 @@ impl App {
             }
             S::FocusRight => self.focus_pane(Focus::Content),
             S::FocusNext => {
-                let mut order = self.sidebar.panes().to_vec();
+                let mut order = self.sidebar_panes().to_vec();
                 order.push(Focus::Content);
                 let i = order.iter().position(|&f| f == self.sidebar.focus);
                 let next = order[i.map_or(0, |i| (i + 1) % order.len())];
                 self.focus_pane(next);
             }
             S::FocusPrev => {
-                let mut order = self.sidebar.panes().to_vec();
+                let mut order = self.sidebar_panes().to_vec();
                 order.push(Focus::Content);
                 let n = order.len();
                 let i = order.iter().position(|&f| f == self.sidebar.focus);
@@ -752,14 +869,14 @@ impl App {
                 self.focus_pane(prev);
             }
             S::FocusBelow => {
-                if self.sidebar.panes().len() < 2 {
+                if self.sidebar_panes().len() < 2 {
                     self.set_status(NO_PANE_BELOW);
                 } else if self.sidebar.focus != Focus::Outline {
                     self.focus_pane(Focus::Outline);
                 }
             }
             S::FocusAbove => {
-                if self.sidebar.panes().len() < 2 {
+                if self.sidebar_panes().len() < 2 {
                     self.set_status(NO_PANE_ABOVE);
                 } else if self.sidebar.focus != Focus::Files {
                     self.focus_pane(Focus::Files);
@@ -767,7 +884,7 @@ impl App {
             }
             S::FocusLast => {
                 let p = self.sidebar.prev_focus;
-                let p = if p == Focus::Content || self.sidebar.panes().contains(&p) {
+                let p = if p == Focus::Content || self.sidebar_panes().contains(&p) {
                     p
                 } else {
                     Focus::Content

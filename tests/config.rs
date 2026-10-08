@@ -34,8 +34,10 @@ fn defaults_match_spec() {
     assert_eq!(c.render.max_width, 100);
     assert_eq!(c.render.theme, "catppuccin-mocha");
     assert!(c.render.math);
+    assert!(c.sidebar.show);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
     assert_eq!(c.sidebar.width, 30);
+    assert_eq!(c.sidebar.auto_hide_below, 80);
     assert_eq!(c.sidebar.split_ratio, 0.5);
     assert!(!c.sidebar.show_all);
     assert_eq!(c.sidebar.reading, SidebarReading::Outline);
@@ -206,6 +208,26 @@ fn sidebar_reading_parses() {
     assert_eq!(c.sidebar.reading, SidebarReading::Split);
     let e = err_str("[sidebar]\nreading = \"files\"\n");
     assert!(e.contains("line 2"), "{e}");
+}
+
+#[test]
+fn sidebar_show_and_auto_hide_below_parse() {
+    let c = load_str("[sidebar]\nshow = false\nauto_hide_below = 0\n").unwrap();
+    assert!(!c.sidebar.show);
+    assert_eq!(c.sidebar.auto_hide_below, 0);
+    assert_eq!(c.sidebar.default, SidebarMode::Auto);
+}
+
+#[test]
+fn legacy_default_off_means_hidden_auto() {
+    let c = load_str("[sidebar]\ndefault = \"off\"\n").unwrap();
+    assert!(!c.sidebar.show);
+    assert_eq!(c.sidebar.default, SidebarMode::Auto);
+    let c = load_str("[sidebar]\nshow = true\ndefault = \"off\"\n").unwrap();
+    assert!(c.sidebar.show, "an explicit show wins");
+    let c = load_str("[sidebar]\ndefault = \"files\"\n").unwrap();
+    assert!(c.sidebar.show);
+    assert_eq!(c.sidebar.default, SidebarMode::Files);
 }
 
 #[test]

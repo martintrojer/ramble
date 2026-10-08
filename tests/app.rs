@@ -34,7 +34,7 @@ fn para_row(i: usize) -> usize {
 /// assume.
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.default = SidebarMode::Off;
+    config.sidebar.show = false;
     config.lsp.server = vec![];
     StartOptions {
         target,
@@ -409,6 +409,11 @@ fn dir_target_has_no_page() {
     .unwrap();
     assert!(app.page().is_none());
     assert!(app.placeholder().unwrap().starts_with("No file loaded."));
+    assert_eq!(app.focus(), ramble::app::Focus::Files, "the tree has focus");
+    // The content has no page: motions there do nothing.
+    send(&mut app, ctrl('w'));
+    keys(&mut app, "l");
+    assert_eq!(app.focus(), ramble::app::Focus::Content);
     keys(&mut app, "jGwb}{");
     send(&mut app, ctrl('d'));
     assert_eq!(app.cursor(), at(0, 0));
@@ -566,14 +571,31 @@ fn draw_marks_cursor_cell() {
 }
 
 #[test]
-fn dir_placeholder_is_drawn() {
+fn dir_start_draws_the_tree_even_when_hidden_and_narrow() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.md"), "# N\n").unwrap();
+    // `opts` hides the sidebar, and 40 columns is below auto_hide_below.
     let app = App::new(
         opts(dir.path(), StartTarget::Dir(dir.path().into())),
         (COLS, ROWS),
     )
     .unwrap();
     let s = screen(&app);
+    assert!(s.contains("Files"), "{s}");
+    assert!(s.contains("note.md"), "{s}");
+}
+
+#[test]
+fn dir_placeholder_is_drawn_beside_the_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut term = Terminal::new(TestBackend::new(100, ROWS)).unwrap();
+    let app = App::new(
+        opts(dir.path(), StartTarget::Dir(dir.path().into())),
+        (100, ROWS),
+    )
+    .unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    let s = term.backend().to_string();
     assert!(s.contains("No file loaded"), "{s}");
 }
 
