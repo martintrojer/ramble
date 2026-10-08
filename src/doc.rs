@@ -229,8 +229,12 @@ pub struct InlineStyle {
 }
 
 /// Parse markdown. Never fails: invalid UTF-8 is handled by the caller
-/// via [`from_bytes`].
-pub fn parse(source: String) -> Document {
+/// via [`from_bytes`]. A leading byte order mark is dropped (it would hide
+/// front matter from the parser); `source` and every range exclude it.
+pub fn parse(mut source: String) -> Document {
+    if source.starts_with('\u{feff}') {
+        source.drain(..'\u{feff}'.len_utf8());
+    }
     let events = events(&source);
     let mut i = 0;
     let blocks = parse_blocks(&source, &events, &mut i);

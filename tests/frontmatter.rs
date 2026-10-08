@@ -300,3 +300,22 @@ fn resize_keeps_the_cursor_on_an_entry_row_and_fold_moves_it_to_the_marker() {
         "folding moves the cursor to the marker"
     );
 }
+
+#[test]
+fn a_byte_order_mark_does_not_hide_the_front_matter() {
+    let doc = ramble::doc::from_bytes(b"\xEF\xBB\xBF---\ntitle: T\n---\n\n# Body\n").unwrap();
+    assert!(doc.front_matter.is_some());
+    let page = render_page(&doc, 40, &Theme::catppuccin_mocha(), false);
+    let first: String = page.lines[0]
+        .spans
+        .iter()
+        .map(|s| s.content.as_ref())
+        .collect();
+    assert_eq!(first, "▸ front matter · 1 key");
+    let out = to_ansi(&render(&doc, 40, &Theme::catppuccin_mocha()));
+    assert!(!out.contains("title"), "{out}");
+    // Stdin text goes through `parse` directly.
+    let doc = parse("\u{feff}---\ntitle: T\n---\n\n# Body\n".into());
+    assert!(doc.front_matter.is_some());
+    assert!(!doc.source.starts_with('\u{feff}'));
+}
