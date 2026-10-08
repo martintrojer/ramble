@@ -106,7 +106,7 @@ Inputs:
 - `need`: the display width of each row in each pane shown, measured as it
   would be drawn: indent + icon + name + markers. The files pane counts
   visible tree rows (expanded folders only). The outline pane counts every
-  heading at its indent, plus 2 columns for ` ◂`. Rows with a review mark
+  heading at its indent, plus the 1-column marker gutter (D8). Rows with a review mark
   add ` ● N`. Each pane title is a row too. Width is measured with
   `unicode-width`.
 - `cols`: the terminal width.
@@ -155,7 +155,8 @@ name gets whatever room is left.
 - **File and folder names**: clip in the middle with `…` and keep the end,
   extension included (`2026-10-07-ram…-spec.md`). A name keeps at least
   its last 6 columns, or the whole extension if that is longer.
-- **Markers**: ` ◂` and ` ● N` are never clipped. When there is no room
+- **Markers**: the current marker sits in the left gutter (D8), so clipping
+  never touches it. ` ● N` is never clipped. When there is no room
   for the count, ` ● N` drops to ` ●`, as `review_mark` already does.
 - **Deep nesting**: when the indent would leave fewer than 8 columns for
   the name, stop indenting at that depth, so the name keeps at least 8
@@ -168,6 +169,15 @@ name gets whatever room is left.
 
 The clip helpers (`clip_end(&str, width)`, `clip_middle(&str, width)`) are
 pure functions in `src/ui/clip.rs`, with their own tests.
+
+### D8. Current marker on the left (user nit)
+
+The current heading (outline) and the open file (files tree) are marked in a
+1-column gutter at the left edge of each pane, before the indent, so a long
+name can never push the marker out of view. Both panes always reserve this
+gutter, so rows don't shift when the marker moves. The glyph is `▎` in
+peach, replacing the trailing ` ◂`. The files pane marks the row whose path
+is the current page's file. The selection highlight is unchanged.
 
 ## Out of scope
 
@@ -198,7 +208,8 @@ pure functions in `src/ui/clip.rs`, with their own tests.
 - Clip helpers: ASCII, CJK and emoji. Widths 0, 1 and the exact fit.
   Middle clipping keeps the extension.
 - Rendering (TestBackend):
-  - A long heading ends in `…` with ` ◂` still visible.
+  - A long heading ends in `…` and the current-heading marker is still drawn
+    in the left gutter.
   - A long file name keeps `.md`.
   - A deep tree caps its indent.
   - A `●` row keeps its mark.
