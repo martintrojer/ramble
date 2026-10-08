@@ -68,7 +68,7 @@ pub fn body(source: &str, range: &Range<usize>) -> Range<usize> {
 
 /// Parse the text between the delimiters. Never fails.
 pub fn parse(src: &str, kind: FmKind) -> FrontMatter {
-    let scanned = scan(src);
+    let (scanned, nested) = scan(src);
     let real = match kind {
         FmKind::Yaml => yaml_entries(src),
         FmKind::Toml => toml_entries(src),
@@ -77,6 +77,7 @@ pub fn parse(src: &str, kind: FmKind) -> FrontMatter {
         Some(real) => combine(
             real.into_iter().map(|(k, v)| (k, one_line(v))).collect(),
             scanned,
+            &nested,
             src,
             kind,
         ),
@@ -95,6 +96,7 @@ pub fn parse(src: &str, kind: FmKind) -> FrontMatter {
 fn combine(
     real: Vec<(String, FmValue)>,
     mut scanned: Vec<FmEntry>,
+    nested: &[bool],
     src: &str,
     kind: FmKind,
 ) -> Vec<FmEntry> {
@@ -124,7 +126,7 @@ fn combine(
         for (i, n) in norm.iter().enumerate().rev() {
             if let Some(shape) = shapes[index[n.as_str()]].take() {
                 let value = std::mem::replace(&mut scanned[i].value, FmValue::Map);
-                scanned[i].value = pick(shape, value);
+                scanned[i].value = pick(shape, value, nested[i]);
             }
         }
         return scanned;
@@ -136,13 +138,13 @@ fn combine(
     keys.iter()
         .zip(shapes)
         .map(|(key, shape)| {
-            let found = first.get(key.as_str()).map(|&i| &scanned[i]);
+            let found = first.get(key.as_str()).map(|&i| (i, &scanned[i]));
             FmEntry {
                 value: match found {
-                    Some(e) => pick(shape, e.value.clone()),
+                    Some((i, e)) => pick(shape, e.value.clone(), nested[i]),
                     None => shape,
                 },
-                src: found.map_or(0..src.len(), |e| e.src.clone()),
+                src: found.map_or(0..src.len(), |(_, e)| e.src.clone()),
                 key: key.clone(),
             }
         })
@@ -192,8 +194,11 @@ fn yaml_key(key: &str) -> String {
 }
 
 /// The parser's shape, with the scan's text when the shapes agree.
-fn pick(shape: FmValue, scanned: FmValue) -> FmValue {
+/// Lists keep the scan's items only when the scan saw no nested list or
+/// map item (`- - b`, `- src: a`) and the item counts agree.
+fn pick(shape: FmValue, scanned: FmValue, nested: bool) -> FmValue {
     match (&shape, &scanned) {
+        (FmValue::List(p), FmValue::List(t)) if nested || p.len() != t.len() => shape,
         (FmValue::Scalar(_), FmValue::Scalar(_)) | (FmValue::List(_), FmValue::List(_)) => scanned,
         _ => shape,
     }
@@ -281,6 +286,8 @@ struct Building {
     /// The inline value and folded continuation lines.
     parts: Vec<String>,
     items: Vec<String>,
+    /// An item opened a nested list or map (`- - b`, `- k: v`).
+    nested: bool,
     map: bool,
     /// After a `|` / `>` header: every more-indented line is text.
     block: bool,
@@ -288,7 +295,8 @@ struct Building {
 }
 
 impl Building {
-    fn finish(self) -> FmEntry {
+    fn finish(self) -> (FmEntry, bool) {
+        let nested = self.nested;
         let value = if self.block {
             FmValue::Scalar(self.parts.join(" "))
         } else if self.map {
@@ -305,11 +313,19 @@ impl Building {
                 FmValue::Scalar(unquote(&text).to_string())
             }
         };
-        FmEntry {
+        let entry = FmEntry {
             key: self.key,
             value,
             src: self.src,
-        }
+        };
+        (entry, nested)
+    }
+
+    /// Add the `- item` line `t`.
+    fn push_item(&mut self, t: &str) {
+        let raw = t[1..].trim();
+        self.nested |= is_item(raw) || split_entry(raw).is_some();
+        self.items.push(unquote(raw).to_string());
     }
 
     /// No value on the key line and nothing after it yet.
@@ -321,7 +337,7 @@ impl Building {
 /// Walk the block line by line: `key: value` / `key = value` at the
 /// smallest indentation starts an entry; more indented lines are list
 /// items, nested keys (a map) or folded continuation.
-fn scan(src: &str) -> Vec<FmEntry> {
+fn scan(src: &str) -> (Vec<FmEntry>, Vec<bool>) {
     let mut lines = Vec::new();
     let mut at = 0;
     for line in src.split_inclusive('\n') {
@@ -340,7 +356,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
         .map(|(_, t)| indent(t))
         .min()
     else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
 
     let quoted = quoted_continuations(&lines, base);
@@ -356,6 +372,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
                 vec![v]
             },
             items: Vec::new(),
+            nested: false,
             map: false,
             block,
             src: at..at + t.len(),
@@ -383,7 +400,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
                 // `key:` then `- item` at the same indentation.
                 _ if is_item(t) && cur.as_ref().is_some_and(|c| c.parts.is_empty() && !c.map) => {
                     let c = cur.as_mut().expect("checked");
-                    c.items.push(unquote(t[1..].trim()).to_string());
+                    c.push_item(t);
                     c.src.end = at + line.len();
                 }
                 _ => out.extend(cur.take().map(Building::finish)),
@@ -394,7 +411,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
         if c.block {
             c.parts.push(t.to_string());
         } else if is_item(t) {
-            c.items.push(unquote(t[1..].trim()).to_string());
+            c.push_item(t);
         } else if let Some(kv) = split_entry(t).filter(|_| !c.parts.is_empty() && !c.map) {
             // Bad indentation: a key under a scalar starts its own entry.
             out.extend(cur.take().map(Building::finish));
@@ -408,7 +425,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
         c.src.end = at + line.len();
     }
     out.extend(cur.map(Building::finish));
-    out
+    out.into_iter().unzip()
 }
 
 /// Indices of lines inside a quoted value that runs past its key line:
@@ -958,6 +975,26 @@ mod tests {
         );
         assert_eq!(kv(&fm)[0], ("key0", s("value 0")));
         assert_eq!(kv(&fm)[7], ("key7", s("value 7")));
+    }
+
+    #[test]
+    fn nested_list_items_take_the_parser_items() {
+        let fm = parse("l:\n  - a\n  - - b\n    - c\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("l", l(&["a", "b, c"]))]);
+        let fm = parse(
+            "resources:\n- src: a.jpg\n  title: A\n- src: b.jpg\n",
+            FmKind::Yaml,
+        );
+        assert_eq!(kv(&fm), [("resources", l(&["{…}", "{…}"]))]);
+        // One item, so the counts agree: the nesting alone decides.
+        let fm = parse("r:\n- src: a.jpg\n  title: A\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("r", l(&["{…}"]))]);
+        // A nested flow list: the scan splits it into more items.
+        let fm = parse("l: [a, [b, c]]\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("l", l(&["a", "b, c"]))]);
+        // Same items: the scan's text still wins.
+        let fm = parse("l:\n  - '01'\n  - 1.10\n  - \"a: b\"\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("l", l(&["01", "1.10", "a: b"]))]);
     }
 
     #[test]

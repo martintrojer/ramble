@@ -426,3 +426,11 @@ fn block_scalar_rows_are_one_line_of_text() {
     let r = rows(src, 40, true);
     assert_eq!(r[1..4], ["desc  a: b c", "list  - a - b", "z     1"]);
 }
+
+#[test]
+fn nested_list_items_render_as_the_parser_sees_them() {
+    let src =
+        "---\nresources:\n- src: a.jpg\n  title: A\nl:\n  - a\n  - - b\n    - c\n---\n\nbody\n";
+    let r = rows(src, 40, true);
+    assert_eq!(r[1..3], ["resources  {…}", "l          a, b, c"]);
+}
