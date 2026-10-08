@@ -432,10 +432,33 @@ fn split_entry(t: &str) -> Option<(String, String)> {
         if after.is_empty() || after.starts_with('#') {
             value = &value[..end];
         }
-    } else if let Some(i) = value.find(" #") {
+    } else if let Some(i) = comment_start(value) {
         value = value[..i].trim_end();
     }
     Some((key.to_string(), value.to_string()))
+}
+
+/// Where an unquoted value's ` # comment` starts. A `#` inside `[...]` or
+/// `{...}` (Obsidian's `tags: [#a, #b]`) is part of the value, and so is
+/// everything after an unclosed bracket.
+fn comment_start(v: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    // A value that starts with `#` is shown, as before (generous).
+    let mut prev = '#';
+    for (i, c) in v.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') if depth > 0 => quote = Some(c),
+            (None, '[' | '{') => depth += 1,
+            (None, ']' | '}') => depth = depth.saturating_sub(1),
+            (None, '#') if depth == 0 && prev.is_whitespace() => return Some(i),
+            _ => {}
+        }
+        prev = c;
+    }
+    None
 }
 
 /// For a value starting with a quote, the byte just past its closing
@@ -722,6 +745,25 @@ mod tests {
             kv(&fm),
             [("title", s("\"open")), ("z", s("1")), ("w", s("x"))]
         );
+    }
+
+    #[test]
+    fn hashes_inside_an_inline_list_are_values() {
+        let fm = parse("tags: [#a, #b] # c\nm: {k: #v}\nt: x #y\n", FmKind::Yaml);
+        assert_eq!(
+            kv(&fm),
+            [
+                ("tags", l(&["#a", "#b"])),
+                ("m", FmValue::Map),
+                ("t", s("x")),
+            ]
+        );
+        // Unclosed bracket: generous, keep the rest.
+        let fm = parse("tags: [#a, #b\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("tags", s("[#a, #b"))]);
+        // A bracket inside a quoted item doesn't close the list.
+        let fm = parse("t: [\"x ] #\", #y] # c\nh: #h\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("t", l(&["x ] #", "#y"])), ("h", s("#h"))]);
     }
 
     #[test]
