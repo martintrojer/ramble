@@ -229,6 +229,10 @@ pub struct Tree {
     selected: Option<PathBuf>,
     /// The followed file when it lies outside the root.
     outside: Option<PathBuf>,
+    /// The deepest root left with `-` (D10). It and its ancestors are
+    /// listed even when the walk would skip them (dotfiles, ignored,
+    /// no markdown), so you can see where you came from.
+    origin: Option<PathBuf>,
     filter: Option<String>,
     /// Entries the walker has yielded below a walked dir, at any depth.
     entries_read: usize,
@@ -238,6 +242,15 @@ fn canonical(p: &Path) -> PathBuf {
     p.canonicalize()
         .or_else(|_| std::path::absolute(p))
         .unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Folders first, then by name, case-insensitively.
+fn sort_nodes(nodes: &mut [Node]) {
+    nodes.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
 }
 
 fn matches(name: &str, filter: Option<&str>) -> bool {
@@ -256,6 +269,7 @@ impl Tree {
             expanded: HashSet::new(),
             selected: None,
             outside: None,
+            origin: None,
             filter: None,
             entries_read: 0,
         };
@@ -293,6 +307,9 @@ impl Tree {
         };
         let old = self.root.clone();
         let was_outside = self.outside.is_some();
+        if !self.origin.as_ref().is_some_and(|o| o.starts_with(&old)) {
+            self.origin = Some(old.clone());
+        }
         self.set_root(&parent);
         self.expand(&old);
         if !was_outside || self.outside.is_some() {
@@ -329,12 +346,37 @@ impl Tree {
                 is_dir: e.path().is_dir(),
             })
             .collect();
-        nodes.sort_by(|a, b| {
-            b.is_dir
-                .cmp(&a.is_dir)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        sort_nodes(&mut nodes);
         self.children.insert(dir.to_path_buf(), nodes);
+    }
+
+    /// The children of `dir` to list: the walked ones, plus the next
+    /// directory down towards [`Tree::origin`] when the walk skipped it.
+    fn listed(&self, dir: &Path) -> Option<std::borrow::Cow<'_, [Node]>> {
+        let nodes = self.children.get(dir)?;
+        let pinned = self
+            .origin
+            .as_deref()
+            .and_then(|o| o.ancestors().find(|a| a.parent() == Some(dir)))
+            .filter(|p| p.is_dir() && !nodes.iter().any(|n| n.path == *p));
+        let Some(p) = pinned else {
+            return Some(std::borrow::Cow::Borrowed(nodes));
+        };
+        let mut nodes = nodes.clone();
+        nodes.push(Node {
+            path: p.to_path_buf(),
+            name: p
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            is_dir: true,
+        });
+        sort_nodes(&mut nodes);
+        Some(std::borrow::Cow::Owned(nodes))
+    }
+
+    /// `path` is the origin or one of its ancestors (D10).
+    fn on_origin_path(&self, path: &Path) -> bool {
+        self.origin.as_ref().is_some_and(|o| o.starts_with(path))
     }
 
     pub fn expand(&mut self, dir: &Path) {
@@ -458,12 +500,13 @@ impl Tree {
     }
 
     fn push_items(&self, dir: &Path, depth: usize, out: &mut Vec<TreeItem>) {
-        let Some(nodes) = self.children.get(dir) else {
+        let Some(nodes) = self.listed(dir) else {
             return;
         };
-        for n in nodes {
+        for n in nodes.iter() {
             let markdown = !n.is_dir && is_markdown(&n.path);
             let shown = self.show_all
+                || self.on_origin_path(&n.path)
                 || if n.is_dir {
                     self.has_markdown(&n.path)
                 } else {

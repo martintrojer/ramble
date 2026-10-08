@@ -1726,3 +1726,47 @@ fn title_clips_the_root_from_the_left() {
         "Files …lder-name/sub"
     );
 }
+
+#[test]
+fn going_up_from_a_hidden_or_ignored_dir_lists_and_selects_it() {
+    let (_d, root) = fixture();
+    write(&root, ".hid/.inner/n.md", "# N\n");
+    let mut app = tree_at(&root, ".hid/.inner");
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.selected(), Some(root.join(".hid/.inner").as_path()));
+    assert_eq!(tree.selected_index(&tree.visible_items()), Some(0));
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.root(), root);
+    // The whole way back stays listed, not just the last root.
+    assert_eq!(
+        names(tree),
+        [".hid", "  .inner", "    n.md", "docs", "img", "a.md"]
+    );
+    assert_eq!(tree.selected(), Some(root.join(".hid").as_path()));
+    assert!(tree.selected_index(&tree.visible_items()).is_some());
+    // An ignored dir too (build/ is in .gitignore).
+    let mut app = tree_at(&root, "build");
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert!(
+        names(tree).contains(&"build".to_string()),
+        "{:?}",
+        names(tree)
+    );
+    assert!(tree.selected_index(&tree.visible_items()).is_some());
+    // A folder with no markdown (only shown with show_all) too.
+    let mut app = tree_at(&root, "img");
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.selected(), Some(root.join("img").as_path()));
+    assert!(tree.selected_index(&tree.visible_items()).is_some());
+    // Browsing elsewhere drops it again.
+    let mut app = tree_at(&root, "build");
+    keys(&mut app, "-");
+    keys(&mut app, "/doc");
+    app.handle_key(key(KeyCode::Enter));
+    keys(&mut app, ".-");
+    assert!(!names(app.tree().unwrap()).contains(&"build".to_string()));
+}
