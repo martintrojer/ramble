@@ -419,3 +419,10 @@ fn narrow_width_keeps_the_value_visible() {
         );
     }
 }
+
+#[test]
+fn block_scalar_rows_are_one_line_of_text() {
+    let src = "---\ndesc: |\n  a: b\n  c\nlist: >\n  - a\n  - b\nz: 1\n---\n\nbody\n";
+    let r = rows(src, 40, true);
+    assert_eq!(r[1..4], ["desc  a: b c", "list  - a - b", "z     1"]);
+}
