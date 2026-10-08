@@ -1646,11 +1646,17 @@ fn root_moves_only_in_the_tree_and_dash_is_files_pane_only() {
         StartTarget::File(root.join("docs/guide.md")),
         config(SidebarMode::Split),
     );
-    // In the outline pane `-` does nothing.
+    // In the outline pane `-` and `.` do nothing, even with a folder
+    // selected in the tree.
     win(&mut app, 'h');
+    keys(&mut app, "gg");
+    assert_eq!(
+        app.tree().unwrap().selected(),
+        Some(root.join("docs/deep").as_path())
+    );
     win(&mut app, 'j');
     assert_eq!(app.focus(), Focus::Outline);
-    keys(&mut app, "-");
+    keys(&mut app, "-.");
     assert_eq!(app.tree().unwrap().root(), root.join("docs"));
     win(&mut app, 'k');
     keys(&mut app, "-");
@@ -1725,6 +1731,37 @@ fn title_clips_the_root_from_the_left() {
         s[0].split('│').next().unwrap().trim_end(),
         "Files …lder-name/sub"
     );
+}
+
+#[test]
+fn root_changes_are_not_history() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root.join("docs"),
+        StartTarget::File(root.join("docs/guide.md")),
+        config(SidebarMode::Files),
+    );
+    // Open deep/x.md from the tree: one history entry (guide.md).
+    win(&mut app, 'h');
+    keys(&mut app, "ggl");
+    keys(&mut app, "j");
+    assert_eq!(
+        app.tree().unwrap().selected(),
+        Some(root.join("docs/deep/x.md").as_path())
+    );
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.title().ends_with("x.md"), "{}", app.title());
+    win(&mut app, 'h');
+    keys(&mut app, "-"); // root: fixture root
+    keys(&mut app, "gg."); // root: docs
+    assert_eq!(app.tree().unwrap().root(), root.join("docs"));
+    // C-o goes back to the previous page, not to a previous root.
+    win(&mut app, 'l');
+    app.handle_key(ctrl('o'));
+    assert!(app.title().ends_with("guide.md"), "{}", app.title());
+    assert_eq!(app.tree().unwrap().root(), root.join("docs"));
+    app.handle_key(ctrl('o'));
+    assert!(app.title().ends_with("guide.md"), "no more history");
 }
 
 #[test]
