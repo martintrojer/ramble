@@ -197,6 +197,32 @@ is the current page's file. The selection highlight is unchanged.
   Its tests cover the right side too.
 - Width, auto-hide and clipping are unchanged.
 
+### D10. Moving the tree root up and down (user request)
+
+- `-` in the files pane goes up one level: the tree is re-rooted at the
+  parent of the current root. `h` on a top-level row also goes up; that
+  is a row with no parent inside the tree, where `h` does nothing today.
+- `.` on a folder row makes that folder the root.
+- After going up, the old root is expanded and selected, so you can see
+  where you came from. The `expanded` set (absolute paths) is kept, so
+  folders below keep their state. The filter is cleared when the root
+  changes.
+- The pane title shows the root, clipped from the left with `clip_end`'s
+  mirror (`…/notes/sub`), with `~` for `$HOME`: `Files ~/notes/sub`.
+  There is no `..` row.
+- Going up stops at `/` with the status "At the filesystem root".
+- If the open file is outside the root (`Tree::outside`), the tree shows
+  and selects it once the new root contains it.
+- Root changes are only a browsing view. They are not added to `C-o`
+  history and are not remembered between sessions. They don't change
+  `App::tree_root` uses outside the tree: tuicr review discovery, the
+  LSP notebook root and `yF` all keep the original root. Keep the
+  browsing root in `Tree`, not in `App::tree_root`.
+- Width is recomputed after a root change (the tree refresh hook).
+- Mouse needs nothing new: it hit-tests recorded rows.
+- `.` and `-` get help `BINDINGS` rows in the sidebar context. The clue
+  box needs nothing.
+
 ## Out of scope
 
 - Resizing the sidebar with the mouse or keys (`C-w <`/`C-w >`). That can
