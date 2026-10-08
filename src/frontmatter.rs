@@ -288,6 +288,9 @@ struct Building {
     items: Vec<String>,
     /// An item opened a nested list or map (`- - b`, `- k: v`).
     nested: bool,
+    /// Indentation of a `- |` / `- >` item: more-indented lines are its
+    /// text.
+    item_block: Option<usize>,
     map: bool,
     /// After a `|` / `>` header: every more-indented line is text.
     block: bool,
@@ -321,11 +324,26 @@ impl Building {
         (entry, nested)
     }
 
-    /// Add the `- item` line `t`.
-    fn push_item(&mut self, t: &str) {
+    /// Add the `- item` line `t`, indented by `ind`.
+    fn push_item(&mut self, t: &str, ind: usize) {
         let raw = t[1..].trim();
+        if is_block_indicator(raw) {
+            self.item_block = Some(ind);
+            self.items.push(String::new());
+            return;
+        }
+        self.item_block = None;
         self.nested |= is_item(raw) || split_entry(raw).is_some();
         self.items.push(unquote(raw).to_string());
+    }
+
+    /// Add a line of the `- |` item's text, joined with a space.
+    fn push_item_text(&mut self, t: &str) {
+        let last = self.items.last_mut().expect("a block item was pushed");
+        if !last.is_empty() {
+            last.push(' ');
+        }
+        last.push_str(t);
     }
 
     /// No value on the key line and nothing after it yet.
@@ -373,6 +391,7 @@ fn scan(src: &str) -> (Vec<FmEntry>, Vec<bool>) {
             },
             items: Vec::new(),
             nested: false,
+            item_block: None,
             map: false,
             block,
             src: at..at + t.len(),
@@ -400,7 +419,7 @@ fn scan(src: &str) -> (Vec<FmEntry>, Vec<bool>) {
                 // `key:` then `- item` at the same indentation.
                 _ if is_item(t) && cur.as_ref().is_some_and(|c| c.parts.is_empty() && !c.map) => {
                     let c = cur.as_mut().expect("checked");
-                    c.push_item(t);
+                    c.push_item(t, ind);
                     c.src.end = at + line.len();
                 }
                 _ => out.extend(cur.take().map(Building::finish)),
@@ -410,8 +429,10 @@ fn scan(src: &str) -> (Vec<FmEntry>, Vec<bool>) {
         let Some(c) = &mut cur else { continue };
         if c.block {
             c.parts.push(t.to_string());
+        } else if c.item_block.is_some_and(|i| ind > i) {
+            c.push_item_text(t);
         } else if is_item(t) {
-            c.push_item(t);
+            c.push_item(t, ind);
         } else if let Some(kv) = split_entry(t).filter(|_| !c.parts.is_empty() && !c.map) {
             // Bad indentation: a key under a scalar starts its own entry.
             out.extend(cur.take().map(Building::finish));
@@ -995,6 +1016,30 @@ mod tests {
         // Same items: the scan's text still wins.
         let fm = parse("l:\n  - '01'\n  - 1.10\n  - \"a: b\"\n", FmKind::Yaml);
         assert_eq!(kv(&fm), [("l", l(&["01", "1.10", "a: b"]))]);
+    }
+
+    #[test]
+    fn block_scalar_list_items_are_their_text() {
+        for h in ["|", ">", "|-"] {
+            let one = format!("l:\n  - {h}\n    just text\n");
+            assert_eq!(
+                kv(&parse(&one, FmKind::Yaml)),
+                [("l", l(&["just text"]))],
+                "{h}"
+            );
+            let two = format!("l:\n  - {h}\n    a: b\n  - c\nz: 1\n");
+            let fm = parse(&two, FmKind::Yaml);
+            assert_eq!(kv(&fm), [("l", l(&["a: b", "c"])), ("z", s("1"))], "{h}");
+            // Scan only (a tab elsewhere makes the YAML invalid).
+            let fm = parse(&format!("{two}\tbad\n"), FmKind::Yaml);
+            assert_eq!(kv(&fm)[0], ("l", l(&["a: b", "c"])), "{h}");
+        }
+        // Compact list at the key's indentation; a block item ends at the
+        // next item even when the text was two lines.
+        let fm = parse("l:\n- |\n  x\n  y\n- z\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("l", l(&["x y", "z"]))]);
+        let fm = parse("l:\n- |\n  x\n  y\n- z\n\tbad\n", FmKind::Yaml);
+        assert_eq!(kv(&fm)[0], ("l", l(&["x y", "z"])));
     }
 
     #[test]

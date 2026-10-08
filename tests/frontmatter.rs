@@ -434,3 +434,9 @@ fn nested_list_items_render_as_the_parser_sees_them() {
     let r = rows(src, 40, true);
     assert_eq!(r[1..3], ["resources  {…}", "l          a, b, c"]);
 }
+
+#[test]
+fn block_scalar_list_item_rows_show_the_text() {
+    let src = "---\nl:\n  - |\n    a: b\n  - c\n---\n\nbody\n";
+    assert_eq!(rows(src, 40, true)[1], "l  a: b, c");
+}
