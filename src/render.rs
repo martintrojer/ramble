@@ -16,6 +16,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{self, AlertKind, Alignment, Block, Document, Inline, ListItem};
+use crate::frontmatter::{self, FmKind, FrontMatter};
 
 /// Colours and styles. `Theme::catppuccin_mocha()` is the default.
 #[derive(Debug, Clone)]
@@ -133,10 +134,38 @@ pub struct RenderedPage {
     pub source_lines: Vec<usize>,
 }
 
-/// Lay out `doc` at `width` columns.
+/// Lay out `doc` at `width` columns, front matter left out (print mode).
 pub fn render(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
     render_with(doc, width, theme, &|r| doc::inlines(doc, r))
 }
+
+/// [`render`] for the normal view: front matter, if any, first, as a
+/// folded marker row or (`expanded`) the marker and one row per entry.
+pub fn render_page(doc: &Document, width: u16, theme: &Theme, expanded: bool) -> RenderedPage {
+    let inlines = |r| doc::inlines(doc, r);
+    let mut r = Renderer::new(doc, width, &inlines);
+    r.math = theme.math;
+    if let Some(range) = &doc.front_matter {
+        r.front_matter(range, doc.front_matter_kind, expanded);
+    }
+    r.blocks(&doc.blocks, true);
+    r.finish()
+}
+
+/// Text of the folded front-matter marker row.
+pub fn front_matter_marker(fm: &FrontMatter, expanded: bool) -> String {
+    if expanded {
+        return "▾ front matter".into();
+    }
+    match fm.entries.len() {
+        _ if !fm.parsed => "▸ front matter · unparsed".into(),
+        1 => "▸ front matter · 1 key".into(),
+        n => format!("▸ front matter · {n} keys"),
+    }
+}
+
+/// Widest key column in the expanded front matter.
+const FM_KEY_MAX: usize = 20;
 
 /// [`render`] with the inline walker injected, so layout can be tested
 /// with hand-built inlines.
@@ -151,13 +180,7 @@ pub fn render_with(
     let mut r = Renderer::new(doc, width, inlines);
     r.math = theme.math;
     r.blocks(&doc.blocks, true);
-    RenderedPage {
-        lines: r.lines,
-        srcmap: SrcMap {
-            segments: r.segments,
-        },
-        source_lines: r.source_lines,
-    }
+    r.finish()
 }
 
 /// Lay out `doc`'s source as-is for the raw view: one source line per row,
@@ -363,6 +386,30 @@ fn wrap(toks: Vec<Tok>, avail: usize, base: Style) -> Vec<Vec<Cell>> {
     rows
 }
 
+/// `cells` cut to `max` columns, ending in `…` when cut.
+fn clip(cells: Vec<Cell>, max: usize) -> Vec<Cell> {
+    if width_of(&cells) <= max {
+        return cells;
+    }
+    let mut out = Vec::new();
+    let mut w = 0;
+    for c in cells {
+        if w + c.w + 1 > max {
+            break;
+        }
+        w += c.w;
+        out.push(c);
+    }
+    while out.last().is_some_and(|c| c.text == " ") {
+        out.pop();
+    }
+    if max > 0 {
+        let style = out.last().map_or_else(base_style, |c| c.style);
+        out.push(Cell::deco("…", style));
+    }
+    out
+}
+
 /// Split one row into rows no wider than `avail`, by grapheme.
 fn hard_break(cells: Vec<Cell>, avail: usize) -> Vec<Vec<Cell>> {
     let mut rows = Vec::new();
@@ -516,6 +563,126 @@ impl<'a> Renderer<'a> {
             lines: Vec::new(),
             segments: Vec::new(),
             source_lines: Vec::new(),
+        }
+    }
+
+    fn finish(self) -> RenderedPage {
+        RenderedPage {
+            lines: self.lines,
+            srcmap: SrcMap {
+                segments: self.segments,
+            },
+            source_lines: self.source_lines,
+        }
+    }
+
+    /// The front-matter block at `range` (fences included): the marker
+    /// row, then when `expanded` one row per entry (or the raw lines when
+    /// nothing was extracted), then a blank row. Every row maps to source
+    /// bytes, so the cursor and yank work on them.
+    fn front_matter(&mut self, range: &Range<usize>, kind: FmKind, expanded: bool) {
+        let dim = Style::new().fg(palette::OVERLAY);
+        let body = frontmatter::body(self.src, range);
+        let text = self.slice(&body);
+        let fm = frontmatter::parse(text, kind);
+        let marker = front_matter_marker(&fm, expanded);
+        // Folded, the marker stands for the whole block; expanded, for
+        // the opening fence, so entry bytes resolve to their own rows.
+        let src = Some(if expanded {
+            range.start..body.start.max(range.start + 1)
+        } else {
+            range.clone()
+        });
+        let cells = marker
+            .graphemes(true)
+            .map(|g| Cell {
+                src: src.clone(),
+                ..Cell::deco(g, dim)
+            })
+            .collect();
+        self.emit(cells, Some(range.start));
+        if expanded {
+            if fm.entries.is_empty() {
+                let mut at = body.start;
+                for line in text.split_inclusive('\n') {
+                    let r = at..at + line.trim_end_matches(['\n', '\r']).len();
+                    at += line.len();
+                    let cells = self.text_cells(&r, dim, None);
+                    self.emit(cells, Some(r.start));
+                }
+            } else {
+                self.front_matter_entries(&fm, body.start);
+            }
+        }
+        self.blank();
+    }
+
+    /// One row per entry: the dim key padded to the widest (at most
+    /// [`FM_KEY_MAX`] columns), two spaces, the value clipped with `…`.
+    fn front_matter_entries(&mut self, fm: &FrontMatter, base: usize) {
+        let dim = Style::new().fg(palette::OVERLAY);
+        let avail = self.avail();
+        let key_w = fm
+            .entries
+            .iter()
+            .map(|e| UnicodeWidthStr::width(e.key.as_str()))
+            .max()
+            .unwrap_or(0)
+            .min(FM_KEY_MAX)
+            .min(avail.saturating_sub(3).max(1));
+        for e in &fm.entries {
+            let entry = base + e.src.start..base + e.src.end;
+            let line = self.slice(&entry);
+            let key = self.mapped(&e.key, line, entry.start, &entry, dim, 0);
+            let mut cells = clip(key, key_w);
+            let pad = key_w.saturating_sub(width_of(&cells)) + 2;
+            cells.extend((0..pad).map(|_| Cell::deco(" ", base_style())));
+            let after = line
+                .find(':')
+                .or_else(|| line.find('='))
+                .map_or(0, |i| i + 1);
+            let value = e.value.display();
+            let value = self.mapped(&value, line, entry.start, &entry, base_style(), after);
+            let room = avail.saturating_sub(width_of(&cells));
+            cells.extend(clip(value, room));
+            self.emit_row(cells, Some(entry.start));
+        }
+    }
+
+    /// Cells for `text`, each mapped to its own bytes when `text` appears
+    /// verbatim in `line` (at `line_start`) at or after byte `from` of the
+    /// line, else all to `whole`.
+    fn mapped(
+        &self,
+        text: &str,
+        line: &str,
+        line_start: usize,
+        whole: &Range<usize>,
+        style: Style,
+        from: usize,
+    ) -> Vec<Cell> {
+        let found = line
+            .get(from..)
+            .and_then(|l| l.find(text))
+            .filter(|_| !text.is_empty());
+        match found {
+            Some(i) => {
+                let start = line_start + from + i;
+                self.text_cells(&(start..start + text.len()), style, None)
+            }
+            None => text
+                .graphemes(true)
+                .map(|g| {
+                    let (t, w) = sanitize(g);
+                    Cell {
+                        text: t,
+                        w,
+                        style,
+                        src: Some(whole.clone()),
+                        link: None,
+                    }
+                })
+                .collect(),
         }
     }
 

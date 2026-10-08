@@ -258,6 +258,7 @@ impl App {
         };
         let anchor = self.cursor_anchor();
         let (scroll, status, raw) = (self.scroll, self.status.clone(), self.raw());
+        let fm_expanded = self.front_matter_expanded();
         let view = self.tree().map(Tree::view);
         if !self.open_bytes(&path, &bytes) {
             return;
@@ -267,6 +268,14 @@ impl App {
         // expansion and selection win.
         if let (Some(v), Some(t)) = (view, self.tree_mut()) {
             t.restore_view(v);
+        }
+        // Set before the raw layout, which reads it; a no-op when folded.
+        if let Some(p) = &mut self.page {
+            p.fm_expanded = fm_expanded;
+        }
+        if fm_expanded && !raw {
+            let (cols, rows) = self.size;
+            self.resize(cols, rows);
         }
         self.relayout_raw(raw);
         self.banner = None;

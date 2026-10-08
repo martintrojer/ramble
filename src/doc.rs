@@ -12,9 +12,11 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use pulldown_cmark::{
-    BlockQuoteKind, CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd,
+    BlockQuoteKind, CodeBlockKind, Event, LinkType, MetadataBlockKind, Options, Parser, Tag, TagEnd,
 };
 use unicode_general_category::{GeneralCategory, get_general_category};
+
+use crate::frontmatter::FmKind;
 
 /// A parsed markdown document. `source` is the full input text; every
 /// range below is a byte range into it.
@@ -32,9 +34,12 @@ pub struct Document {
     /// code-path links. The app keeps those naming an existing file
     /// ([`Document::add_links`]); `doc` itself does no I/O.
     pub code_spans: Vec<CodeSpan>,
-    /// Byte range of a leading YAML front-matter block (`---` ... `---`),
-    /// fences included. It is metadata: no block, heading or link.
+    /// Byte range of a leading front-matter block (`---` ... `---` YAML or
+    /// `+++` ... `+++` TOML), fences included. It is metadata: no block,
+    /// heading or link.
     pub front_matter: Option<Range<usize>>,
+    /// The delimiters of `front_matter` (YAML when there is none).
+    pub front_matter_kind: FmKind,
     /// True when the input had invalid UTF-8 that was replaced with U+FFFD.
     pub lossy: bool,
 }
@@ -232,10 +237,19 @@ pub fn parse(source: String) -> Document {
     let headings = collect_headings(&events);
     let links = collect_links(&events);
     let code_spans = collect_code_spans(&source, &events);
-    let front_matter = events.iter().find_map(|(event, range)| match event {
-        Event::Start(Tag::MetadataBlock(_)) => Some(range.clone()),
-        _ => None,
-    });
+    let (front_matter, front_matter_kind) = events
+        .iter()
+        .find_map(|(event, range)| match event {
+            Event::Start(Tag::MetadataBlock(k)) => Some((
+                Some(range.clone()),
+                match k {
+                    MetadataBlockKind::YamlStyle => FmKind::Yaml,
+                    MetadataBlockKind::PlusesStyle => FmKind::Toml,
+                },
+            )),
+            _ => None,
+        })
+        .unwrap_or_default();
     Document {
         source,
         blocks,
@@ -243,6 +257,7 @@ pub fn parse(source: String) -> Document {
         links,
         code_spans,
         front_matter,
+        front_matter_kind,
         lossy: false,
     }
 }
@@ -443,6 +458,7 @@ fn options() -> Options {
         | Options::ENABLE_WIKILINKS
         | Options::ENABLE_HEADING_ATTRIBUTES
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
         | Options::ENABLE_MATH
 }
 

@@ -151,6 +151,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
         always,
     ),
     b(
+        "za",
+        N,
+        G::General,
+        "fold or expand the front matter (or Enter on it)",
+        App::has_page,
+    ),
+    b(
         "gR",
         N,
         G::General,
@@ -1029,6 +1036,7 @@ mod tests {
             "zz",
             "zt",
             "zb",
+            "za",
             "gd",
             "Enter",
             "C-]",

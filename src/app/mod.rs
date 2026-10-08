@@ -13,6 +13,7 @@ mod clue;
 mod cmdline;
 mod codepath;
 mod effect;
+mod fold;
 mod follow;
 mod help;
 mod hints;
@@ -109,6 +110,8 @@ pub struct Page {
     pub rendered: RenderedPage,
     /// Shown as raw markdown source (`gR`, `:Raw`).
     pub raw: bool,
+    /// Front matter expanded (`za`); folded on every newly opened page.
+    pub fm_expanded: bool,
 }
 
 /// Input mode; selects the key table in [`App::keymap`]. Later units add

@@ -35,7 +35,7 @@ impl App {
         if p.raw == on {
             return;
         }
-        let rendered = self.render_page(&p.doc, on);
+        let rendered = self.render_page(&p.doc, on, p.fm_expanded);
         if let Some(p) = &mut self.page {
             p.raw = on;
             p.rendered = rendered;

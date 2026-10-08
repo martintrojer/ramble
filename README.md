@@ -41,7 +41,9 @@ can follow it.
 - LaTeX math drawn as Unicode: `$E = mc^2$` reads as E = mc², and `$$\frac{a+b}{c}$$`
   becomes a real stacked fraction. Inline `$…$`, display `$$…$$` and ```` ```math ````
   fences all work.
-- YAML front matter is treated as metadata, not drawn as a heading.
+- Front matter (YAML `---` or TOML `+++`) shows as a folded `▸ front matter · 5 keys`
+  row; `za` (or `Enter` on it) expands it into a key/value table. Broken
+  front matter is shown as best it can be.
 - `gR` toggles the raw markdown source, highlighted, with every motion still
   working.
 

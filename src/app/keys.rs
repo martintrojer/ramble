@@ -52,6 +52,8 @@ pub enum Action {
     CursorToTop,
     /// `zb`
     CursorToBottom,
+    /// `za`, or `Enter` on the marker: fold or expand the front matter.
+    ToggleFrontMatter,
     // Links and history.
     Follow,
     OpenExternal,
@@ -257,6 +259,7 @@ impl App {
                 ('z', 'z') => KeyResult::Action(A::CenterCursor),
                 ('z', 't') => KeyResult::Action(A::CursorToTop),
                 ('z', 'b') => KeyResult::Action(A::CursorToBottom),
+                ('z', 'a') => KeyResult::Action(A::ToggleFrontMatter),
                 ('Z', 'Z') => KeyResult::Action(A::Quit),
                 (']', 'l') => KeyResult::Action(A::LinkMotion(true, count)),
                 ('[', 'l') => KeyResult::Action(A::LinkMotion(false, count)),
@@ -307,6 +310,7 @@ impl App {
             KeyCode::Char('Y') => A::Visual(V::OpLines(count.unwrap_or(1).max(1))),
             KeyCode::Char('v') => A::Visual(V::Start(VK::Char)),
             KeyCode::Char('V') => A::Visual(V::Start(VK::Line)),
+            KeyCode::Enter if self.on_front_matter_marker() => A::ToggleFrontMatter,
             KeyCode::Enter => A::Follow,
             KeyCode::Tab => A::Forward,
             KeyCode::Char('q') => A::Quit,
@@ -363,6 +367,7 @@ impl App {
             A::CenterCursor => self.center_cursor(),
             A::CursorToTop => self.cursor_to_top(),
             A::CursorToBottom => self.cursor_to_bottom(),
+            A::ToggleFrontMatter => self.toggle_front_matter(),
             A::Follow => self.follow(),
             A::OpenExternal => self.open_external(),
             A::Back => self.back(),

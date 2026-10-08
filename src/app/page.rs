@@ -46,12 +46,13 @@ impl App {
         // Before the layout, so the first render uses the right width.
         let first = self.sidebar_page_loading();
         self.sidebar_auto_reading();
-        let rendered = self.render_page(&doc, false);
+        let rendered = self.render_page(&doc, false, false);
         self.page = Some(Page {
             path,
             doc,
             rendered,
             raw: false,
+            fm_expanded: false,
         });
         self.placeholder = None;
         self.rebuild_rows();
@@ -74,13 +75,14 @@ impl App {
         self.review_page_changed();
     }
 
-    /// Lay out `doc` at the current width, as raw source or rendered.
-    pub(super) fn render_page(&self, doc: &Document, raw: bool) -> RenderedPage {
+    /// Lay out `doc` at the current width, as raw source or rendered
+    /// with its front matter folded or expanded.
+    pub(super) fn render_page(&self, doc: &Document, raw: bool, fm_expanded: bool) -> RenderedPage {
         let width = self.render_width();
         if raw {
             render::render_raw(doc, width, &self.theme)
         } else {
-            render::render(doc, width, &self.theme)
+            render::render_page(doc, width, &self.theme, fm_expanded)
         }
     }
 
@@ -136,7 +138,7 @@ impl App {
         let anchor = self.cursor_anchor();
         self.size = (cols, rows);
         if let Some(p) = &self.page {
-            let rendered = self.render_page(&p.doc, p.raw);
+            let rendered = self.render_page(&p.doc, p.raw, p.fm_expanded);
             if let Some(p) = &mut self.page {
                 p.rendered = rendered;
             }

@@ -36,6 +36,7 @@ fn doc(source: &str, blocks: Vec<Block>, links: Vec<Link>) -> Document {
         links,
         code_spans: Vec::new(),
         front_matter: None,
+        front_matter_kind: Default::default(),
         lossy: false,
     }
 }
