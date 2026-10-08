@@ -7,6 +7,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
+use super::clip::{clip_end, clip_middle};
+use crate::app::sidebar::OUTLINE_TITLE;
+use crate::app::sidebar_width::{GUTTER_COLS, ICON_COLS as ICON};
 use crate::app::{App, Focus};
 use crate::render::palette;
 
@@ -14,6 +17,32 @@ use crate::render::palette;
 const SELECTED_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 /// Background of the filter prompt (Catppuccin Mocha mantle).
 const PROMPT_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
+/// Columns a name or heading keeps at least before indenting stops.
+const MIN_NAME: usize = 8;
+/// The current-row marker (D8), drawn in the left gutter.
+const CURRENT: &str = "▎";
+
+/// Where a row of nesting `depth` starts in a pane `width` wide whose rows
+/// put `lead` columns (the folder arrow) before the name: `(indent_cols,
+/// arrow_col)`. `indent_cols` is the indent after the marker gutter;
+/// `arrow_col` is where the arrow (or the text, with no lead) starts,
+/// from the pane's left edge. Indenting stops at the depth that would
+/// leave the name fewer than `MIN_NAME` columns, so deep rows share the
+/// deepest indent that fits.
+pub(crate) fn row_prefix(depth: usize, width: usize, lead: usize) -> (usize, usize) {
+    let room = width.saturating_sub(GUTTER_COLS + lead + MIN_NAME);
+    let indent = (2 * depth).min(room - room % 2);
+    (indent, GUTTER_COLS + indent)
+}
+
+/// The marker gutter of a row: `▎` in peach on the current row.
+fn gutter(current: bool) -> Span<'static> {
+    if current {
+        Span::styled(CURRENT, Style::new().fg(palette::PEACH))
+    } else {
+        Span::raw(" ".repeat(GUTTER_COLS))
+    }
+}
 
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::new()
@@ -35,15 +64,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn title(text: String, focused: bool, filter: Option<&str>) -> Line<'static> {
+fn title(text: String, focused: bool) -> Line<'static> {
     let mut style = Style::new().fg(palette::BLUE).add_modifier(Modifier::BOLD);
     if !focused {
         style = style.fg(palette::OVERLAY);
     }
-    let text = match filter {
-        Some(f) => format!("{text} /{f}"),
-        None => text,
-    };
     Line::from(Span::styled(text, style))
 }
 
@@ -71,38 +96,47 @@ fn draw_list(frame: &mut Frame, area: Rect, head: Line, rows: Vec<Line>, selecte
 fn draw_files(frame: &mut Frame, app: &App, area: Rect) {
     let Some(tree) = app.tree() else { return };
     let items = tree.visible_items();
+    let width = area.width as usize;
+    let open = app.sidebar_current_file();
     let rows = items
         .iter()
         .map(|i| {
-            let indent = "  ".repeat(i.depth);
+            let (indent, arrow_col) = row_prefix(i.depth, width, ICON);
             let (icon, style) = match (i.is_dir, i.expanded, i.markdown) {
                 (true, true, _) => ("▾ ", Style::new().fg(palette::BLUE)),
                 (true, false, _) => ("▸ ", Style::new().fg(palette::BLUE)),
                 (false, _, true) => ("  ", Style::new().fg(palette::TEXT)),
                 (false, _, false) => ("  ", Style::new().fg(palette::OVERLAY)),
             };
-            let text = format!("{indent}{icon}{}", i.name);
-            let mark = review_mark(app, &i.path, Span::raw(text.as_str()).width(), area.width);
-            Line::from(vec![Span::styled(text, style), mark])
+            let lead = arrow_col + ICON;
+            let name_w = Span::raw(i.name.as_str()).width();
+            let mark = review_mark(app, &i.path, width.saturating_sub(lead), name_w);
+            let room = width.saturating_sub(lead + mark.width());
+            let text = format!("{}{icon}{}", " ".repeat(indent), clip_middle(&i.name, room));
+            let current = open.as_deref() == Some(i.path.as_path());
+            Line::from(vec![gutter(current), Span::styled(text, style), mark])
         })
         .collect();
     let focused = app.focus() == Focus::Files;
     draw_list(
         frame,
         area,
-        title(app.sidebar_title(), focused, tree.filter()),
+        title(clip_middle(&app.sidebar_files_title(), width), focused),
         rows,
         tree.selected_index(&items),
     );
 }
 
-/// The review marker after a tree row of `used` columns: `●`, plus the
-/// comment count when it fits in `width`; dim on folders.
-fn review_mark(app: &App, path: &std::path::Path, used: usize, width: u16) -> Span<'static> {
+/// The review marker of a tree row with `room` columns after the indent
+/// and icon, for a name `name_w` wide: `●`, plus the comment count when
+/// the name fits beside it or keeps `MIN_NAME` columns; dim on folders.
+/// Never clipped: the name gives way.
+fn review_mark(app: &App, path: &std::path::Path, room: usize, name_w: usize) -> Span<'static> {
     match app.file_marker(path) {
         Some((c, Some(n))) => {
             let full = format!(" {c} {n}");
-            let fits = used + Span::raw(full.as_str()).width() <= width as usize;
+            let full_w = Span::raw(full.as_str()).width();
+            let fits = name_w + full_w <= room || room >= full_w + MIN_NAME;
             let text = if fits { full } else { format!(" {c}") };
             Span::styled(text, Style::new().fg(palette::PEACH))
         }
@@ -115,18 +149,19 @@ fn review_mark(app: &App, path: &std::path::Path, used: usize, width: u16) -> Sp
 }
 
 fn draw_outline(frame: &mut Frame, app: &App, area: Rect) {
+    let width = area.width as usize;
     let rows = app
         .outline()
         .into_iter()
         .map(|o| {
-            let indent = "  ".repeat(o.level.saturating_sub(1) as usize);
-            let mark = if o.current { " ◂" } else { "" };
+            let (indent, text_col) = row_prefix(o.level.saturating_sub(1).into(), width, 0);
+            let room = width.saturating_sub(text_col);
             Line::from(vec![
+                gutter(o.current),
                 Span::styled(
-                    format!("{indent}{}", o.text),
+                    format!("{}{}", " ".repeat(indent), clip_end(&o.text, room)),
                     Style::new().fg(palette::TEXT),
                 ),
-                Span::styled(mark, Style::new().fg(palette::PEACH)),
             ])
         })
         .collect();
@@ -134,7 +169,7 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) {
     draw_list(
         frame,
         area,
-        title("Outline".into(), focused, None),
+        title(clip_end(OUTLINE_TITLE, width), focused),
         rows,
         app.outline_selected(),
     );

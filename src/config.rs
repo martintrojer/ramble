@@ -36,7 +36,12 @@ pub struct SidebarConfig {
     /// Shown at start (a start with no page shows the tree regardless).
     pub show: bool,
     pub default: SidebarMode,
-    pub width: u16,
+    /// Columns, not counting the border: fitted to the rows, or fixed.
+    pub width: SidebarWidth,
+    /// Bounds of the auto width; `max_width` is also capped at 35% of the
+    /// terminal width.
+    pub min_width: u16,
+    pub max_width: u16,
     /// Share of the sidebar given to files in split mode.
     pub split_ratio: f32,
     /// Also list non-markdown files in the tree.
@@ -46,6 +51,35 @@ pub struct SidebarConfig {
     /// Hide the sidebar while the terminal is narrower than this many
     /// columns (0 disables).
     pub auto_hide_below: u16,
+}
+
+/// `sidebar.width`: `"auto"` fits the rows (spec D5), a number is used as
+/// given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarWidth {
+    Auto,
+    Fixed(u16),
+}
+
+/// `sidebar.width` as written: `"auto"` or a number.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawSidebarWidth {
+    Fixed(u16),
+    Name(String),
+}
+
+impl TryFrom<RawSidebarWidth> for SidebarWidth {
+    type Error = String;
+    fn try_from(w: RawSidebarWidth) -> Result<SidebarWidth, String> {
+        match w {
+            RawSidebarWidth::Fixed(n) => Ok(SidebarWidth::Fixed(n)),
+            RawSidebarWidth::Name(s) if s == "auto" => Ok(SidebarWidth::Auto),
+            RawSidebarWidth::Name(s) => Err(format!(
+                "sidebar.width: expected \"auto\" or a number, got \"{s}\""
+            )),
+        }
+    }
 }
 
 /// `sidebar.reading`: the mode `auto` uses while a page is loaded.
@@ -170,7 +204,9 @@ impl Default for Config {
             sidebar: SidebarConfig {
                 show: true,
                 default: SidebarMode::Auto,
-                width: 30,
+                width: SidebarWidth::Auto,
+                min_width: 16,
+                max_width: 48,
                 split_ratio: 0.5,
                 show_all: false,
                 reading: SidebarReading::Outline,
@@ -256,7 +292,9 @@ struct RawRender {
 struct RawSidebar {
     show: Option<bool>,
     default: Option<RawSidebarMode>,
-    width: Option<u16>,
+    width: Option<toml::Spanned<RawSidebarWidth>>,
+    min_width: Option<u16>,
+    max_width: Option<u16>,
     split_ratio: Option<f32>,
     show_all: Option<bool>,
     reading: Option<SidebarReading>,
@@ -365,7 +403,12 @@ impl Config {
             }
             // After the legacy `off`, so an explicit `show` wins.
             set(&mut c.sidebar.show, s.show);
-            set(&mut c.sidebar.width, s.width);
+            if let Some(w) = s.width {
+                let at = w.span().start;
+                c.sidebar.width = w.into_inner().try_into().map_err(|e| (Some(at), e))?;
+            }
+            set(&mut c.sidebar.min_width, s.min_width);
+            set(&mut c.sidebar.max_width, s.max_width);
             set(&mut c.sidebar.split_ratio, s.split_ratio);
             set(&mut c.sidebar.show_all, s.show_all);
             set(&mut c.sidebar.reading, s.reading);

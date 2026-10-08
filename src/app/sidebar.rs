@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::keys::{Action, KeyResult};
+use super::sidebar_width::{self, MIN_CONTENT};
 use super::{App, Mode, StartTarget};
-use crate::config::{SidebarConfig, SidebarMode};
+use crate::config::{SidebarConfig, SidebarMode, SidebarWidth};
 use crate::nav::is_markdown;
 
 /// Status when the sidebar is meant to show but the content would get
@@ -26,8 +27,6 @@ pub const TREE_STAYS_MESSAGE: &str = "No file loaded: the file tree stays shown"
 pub const NO_PANE_BELOW: &str = "No pane below";
 /// Status for `C-w k` without a pane above.
 pub const NO_PANE_ABOVE: &str = "No pane above";
-/// Columns the content keeps at least before the sidebar is dropped.
-const MIN_CONTENT: u16 = 10;
 
 /// Which pane receives keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -100,6 +99,9 @@ pub(super) struct Sidebar {
     narrow_override: Option<bool>,
     /// `set_page` is laying out a page: count it as loaded.
     loading: bool,
+    /// The auto width (D5), not counting the border; see
+    /// [`App::sidebar_refit`].
+    width: u16,
     focus: Focus,
     /// The focus before the last focus change, for `C-w p`.
     prev_focus: Focus,
@@ -129,6 +131,7 @@ impl Sidebar {
             shown: config.show,
             narrow_override: None,
             loading: false,
+            width: config.min_width,
             focus: Focus::Content,
             prev_focus: Focus::Content,
             last_side: Focus::Files,
@@ -533,6 +536,7 @@ impl App {
                 (_, Some('l')) | (KeyCode::Right, _) => act(S::Expand),
                 (_, Some('o')) | (KeyCode::Enter, _) => act(S::Open),
                 (_, Some('/')) => act(S::FilterStart),
+                (_, Some(':')) => KeyResult::Action(Action::Cmd(super::CmdAction::Start)),
                 (KeyCode::Esc, _) => act(S::FilterClear),
                 (_, Some('q')) => KeyResult::Action(Action::Quit),
                 _ => KeyResult::None,
@@ -557,6 +561,7 @@ impl App {
             m => m,
         };
         self.sync_tree();
+        self.sidebar_refit(false);
         let (cols, rows) = self.size;
         self.resize(cols, rows);
         self.sidebar_fit();
@@ -579,17 +584,95 @@ impl App {
             self.sidebar.narrow_override = Some(show);
         }
         self.sync_tree();
+        self.sidebar_refit(false);
         let (cols, rows) = self.size;
         self.resize(cols, rows);
         self.sidebar_fit();
     }
 
     /// A terminal resize from the event loop: a change of width ends the
-    /// step-2 override.
-    pub(super) fn sidebar_terminal_resized(&mut self, cols: u16) {
+    /// step-2 override; the width is refitted, then the page laid out.
+    pub(super) fn sidebar_terminal_resized(&mut self, cols: u16, rows: u16) {
         if cols != self.size.0 {
             self.sidebar.narrow_override = None;
         }
+        self.size = (cols, rows);
+        self.sidebar_refit(false);
+        self.resize(cols, rows);
+        self.sidebar_fit();
+    }
+
+    /// Recompute the auto width (D5) for the rows shown now. `widen_only`
+    /// (a folder expanded, a filter changed) never narrows it, so the
+    /// sidebar doesn't shift while you browse; it narrows at the next page
+    /// change. True when the width changed; the caller re-lays out.
+    pub(super) fn sidebar_refit(&mut self, widen_only: bool) -> bool {
+        let c = &self.config.sidebar;
+        if c.width != SidebarWidth::Auto {
+            return false;
+        }
+        let need = self.sidebar_need();
+        let w = sidebar_width::sidebar_width(
+            &need,
+            self.size.0,
+            self.config.render.max_width,
+            c.min_width,
+            c.max_width,
+        );
+        let w = if widen_only {
+            w.max(self.sidebar.width)
+        } else {
+            w
+        };
+        std::mem::replace(&mut self.sidebar.width, w) != w
+    }
+
+    /// [`App::sidebar_refit`], then re-lay out the page through `resize`
+    /// (srcmap, hints, review gutter) when the width changed.
+    pub(super) fn sidebar_relayout(&mut self, widen_only: bool) {
+        if self.sidebar_refit(widen_only) && self.sidebar_cols() > 0 {
+            let (cols, rows) = self.size;
+            self.resize(cols, rows);
+        }
+        self.sidebar_fit_focus();
+    }
+
+    /// The columns each row of the shown panes needs, titles included,
+    /// measured as drawn (D5 inputs).
+    fn sidebar_need(&self) -> Vec<u16> {
+        let mut need = Vec::new();
+        for pane in self.sidebar_panes() {
+            match pane {
+                Focus::Files => {
+                    let Some(t) = self.tree() else { continue };
+                    need.push(sidebar_width::cols(&files_title(
+                        &self.sidebar_title(),
+                        t.filter(),
+                    )));
+                    for i in t.visible_items() {
+                        let mark = match self.file_marker(&i.path) {
+                            Some((c, Some(n))) => format!(" {c} {n}"),
+                            Some((c, None)) => format!(" {c}"),
+                            None => String::new(),
+                        };
+                        need.push(sidebar_width::tree_row_need(i.depth, &i.name, &mark));
+                    }
+                }
+                Focus::Outline => {
+                    need.push(sidebar_width::cols(OUTLINE_TITLE));
+                    if let Some(p) = &self.page {
+                        need.extend(
+                            p.doc
+                                .headings
+                                .iter()
+                                .map(|h| sidebar_width::outline_row_need(h.level, &h.text)),
+                        );
+                    }
+                }
+                Focus::Content => {}
+            }
+        }
+        need
     }
 
     /// The terminal is narrower than `sidebar.auto_hide_below`.
@@ -636,7 +719,7 @@ impl App {
         if first {
             self.set_focus(Focus::Content);
         }
-        self.sidebar_fit_focus();
+        self.sidebar_relayout(false);
     }
 
     /// Start with no page: focus the files pane, first row selected.
@@ -668,21 +751,29 @@ impl App {
     }
 
     /// Columns the sidebar takes, its border included; 0 when it is hidden
-    /// or does not fit. With no page the tree is all there is to show, so
-    /// it skips the `MIN_CONTENT` guard and only clamps to the terminal.
+    /// or does not fit. The width is the auto width (D5) or the fixed
+    /// `sidebar.width`, cut so the page keeps `MIN_CONTENT` columns; when
+    /// that leaves less than `min_width` (or the fixed width, if smaller)
+    /// the sidebar is dropped. With no page the tree is all there is to
+    /// show, so it skips the guard and only clamps to the terminal.
     pub fn sidebar_cols(&self) -> u16 {
         if !self.sidebar_visible() || self.sidebar_panes().is_empty() {
             return 0;
         }
         let cols = self.size.0;
+        let c = &self.config.sidebar;
+        let w = match c.width {
+            SidebarWidth::Auto => self.sidebar.width,
+            SidebarWidth::Fixed(n) => n,
+        };
         if self.no_page() {
-            return self.config.sidebar.width.min(cols.saturating_sub(1)) + 1;
+            return w.min(cols.saturating_sub(1)) + 1;
         }
-        let w = self.config.sidebar.width.saturating_add(1);
-        if w >= cols.saturating_sub(MIN_CONTENT) {
+        let fit = w.min(cols.saturating_sub(1 + MIN_CONTENT));
+        if fit == 0 || fit < c.min_width.min(w) {
             0
         } else {
-            w
+            fit + 1
         }
     }
 
@@ -745,6 +836,18 @@ impl App {
             Some(p) => p.display().to_string(),
             None => "Files".into(),
         }
+    }
+
+    /// The current page's file, canonical like the tree's paths: the
+    /// files pane marks its row (D8).
+    pub fn sidebar_current_file(&self) -> Option<PathBuf> {
+        self.page.as_ref()?.path.as_deref().map(canonical)
+    }
+
+    /// The files pane title as drawn: [`App::sidebar_title`] and the
+    /// filter.
+    pub fn sidebar_files_title(&self) -> String {
+        files_title(&self.sidebar_title(), self.tree().and_then(Tree::filter))
     }
 
     /// The filter prompt (`/text`) while typing one.
@@ -957,6 +1060,7 @@ impl App {
             }
             Focus::Content => {}
         }
+        self.sidebar_relayout(true);
     }
 
     /// Move the focused pane's selection; `isize::MIN` / `MAX` mean the
@@ -1017,6 +1121,7 @@ impl App {
             && let Some(t) = &mut self.sidebar.tree
         {
             t.expand(&item.path);
+            self.sidebar_relayout(true);
         }
     }
 
@@ -1034,6 +1139,7 @@ impl App {
                             t.expand(&item.path);
                         }
                     }
+                    self.sidebar_relayout(true);
                 } else if !item.markdown {
                     self.pending_effect = Some(super::Effect::Edit {
                         path: item.path,
@@ -1068,6 +1174,17 @@ impl App {
             self.history.push(e);
         }
         self.set_focus(Focus::Content);
+    }
+}
+
+/// Title of the outline pane.
+pub const OUTLINE_TITLE: &str = "Outline";
+
+/// The files pane title with the filter, if any.
+fn files_title(title: &str, filter: Option<&str>) -> String {
+    match filter {
+        Some(f) => format!("{title} /{f}"),
+        None => title.to_string(),
     }
 }
 

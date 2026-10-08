@@ -123,7 +123,7 @@ use Group as G;
 /// Every key binding of the normal, sidebar, picker and help keymaps.
 pub(crate) static BINDINGS: &[Binding] = &[
     b("g?", Any, G::General, "show this help", always),
-    b(":", N, G::General, "command line", always),
+    b(":", Any, G::General, "command line", always),
     b("q", Any, G::General, "quit", always),
     b("ZZ", N, G::General, "quit", always),
     b(
@@ -1001,6 +1001,7 @@ mod tests {
             assert!(has(k, &[Ctx::Normal, Ctx::Any]), "no normal row for {k}");
         }
         let any = [
+            ":",
             "q",
             "g?",
             "C-l",

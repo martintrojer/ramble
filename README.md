@@ -154,6 +154,9 @@ math = true                  # false shows LaTeX source as written
 [sidebar]
 show = true                  # shown at start; <leader>e toggles
 default = "auto"             # auto | files | outline | split
+width = "auto"               # fit the rows; or a number of columns
+min_width = 16               # bounds of the auto width
+max_width = 48               # also capped at 35% of the terminal width
 auto_hide_below = 80         # hide below this many columns; 0 never hides
 reading = "outline"          # what auto shows while you read: outline | split
 

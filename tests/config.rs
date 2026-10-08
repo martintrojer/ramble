@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use ramble::config::{
-    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading,
+    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading, SidebarWidth,
 };
 
 fn load_str(src: &str) -> anyhow::Result<Config> {
@@ -36,7 +36,9 @@ fn defaults_match_spec() {
     assert!(c.render.math);
     assert!(c.sidebar.show);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
-    assert_eq!(c.sidebar.width, 30);
+    assert_eq!(c.sidebar.width, SidebarWidth::Auto);
+    assert_eq!(c.sidebar.min_width, 16);
+    assert_eq!(c.sidebar.max_width, 48);
     assert_eq!(c.sidebar.auto_hide_below, 80);
     assert_eq!(c.sidebar.split_ratio, 0.5);
     assert!(!c.sidebar.show_all);
@@ -216,6 +218,22 @@ fn sidebar_show_and_auto_hide_below_parse() {
     assert!(!c.sidebar.show);
     assert_eq!(c.sidebar.auto_hide_below, 0);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
+}
+
+#[test]
+fn sidebar_width_auto_number_and_bounds_parse() {
+    let c = load_str("[sidebar]\nwidth = \"auto\"\nmin_width = 12\nmax_width = 60\n").unwrap();
+    assert_eq!(c.sidebar.width, SidebarWidth::Auto);
+    assert_eq!(c.sidebar.min_width, 12);
+    assert_eq!(c.sidebar.max_width, 60);
+    // A number keeps its old meaning.
+    let c = load_str("[sidebar]\nwidth = 30\n").unwrap();
+    assert_eq!(c.sidebar.width, SidebarWidth::Fixed(30));
+    let e = load_str("[sidebar]\nwidth = \"wide\"\n")
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("line 2"), "{e}");
+    assert!(e.contains("\"auto\" or a number"), "{e}");
 }
 
 #[test]

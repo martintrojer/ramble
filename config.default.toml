@@ -24,8 +24,14 @@
 # default = "auto"
 ## outline | split: what auto shows while a page is loaded.
 # reading = "outline"
-## Width in columns.
-# width = 30
+## Width in columns, not counting the border. "auto" fits the rows shown
+## (most of them: one very long name doesn't stretch it) within min_width
+## and max_width, and grows into room the page can't use (render.max_width).
+## A number is used as given.
+# width = "auto"
+# min_width = 16
+## Also capped at 35% of the terminal width.
+# max_width = 48
 ## Share of the sidebar given to files in split mode.
 # split_ratio = 0.5
 ## Also list non-markdown files in the tree.

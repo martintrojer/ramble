@@ -1,6 +1,7 @@
 //! ratatui widgets only, no logic. `draw` lays out the screen and calls one
 //! widget per area; later units add a file and one call here.
 
+pub mod clip;
 mod clue;
 mod content;
 mod gutter;

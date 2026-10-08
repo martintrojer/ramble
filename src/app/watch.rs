@@ -297,6 +297,7 @@ impl App {
             }
             None => false,
         };
+        self.sidebar_relayout(false);
         self.clear_request = true;
         let stdin = self.page.as_ref().is_some_and(|p| p.path.is_none());
         let msg = match (file, stdin, tree) {

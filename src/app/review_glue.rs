@@ -80,6 +80,8 @@ impl App {
     pub(super) fn review_event(&mut self, markers: Markers) {
         self.review.markers = markers;
         self.review_relayout();
+        // Marks add ` ● N` to tree rows; they arrive after the page.
+        self.sidebar_relayout(true);
     }
 
     /// Reserve the gutter only while the current file has line marks, and

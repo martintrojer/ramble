@@ -29,6 +29,7 @@ mod run;
 mod scroll;
 mod search;
 pub mod sidebar;
+pub(crate) mod sidebar_width;
 mod visual;
 mod watch;
 
@@ -281,6 +282,7 @@ impl App {
             StartTarget::Stdin(text) => app.open_stdin(Arc::new(text)),
         }
         app.sync_tree();
+        app.sidebar_relayout(false);
         app.sidebar_fit();
         app.sidebar_focus_tree();
         if !key_errors.is_empty() {
@@ -352,9 +354,7 @@ impl App {
         match ev {
             AppEvent::Key(key) => self.handle_key(key),
             AppEvent::Resize(cols, rows) => {
-                self.sidebar_terminal_resized(cols);
-                self.resize(cols, rows);
-                self.sidebar_fit();
+                self.sidebar_terminal_resized(cols, rows);
             }
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),

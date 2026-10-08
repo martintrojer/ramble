@@ -9,12 +9,15 @@ use ramble::app::sidebar::{
     item_paths,
 };
 use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode, SidebarReading};
+use ramble::config::{Config, SidebarMode, SidebarReading, SidebarWidth};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
 
 const SIZE: (u16, u16) = (80, 16);
+/// The fixture's rows are short: the auto width is `min_width` (16) plus
+/// the border.
+const MIN_COLS: u16 = 17;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -322,7 +325,7 @@ fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
     app.execute("Sidebar hide");
     win(&mut app, 'j');
     assert_eq!(app.status(), HIDDEN_MESSAGE);
-    let narrow_app = |auto_hide_below| {
+    let narrow_app = |auto_hide_below, cols| {
         let mut c = config(SidebarMode::Split);
         c.sidebar.auto_hide_below = auto_hide_below;
         App::new(
@@ -331,16 +334,17 @@ fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
                 tree_root: root.clone(),
                 config: c,
             },
-            (40, 10),
+            (cols, 10),
         )
         .unwrap()
     };
-    let mut narrow = narrow_app(80);
+    let mut narrow = narrow_app(80, 40);
     win(&mut narrow, 'k');
     assert_eq!(narrow.status(), HIDDEN_MESSAGE, "auto-hidden");
     assert_eq!(narrow.focus(), Focus::Content);
-    // Auto-hide off: the MIN_CONTENT guard drops it instead.
-    let mut narrow = narrow_app(0);
+    // Auto-hide off: the MIN_CONTENT guard drops it instead (16 + 1 + 10
+    // columns don't fit in 24).
+    let mut narrow = narrow_app(0, 24);
     win(&mut narrow, 'k');
     assert_eq!(narrow.status(), NARROW_MESSAGE);
     assert_eq!(narrow.focus(), Focus::Content);
@@ -399,7 +403,7 @@ fn leader_e_shows_and_hides_and_rerenders_width() {
     keys(&mut app, " e");
     assert!(app.sidebar_visible());
     assert_eq!(app.sidebar_mode(), SidebarMode::Outline, "mode unchanged");
-    assert_eq!(app.sidebar_cols(), 31);
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
     assert!(
         app.page().unwrap().rendered.lines.len() > rows_full,
         "narrower content wraps into more rows"
@@ -483,7 +487,7 @@ fn no_page_draws_the_tree_with_focus_despite_hidden_and_narrow() {
     )
     .unwrap();
     assert!(app.sidebar_visible());
-    assert_eq!(app.sidebar_cols(), 31);
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
     assert_eq!(app.focus(), Focus::Files);
     assert_eq!(
         app.tree().unwrap().selected(),
@@ -548,11 +552,13 @@ fn no_page_with_outline_mode_shows_the_files_pane() {
 #[test]
 fn no_page_tree_fits_a_tiny_terminal() {
     let (_d, root) = fixture();
+    let mut c = Config::default();
+    c.sidebar.width = SidebarWidth::Fixed(30);
     let app = App::new(
         StartOptions {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
-            config: Config::default(),
+            config: c,
         },
         (20, 10),
     )
@@ -596,7 +602,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
         (60, 16),
     )
     .unwrap();
-    assert_eq!(app.sidebar_cols(), 31, "tree drawn with no page");
+    assert_eq!(app.sidebar_cols(), MIN_COLS, "tree drawn with no page");
     app.open_file(&path).unwrap();
     assert!(!app.sidebar_visible());
     assert_eq!(app.page().unwrap().rendered.lines.len(), want);
@@ -621,7 +627,7 @@ fn narrow_terminal_hides_and_widening_shows_again() {
     assert_eq!(app.status(), "", "auto-hide is silent");
     resize(&mut app, 100);
     assert!(app.sidebar_visible());
-    assert_eq!(app.sidebar_cols(), 31);
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
 }
 
 #[test]
@@ -689,7 +695,7 @@ fn leader_e_while_narrow_shows_until_the_next_resize() {
     assert!(!app.sidebar_visible());
     keys(&mut app, " e");
     assert!(app.sidebar_visible(), "the user's choice wins while narrow");
-    assert_eq!(app.sidebar_cols(), 31);
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
     // Internal re-layouts (a mode change) keep the override.
     app.set_sidebar_mode(SidebarMode::Split);
     assert!(app.sidebar_visible());
@@ -784,20 +790,34 @@ fn focus_returns_to_content_when_its_pane_goes() {
 #[test]
 fn min_content_guard_drops_the_sidebar_and_says_so() {
     let (_d, root) = fixture();
-    let mut c = Config::default();
-    c.sidebar.auto_hide_below = 0;
-    let app = App::new(
-        StartOptions {
-            target: StartTarget::File(root.join("a.md")),
-            tree_root: root.clone(),
-            config: c,
-        },
-        (40, 10),
-    )
-    .unwrap();
+    let start = |width, cols| {
+        let mut c = Config::default();
+        c.sidebar.auto_hide_below = 0;
+        c.sidebar.width = width;
+        App::new(
+            StartOptions {
+                target: StartTarget::File(root.join("a.md")),
+                tree_root: root.clone(),
+                config: c,
+            },
+            (cols, 10),
+        )
+        .unwrap()
+    };
+    // The auto width fits: 16 + border, the page keeps 23.
+    let app = start(SidebarWidth::Auto, 40);
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    assert_eq!(app.status(), "");
+    // A fixed width is cut so the page keeps MIN_CONTENT (10).
+    let app = start(SidebarWidth::Fixed(30), 40);
+    assert_eq!(app.sidebar_cols(), 30, "29 columns + border");
+    // Too narrow for min_width plus MIN_CONTENT: dropped, said so.
+    let app = start(SidebarWidth::Auto, 24);
     assert!(app.sidebar_visible());
     assert_eq!(app.sidebar_cols(), 0);
     assert_eq!(app.status(), NARROW_MESSAGE);
+    let app = start(SidebarWidth::Fixed(30), 24);
+    assert_eq!(app.sidebar_cols(), 0);
 }
 
 #[test]
@@ -997,7 +1017,7 @@ fn slash_filters_focused_pane_and_esc_clears() {
 fn snapshot_split_mode() {
     let (_d, root) = fixture();
     let mut c = config(SidebarMode::Split);
-    c.sidebar.width = 24;
+    c.sidebar.width = SidebarWidth::Fixed(24);
     let mut app = app_on(&root, StartTarget::File(root.join("docs/guide.md")), c);
     win(&mut app, 'h');
     let mut term = Terminal::new(TestBackend::new(SIZE.0, SIZE.1)).unwrap();
@@ -1102,4 +1122,225 @@ fn ctrl_l_with_no_page_refreshes_the_tree_only() {
     assert_eq!(names(app.tree().unwrap()), ["docs", "img", "a.md", "c.md"]);
     assert_eq!(app.status(), "Refreshed tree");
     assert!(app.take_clear_request());
+}
+
+fn screen(app: &App, cols: u16, rows: u16) -> Vec<String> {
+    let mut term = Terminal::new(TestBackend::new(cols, rows)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    (0..rows)
+        .map(|y| {
+            let mut line = String::new();
+            let mut x = 0;
+            while x < cols {
+                let s = buf[(x, y)].symbol();
+                line.push_str(s);
+                x += unicode_width::UnicodeWidthStr::width(s).max(1) as u16;
+            }
+            line
+        })
+        .collect()
+}
+
+/// The sidebar part of a screen row: up to the border.
+fn side(row: &str) -> &str {
+    row.split('│').next().unwrap()
+}
+
+fn sized(root: &Path, target: StartTarget, config: Config, size: (u16, u16)) -> App {
+    App::new(
+        StartOptions {
+            target,
+            tree_root: root.to_path_buf(),
+            config,
+        },
+        size,
+    )
+    .unwrap()
+}
+
+#[test]
+fn short_outline_gives_min_width_and_long_rows_widen_it() {
+    let (_d, root) = fixture();
+    let app = app_on(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    // A 26-column heading needs 1 (marker gutter) + 26 + 1 padding = 28.
+    let path = write(&root, "w.md", "# A heading of 26 columns!!!\n");
+    let app = sized(&root, StartTarget::File(path), Config::default(), (120, 16));
+    assert_eq!(app.sidebar_cols(), 28 + 1);
+}
+
+#[test]
+fn wide_terminal_grows_the_sidebar_into_room_the_page_cannot_use() {
+    let (_d, root) = fixture();
+    let long = format!("# {}\n", "x".repeat(60));
+    let path = write(&root, "w.md", &long);
+    let app = sized(
+        &root,
+        StartTarget::File(path.clone()),
+        Config::default(),
+        (110, 16),
+    );
+    assert_eq!(app.sidebar_cols(), 38 + 1, "35% of 110");
+    let app = sized(&root, StartTarget::File(path), Config::default(), (160, 16));
+    assert_eq!(
+        app.sidebar_cols(),
+        48 + 1,
+        "max_width: 160 - 49 leaves 111 > 100"
+    );
+    assert_eq!(app.page().unwrap().rendered.lines[0].width(), 60);
+}
+
+#[test]
+fn long_heading_ends_in_an_ellipsis_with_the_current_marker_in_the_gutter() {
+    let (_d, root) = fixture();
+    let path = write(
+        &root,
+        "h.md",
+        "# Installing on macOS with Homebrew and friends\n\ntext\n",
+    );
+    let app = sized(&root, StartTarget::File(path), Config::default(), (80, 10));
+    let w = app.sidebar_cols() - 1;
+    assert_eq!(w, 28, "35% of 80");
+    let rows = screen(&app, 80, 10);
+    let row = side(&rows[1]);
+    assert!(row.starts_with("▎Installing on macOS with "), "{row:?}");
+    assert!(row.ends_with('…'), "{row:?}");
+    assert_eq!(unicode_width::UnicodeWidthStr::width(row), w as usize);
+}
+
+#[test]
+fn long_file_name_keeps_its_extension_and_deep_trees_cap_the_indent() {
+    let (_d, root) = fixture();
+    let deep = "d1/d2/d3/d4/d5/d6/d7/d8/d9";
+    write(&root, &format!("{deep}/n.md"), "# N\n");
+    let long = write(
+        &root,
+        "2026-10-07-a-really-long-ramble-design-spec.md",
+        "# L\n",
+    );
+    let mut c = config(SidebarMode::Files);
+    c.sidebar.width = SidebarWidth::Fixed(20);
+    let mut app = sized(&root, StartTarget::File(long), c, (80, 30));
+    app.open_file(&root.join(deep).join("n.md")).unwrap();
+    let rows: Vec<String> = screen(&app, 80, 30)
+        .iter()
+        .map(|r| side(r).trim_end().to_string())
+        .collect();
+    let name = rows.iter().find(|r| r.contains("2026")).unwrap();
+    assert!(name.ends_with("spec.md"), "{name:?}");
+    assert!(name.contains('…'), "{name:?}");
+    // Depth 9 would indent 18 columns; the name keeps 8 instead:
+    // 20 - 1 (gutter) - 2 (icon) - 8 = 9, so 8 columns of indent at most.
+    // The open file is marked in the gutter (D8).
+    let n = rows.iter().find(|r| r.ends_with("n.md")).unwrap();
+    assert_eq!(n.as_str(), format!("▎{}  n.md", " ".repeat(8)));
+    let col = |r: &str| r.chars().position(|c| c == '▾');
+    let d9 = rows.iter().find(|r| r.trim_start() == "▾ d9").unwrap();
+    assert_eq!(col(d9), Some(1 + 8), "{d9:?}");
+    let d3 = rows.iter().find(|r| r.trim_start() == "▾ d3").unwrap();
+    assert_eq!(col(d3), Some(1 + 4), "shallow rows indent as before");
+    assert!(!name.starts_with('▎'), "only the open file is marked");
+}
+
+#[test]
+fn review_mark_survives_a_long_name() {
+    let (_d, root) = fixture();
+    let long = write(&root, "a-very-long-file-name-for-review.md", "# L\n");
+    let mut c = config(SidebarMode::Files);
+    c.sidebar.width = SidebarWidth::Fixed(20);
+    let mut app = sized(&root, StartTarget::File(root.join("a.md")), c, (80, 16));
+    let mut m = ramble::review::Markers::default();
+    m.files.insert(
+        ramble::review::canonical(&long),
+        ramble::review::FileMarks {
+            count: 12,
+            lines: vec![(1, 1)],
+        },
+    );
+    m.files.insert(
+        ramble::review::canonical(&root.join("a.md")),
+        ramble::review::FileMarks {
+            count: 3,
+            lines: vec![(1, 1)],
+        },
+    );
+    app.event(AppEvent::Review(m));
+    let rows: Vec<String> = screen(&app, 80, 16)[..15]
+        .iter()
+        .map(|r| side(r).to_string())
+        .collect();
+    let row = rows.iter().find(|r| r.contains("a-v")).unwrap();
+    assert!(row.trim_end().ends_with(".md ● 12"), "{row:?}");
+    assert!(row.contains('…'), "{row:?}");
+    let a = rows.iter().find(|r| r.contains(" a.md")).unwrap();
+    assert!(a.trim_end().ends_with("a.md ● 3"), "{a:?}");
+    assert!(a.starts_with('▎'), "the open file is marked: {a:?}");
+}
+
+#[test]
+fn expanding_widens_at_once_and_narrows_at_the_next_page() {
+    let (_d, root) = fixture();
+    write(
+        &root,
+        "docs/a-rather-long-name-inside-docs-folder.md",
+        "# R\n",
+    );
+    let mut app = sized(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Files),
+        (160, 16),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    win(&mut app, 'h');
+    keys(&mut app, "ggl"); // expand docs
+    // 1 gutter + 2 indent + 2 icon + 40 name + 1 padding, + border.
+    assert_eq!(app.sidebar_cols(), 46 + 1, "widened right away");
+    keys(&mut app, "h"); // collapse
+    assert_eq!(app.sidebar_cols(), 47, "never narrows within a page");
+    app.open_file(&root.join("docs/guide.md")).unwrap();
+    // guide.md is revealed: docs/ stays expanded, so the long row counts.
+    assert_eq!(app.sidebar_cols(), 47);
+    win(&mut app, 'h');
+    keys(&mut app, "ggh"); // collapse docs again
+    app.open_file(&root.join("a.md")).unwrap();
+    assert_eq!(app.sidebar_cols(), MIN_COLS, "narrows at the page change");
+}
+
+#[test]
+fn page_layout_follows_width_changes() {
+    let (_d, root) = fixture();
+    let words = "word ".repeat(60);
+    let path = write(&root, "p.md", &format!("# T\n\n{words}\n"));
+    write(
+        &root,
+        "docs/a-rather-long-name-inside-docs-folder.md",
+        "# R\n",
+    );
+    let mut app = sized(
+        &root,
+        StartTarget::File(path),
+        config(SidebarMode::Files),
+        (100, 16),
+    );
+    let before = app.page().unwrap().rendered.lines.len();
+    win(&mut app, 'h');
+    keys(&mut app, "ggl");
+    assert!(app.sidebar_cols() > MIN_COLS);
+    let after = app.page().unwrap().rendered.lines.len();
+    assert!(after > before, "re-laid out narrower: {before} -> {after}");
+}
+
+#[test]
+fn colon_opens_the_command_line_from_the_tree() {
+    let (_d, root) = fixture();
+    let mut app = app_on(&root, StartTarget::Dir(root.clone()), Config::default());
+    assert_eq!(app.focus(), Focus::Files);
+    keys(&mut app, ":");
+    assert_eq!(app.mode(), ramble::app::Mode::Command);
 }
