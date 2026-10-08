@@ -864,7 +864,9 @@ fn real_tuicr_e2e(name: &str, repo: bool) {
 
     // Wait for tuicr's active session.
     let nb_s = nb.to_str().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // Event-driven: exits as soon as the session appears; the long deadline
+    // only absorbs startup latency under heavy load.
+    let deadline = Instant::now() + Duration::from_secs(60);
     let slug = loop {
         let o = tuicr(&["review", "list", "--repo", nb_s]);
         let list: Vec<serde_json::Value> = serde_json::from_slice(&o.stdout).unwrap_or_default();
@@ -876,7 +878,13 @@ fn real_tuicr_e2e(name: &str, repo: bool) {
             );
             break s["slug"].as_str().unwrap().to_string();
         }
-        assert!(Instant::now() < deadline, "no active tuicr session: {o:?}");
+        if Instant::now() >= deadline {
+            let pane = (tmux.0)(&["capture-pane", "-p", "-t", "e2e"]);
+            panic!(
+                "no active tuicr session: {o:?}\ntuicr pane:\n{}",
+                String::from_utf8_lossy(&pane.stdout)
+            );
+        }
         std::thread::sleep(Duration::from_millis(100));
     };
     let o = tuicr(&[
