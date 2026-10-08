@@ -179,11 +179,28 @@ gutter, so rows don't shift when the marker moves. The glyph is `▎` in
 peach, replacing the trailing ` ◂`. The files pane marks the row whose path
 is the current page's file. The selection highlight is unchanged.
 
+### D9. Side: left or right (user request)
+
+- Config `[sidebar] side = "left" | "right"`, default `"left"`. Also
+  `:Sidebar left` and `:Sidebar right` at runtime. There is no key for it.
+- On the right, the sidebar is drawn at the right edge, and its 1-column
+  border moves to the sidebar's left edge. Inside each pane nothing is
+  mirrored: the `▎` marker, the indent, the folder arrows and the text
+  stay left-aligned.
+- `C-w h` and `C-w l` follow the screen position, as vim windows do. On
+  the right, `C-w l` goes to the sidebar and `C-w h` back to the content.
+  `C-w w`, `W`, `j`, `k` and `p` are unchanged.
+- The help rows and the clue box describe these keys by direction. The
+  rows are context-dependent: the "to the sidebar" key is `h` or `l`
+  depending on the side.
+- Mouse hit-testing uses the recorded rects, so it follows automatically.
+  Its tests cover the right side too.
+- Width, auto-hide and clipping are unchanged.
+
 ## Out of scope
 
 - Resizing the sidebar with the mouse or keys (`C-w <`/`C-w >`). That can
   come later. The `width` config covers a fixed preference.
-- A sidebar on the right.
 - Remembering visibility between sessions.
 
 ## Testing
