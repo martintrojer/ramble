@@ -923,8 +923,9 @@ impl App {
         }
         self.sidebar.last_side = f;
         if f == Focus::Outline {
-            let current = self.outline().iter().position(|o| o.current).unwrap_or(0);
-            self.sidebar.outline_sel = self.outline_focus_row(current);
+            // Always the cursor's heading; the draw keeps the list where it
+            // is when that row is shown, else scrolls the minimum to it.
+            self.sidebar.outline_sel = self.outline().iter().position(|o| o.current).unwrap_or(0);
         }
         if f == Focus::Files
             && let Some(t) = &mut self.sidebar.tree
@@ -932,22 +933,6 @@ impl App {
         {
             t.select_index(0);
         }
-    }
-
-    /// The outline row to select on focus: the current heading, or, when
-    /// the drawn rows (maybe scrolled by the wheel) don't show it, the
-    /// nearest drawn row, so focusing never moves the list.
-    fn outline_focus_row(&self, current: usize) -> usize {
-        let Some(drawn) = self.layout().outline else {
-            return current;
-        };
-        let body = drawn.pane.height.saturating_sub(1) as usize;
-        let last = self.outline().len().saturating_sub(1);
-        if body == 0 {
-            return current;
-        }
-        let top = self.sidebar.outline_top.get().min(last);
-        current.clamp(top, (top + body - 1).min(last))
     }
 
     /// Run a sidebar action.

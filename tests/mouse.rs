@@ -931,15 +931,68 @@ fn wheel_over_the_unfocused_outline_scrolls_it_and_focus_keeps_the_view() {
     t.mouse(MouseEventKind::ScrollUp, at, 100);
     assert_eq!(outline_rows(&mut t)[0], "H21");
 
-    // Focusing the outline keeps the scrolled view: the current heading
-    // (Long, at the top) is off screen, so the nearest drawn row is
-    // selected instead of jumping back.
+    // Focusing the outline selects the current heading (Long, scrolled
+    // off the top), and the list scrolls the minimum to show it.
     t.app
         .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
     t.keys("h");
     assert_eq!(t.app.focus(), Focus::Outline);
-    assert_eq!(outline_rows(&mut t)[0], "H21");
-    assert_eq!(t.app.outline_selected(), Some(21));
+    assert_eq!(t.app.outline_selected(), Some(0));
+    assert_eq!(outline_rows(&mut t)[0], "Long");
+}
+
+#[test]
+fn focusing_the_outline_on_a_deep_page_selects_and_shows_the_current_heading() {
+    let mut t = long_outline();
+    t.keys("200j");
+    t.draw();
+    let cur = t.app.outline().iter().position(|o| o.current).unwrap();
+    assert_eq!(t.app.outline()[cur].text, "H40");
+    assert!(
+        !outline_rows(&mut t).contains(&"H40".to_string()),
+        "not drawn yet"
+    );
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    t.keys("h");
+    assert_eq!(t.app.outline_selected(), Some(cur));
+    let rows = outline_rows(&mut t);
+    assert_eq!(
+        rows.last().unwrap(),
+        "H40",
+        "scrolled the minimum: {rows:?}"
+    );
+    // Enter goes to the selected heading, not back up the page.
+    let row = t.app.cursor().row;
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(t.app.cursor().row, t.app.outline()[cur].row);
+    assert!(t.app.cursor().row <= row);
+}
+
+#[test]
+fn focusing_the_outline_keeps_the_offset_when_the_current_heading_is_drawn() {
+    let mut t = long_outline();
+    let pane = t.app.layout().outline.unwrap().pane;
+    for i in 0..3 {
+        t.mouse(MouseEventKind::ScrollDown, (pane.x + 3, pane.y + 4), i);
+    }
+    assert_eq!(outline_rows(&mut t)[0], "H9");
+    // Move the content into H12's section: drawn in the scrolled outline.
+    let h12 = t
+        .app
+        .outline()
+        .iter()
+        .find(|o| o.text == "H12")
+        .unwrap()
+        .row;
+    t.keys(&format!("{}G", h12 + 2));
+    t.draw();
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    t.keys("h");
+    assert_eq!(t.app.outline_selected(), Some(12));
+    assert_eq!(outline_rows(&mut t)[0], "H9", "no jump");
 }
 
 #[test]
