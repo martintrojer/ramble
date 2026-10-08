@@ -75,8 +75,21 @@ ramble UI loop ── mpsc ──▶ worker thread ── mdroots::Workspaces (i
   events (`LinksChanged`, `Freshness`, `Progress`) come from `subscribe()`.
 - **Byte offsets everywhere.** No position encodings on the main path. The
   zk utf-32 quirk is the optional backend's problem.
-- **Status bar:** `mdroots ●` with the root mode (walk, git-index, lazy,
-  memory). With a third-party backend, its name, as today.
+- **Status line:** the footer names the backend in the same slot and format
+  as today's `zk ●` / `marksman ●` label (`App::lsp_label`,
+  `src/app/lsp_glue.rs:677`):
+  - `mdroots ●` when the index for the page's root is ready;
+  - `mdroots ○` while it is opening or catching up (`Event::Progress` or
+    `Freshness` not current);
+  - the same spinner after a slow request as today;
+  - `—` only when no backend serves the page.
+
+  With a third-party backend configured, its own name shows (`zk ●`,
+  `marksman ●`) exactly as now. The label never names both.
+  The root mode (walk, git-index, lazy, memory) is not in the footer. It
+  goes in `g?` help or a later `:Status` command, so the footer stays as
+  short as today. A test asserts the footer shows `mdroots ●` for a page in
+  `tests/fixtures/zk` with no `[[lsp.server]]` configured.
 - **Read-only.** Neither ramble nor mdroots writes user files. The cache is
   written per Q5.
 - **No tokio, ever** (ramble spec Q22). mdroots' core is synchronous.
@@ -141,7 +154,8 @@ code ramble will delete:
 - Add `mdroots_glue.rs` with the worker thread. Links and broken-link
   dimming come from `document_links`. `gd` uses mdroots' target. `K` uses
   `preview`. The pickers use `notes`, `full_text`, `tags`, `backlinks`. Live
-  reload calls `touched`. The status bar shows mdroots' state.
+  reload calls `touched`. The status line shows `mdroots ●` / `mdroots ○`
+  (see Target design).
 - Apply the Q5 cache policy.
 - Delete `nav::resolve` (keep the dispatch), `codepath.rs` (keep the search
   dir policy), and the notebook adapters.
