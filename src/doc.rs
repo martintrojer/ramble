@@ -235,7 +235,9 @@ pub fn parse(mut source: String) -> Document {
     if source.starts_with('\u{feff}') {
         source.drain(..'\u{feff}'.len_utf8());
     }
-    let events = events(&source);
+    let empty = empty_front_matter(&source);
+    let masked = mask(&source, empty.as_ref().map(|(r, _)| r.clone()));
+    let events = events(&masked);
     let mut i = 0;
     let blocks = parse_blocks(&source, &events, &mut i);
     let headings = collect_headings(&events);
@@ -253,6 +255,7 @@ pub fn parse(mut source: String) -> Document {
             )),
             _ => None,
         })
+        .or(empty.map(|(r, k)| (Some(r), k)))
         .unwrap_or_default();
     Document {
         source,
@@ -264,6 +267,46 @@ pub fn parse(mut source: String) -> Document {
         front_matter_kind,
         lossy: false,
     }
+}
+
+/// A leading front-matter block with nothing but blank lines between its
+/// fences (`---` / `---` or `+++` / `+++`): its range, fences included,
+/// and kind. pulldown-cmark reads these as rules or text.
+fn empty_front_matter(src: &str) -> Option<(Range<usize>, FmKind)> {
+    let mut lines = src.split_inclusive('\n');
+    let fence = lines.next()?.trim_end();
+    let kind = match fence {
+        "---" => FmKind::Yaml,
+        "+++" => FmKind::Toml,
+        _ => return None,
+    };
+    let mut at = src.split_inclusive('\n').next()?.len();
+    for line in lines {
+        let t = line.trim_end();
+        if t == fence {
+            return Some((0..at + fence.len(), kind));
+        }
+        if !t.is_empty() {
+            return None;
+        }
+        at += line.len();
+    }
+    None
+}
+
+/// `src` with the non-blank bytes of `range` (an empty front-matter
+/// block, ASCII only) replaced by spaces, offsets kept: pulldown-cmark
+/// emits no metadata block for one, so without this the body would start
+/// with rules or `+++`.
+fn mask(src: &str, range: Option<Range<usize>>) -> Cow<'_, str> {
+    let Some(r) = range else {
+        return Cow::Borrowed(src);
+    };
+    let mut m = src.as_bytes().to_vec();
+    m[r].iter_mut()
+        .filter(|b| !b.is_ascii_whitespace())
+        .for_each(|b| *b = b' ');
+    Cow::Owned(String::from_utf8(m).expect("ASCII replaced by ASCII"))
 }
 
 impl Document {

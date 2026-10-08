@@ -319,3 +319,39 @@ fn a_byte_order_mark_does_not_hide_the_front_matter() {
     assert!(doc.front_matter.is_some());
     assert!(!doc.source.starts_with('\u{feff}'));
 }
+
+#[test]
+fn an_empty_block_is_front_matter_not_rules() {
+    for src in [
+        "---\n---\n\n# Body\n",
+        "---\n\n---\n\n# Body\n",
+        "+++\n+++\n\n# Body\n",
+        "---\r\n---\r\n\r\n# Body\r\n",
+        "+++\n+++\nBody\n",
+    ] {
+        let doc = parse(src.into());
+        let fm = doc.front_matter.clone().expect(src);
+        assert!(src[fm].ends_with(['-', '+']), "{src:?}");
+        assert!(
+            doc.blocks
+                .iter()
+                .all(|b| !matches!(b, ramble::doc::Block::Rule { .. })),
+            "{src:?}: {:?}",
+            doc.blocks
+        );
+        let r = rows(src, 40, false);
+        assert_eq!(r[..3], ["▸ front matter · 0 keys", "", "Body"], "{src:?}");
+        let out = to_ansi(&render(&doc, 40, &Theme::catppuccin_mocha()));
+        assert!(!out.contains("+++") && !out.contains('─'), "{src:?}: {out}");
+    }
+    assert_eq!(parse("+++\n+++\n".into()).front_matter_kind, FmKind::Toml);
+    let r = rows("---\n\n---\n\n# Body\n", 40, true);
+    assert_eq!(r[..3], ["▾ front matter", "", "Body"]);
+    // Inline markup right after the block is parsed as such.
+    let r = rows("+++\n+++\n**bold** text\n", 40, false);
+    assert_eq!(r[2], "bold text");
+    // Not at the start, or not closed: no front matter.
+    for src in ["\n---\n---\n", "---\n", "---\ntext\n"] {
+        assert!(parse(src.into()).front_matter.is_none(), "{src:?}");
+    }
+}
