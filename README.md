@@ -96,6 +96,10 @@ can follow it.
 - In the tree, `-` moves the root up a folder (so does `h` on a top-level
   row) and `.` makes the selected folder the root. The title shows where
   you are: `Files ~/notes/sub`.
+- It sizes itself to what it shows, within bounds, so a short outline doesn't
+  waste half the screen. Long names are clipped with `…` (file names in the
+  middle, so the extension stays), and the current heading and the open
+  file are marked with `▎` on the left, where clipping can't hide them.
 - It hides on terminals narrower than 80 columns and comes back when the
   terminal grows, unless you hid it. With no file open, the tree always
   shows and has focus.
