@@ -378,12 +378,35 @@ fn split_entry(t: &str) -> Option<(String, String)> {
         return None;
     }
     let mut value = rest.trim();
-    if !value.starts_with(['"', '\''])
-        && let Some(i) = value.find(" #")
-    {
+    if let Some(end) = closing_quote(value) {
+        let after = value[end..].trim_start();
+        if after.is_empty() || after.starts_with('#') {
+            value = &value[..end];
+        }
+    } else if let Some(i) = value.find(" #") {
         value = value[..i].trim_end();
     }
     Some((key.to_string(), value.to_string()))
+}
+
+/// For a value starting with a quote, the byte just past its closing
+/// quote: `\"` is escaped inside `"`, `''` inside `'`.
+fn closing_quote(v: &str) -> Option<usize> {
+    let q = v.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+    let mut chars = v.char_indices().skip(1).peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' if q == '"' => {
+                chars.next();
+            }
+            c if c == q && q == '\'' && chars.peek().is_some_and(|&(_, n)| n == q) => {
+                chars.next();
+            }
+            c if c == q => return Some(i + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Strip one pair of surrounding quotes.
@@ -589,6 +612,26 @@ mod tests {
     fn quoted_keys_and_inline_list_with_quoted_commas() {
         let fm = parse("\"a: b\": 1\nt: [\"x, y\", z,]\n", FmKind::Yaml);
         assert_eq!(kv(&fm), [("a: b", s("1")), ("t", l(&["x, y", "z"]))]);
+    }
+
+    #[test]
+    fn a_comment_after_a_quoted_value_is_dropped() {
+        let fm = parse(
+            "q: \"x\" # c\nc2: '#000' # trailing\ne: \"a\\\"b\" # c\n",
+            FmKind::Yaml,
+        );
+        assert_eq!(
+            kv(&fm),
+            [("q", s("x")), ("c2", s("#000")), ("e", s("a\\\"b"))]
+        );
+        let fm = parse("s = 'x' # c\nt = \"#y\" # d\n", FmKind::Toml);
+        assert_eq!(kv(&fm), [("s", s("x")), ("t", s("#y"))]);
+        // Through the line scan alone (broken YAML), too.
+        let fm = parse("q: 'x' # c\n bad: [\n", FmKind::Yaml);
+        assert_eq!(kv(&fm)[0], ("q", s("x")));
+        assert_eq!(closing_quote("'it''s' # x"), Some(7));
+        assert_eq!(closing_quote("\"a\\\"b\" # x"), Some(6));
+        assert_eq!(closing_quote("'open"), None);
     }
 
     #[test]
