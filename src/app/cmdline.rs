@@ -1,7 +1,7 @@
 //! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
 //! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`
-//! (`off` = `hide`), `:Raw`, and
+//! (`off` = `hide`), `:Sidebar left|right` (the screen edge), `:Raw`, and
 //! `:e` / `:Refresh` without an argument (refresh, as `C-l`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::keys::{Action, KeyResult};
 use super::sidebar::SidebarAction;
 use super::{App, Mode};
-use crate::config::SidebarMode;
+use crate::config::{SidebarMode, SidebarSide};
 use crate::notebook::Op;
 
 /// The `:` commands and what they do, for the help overlay. Keep in step
@@ -33,6 +33,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
         ":Sidebar toggle|show|hide",
         "show or hide the sidebar (off = hide)",
     ),
+    (":Sidebar left|right", "put the sidebar on that side"),
     (":Raw", "toggle the raw source view"),
 ];
 
@@ -128,7 +129,8 @@ impl App {
                 Some(SidebarCmd::Mode(m)) => self.pick_sidebar_mode(m),
                 Some(SidebarCmd::Toggle) => self.sidebar_action(SidebarAction::Toggle),
                 Some(SidebarCmd::Show(show)) => self.show_sidebar(show),
-                None => self.set_status(":Sidebar files|outline|split|toggle|show|hide"),
+                Some(SidebarCmd::Side(side)) => self.set_sidebar_side(side),
+                None => self.set_status(":Sidebar files|outline|split|toggle|show|hide|left|right"),
             },
             _ => self.set_status(format!("Not a command: {cmd}")),
         }
@@ -139,6 +141,7 @@ enum SidebarCmd {
     Mode(SidebarMode),
     Toggle,
     Show(bool),
+    Side(SidebarSide),
 }
 
 fn parse_sidebar(s: &str) -> Option<SidebarCmd> {
@@ -150,6 +153,8 @@ fn parse_sidebar(s: &str) -> Option<SidebarCmd> {
         "toggle" => C::Toggle,
         "show" => C::Show(true),
         "hide" | "off" => C::Show(false),
+        "left" => C::Side(SidebarSide::Left),
+        "right" => C::Side(SidebarSide::Right),
         _ => return None,
     })
 }

@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use ramble::config::{
-    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading, SidebarWidth,
+    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading, SidebarSide,
+    SidebarWidth,
 };
 
 fn load_str(src: &str) -> anyhow::Result<Config> {
@@ -43,6 +44,7 @@ fn defaults_match_spec() {
     assert_eq!(c.sidebar.split_ratio, 0.5);
     assert!(!c.sidebar.show_all);
     assert_eq!(c.sidebar.reading, SidebarReading::Outline);
+    assert_eq!(c.sidebar.side, SidebarSide::Left);
     assert_eq!(c.keys.leader, ' ');
     assert!(c.mouse.enabled);
     assert_eq!(c.lsp.server.len(), 2);
@@ -317,4 +319,16 @@ fn uncommented_default_file_equals_defaults() {
         2
     );
     assert_eq!(load_str(&uncommented).unwrap(), Config::default());
+}
+
+#[test]
+fn sidebar_side_parses_left_and_right_and_rejects_others() {
+    let c = load_str("[sidebar]\nside = \"right\"\n").unwrap();
+    assert_eq!(c.sidebar.side, SidebarSide::Right);
+    let mut want = Config::default();
+    want.sidebar.side = SidebarSide::Right;
+    assert_eq!(c, want, "only the side changes");
+    let c = load_str("[sidebar]\nside = \"left\"\n").unwrap();
+    assert_eq!(c.sidebar.side, SidebarSide::Left);
+    assert!(err_str("[sidebar]\nside = \"top\"\n").contains("unknown variant"));
 }

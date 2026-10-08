@@ -89,7 +89,8 @@ can follow it.
   is fine), the current page's outline, or both stacked.
 - On `auto` it shows the tree until you open something, then the outline.
   `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
-  split, `C-w h/l/j/k` moves between panes.
+  split, `C-w h/l/j/k` moves between panes. It sits on the left or the
+  right (`side`, `:Sidebar left|right`); `C-w h/l` follow the screen.
 - It hides on terminals narrower than 80 columns and comes back when the
   terminal grows, unless you hid it. With no file open, the tree always
   shows and has focus.
@@ -170,6 +171,7 @@ min_width = 16               # bounds of the auto width
 max_width = 48               # also capped at 35% of the terminal width
 auto_hide_below = 80         # hide below this many columns; 0 never hides
 reading = "outline"          # what auto shows while you read: outline | split
+side = "left"                # left | right; :Sidebar left|right switches it
 
 [keys]
 leader = " "

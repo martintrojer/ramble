@@ -1007,3 +1007,88 @@ fn focusing_the_outline_selects_the_current_heading_when_it_is_drawn() {
     assert!(cur > 0);
     assert_eq!(t.app.outline_selected(), Some(cur));
 }
+
+/// The sidebar on the right (D9): split mode, fixed width.
+fn right() -> T {
+    setup_with(SidebarMode::Split, |c| {
+        c.sidebar.side = ramble::config::SidebarSide::Right;
+        c.sidebar.width = SidebarWidth::Fixed(20);
+    })
+}
+
+#[test]
+fn right_side_layout_puts_the_sidebar_at_the_right_edge() {
+    let t = right();
+    let l = t.app.layout();
+    let side = l.sidebar.unwrap();
+    assert_eq!(side.right(), SIZE.0, "flush with the right edge");
+    assert_eq!(side.width, 21);
+    let files = l.files.unwrap().pane;
+    assert_eq!(files.x, side.x + 1, "border column on the left");
+    assert_eq!(files.right(), SIZE.0);
+    assert_eq!(l.gutter.or(l.text).unwrap().x, 0, "content from column 0");
+    assert!(l.text.unwrap().right() <= side.x);
+    // The border column hits the border; the content's last column does not.
+    assert_eq!(t.app.hit(side.x, side.y + 2), Hit::Border);
+    assert_ne!(t.app.hit(side.x - 1, side.y + 2), Hit::Border);
+}
+
+#[test]
+fn right_side_click_a_files_row_selects_it_and_the_arrow_toggles() {
+    let mut t = right();
+    let files = t.app.layout().files.unwrap().pane;
+    let at = t.find_in(files, "c.md");
+    t.click(at, 0);
+    assert_eq!(t.app.focus(), Focus::Files);
+    assert_eq!(t.selected_file(), Some(t.root.join("c.md")));
+
+    let docs = t.find_in(files, "docs");
+    assert_eq!(docs.0, files.x + 3, "gutter and arrow before the name");
+    t.click(docs, 2000);
+    assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+    t.click((docs.0 - 2, docs.1), 4000);
+    assert!(t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+    t.draw();
+    t.click((docs.0 - 1, docs.1), 6000);
+    assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
+
+    // A text click goes back to the content.
+    let g = t.text_cell("gamma");
+    t.click(g, 8000);
+    assert_eq!(t.app.focus(), Focus::Content);
+}
+
+#[test]
+fn right_side_wheel_scrolls_the_pane_under_the_pointer() {
+    let mut t = right();
+    let files = t.app.layout().files.unwrap().pane;
+    let b = t.find_in(files, "b.md");
+    t.click(b, 0);
+    t.mouse(MouseEventKind::ScrollDown, b, 1000);
+    assert_eq!(t.selected_file(), Some(t.root.join("e.md")));
+    assert_eq!(t.app.scroll(), 0, "the page did not scroll");
+    let a = t.text_cell("Alpha");
+    t.mouse(MouseEventKind::ScrollDown, a, 1100);
+    assert_eq!(t.app.scroll(), 3);
+    assert_eq!(t.app.focus(), Focus::Files);
+    let outline = t.app.layout().outline.unwrap().pane;
+    t.mouse(
+        MouseEventKind::ScrollDown,
+        (outline.x + 1, outline.y + 1),
+        1200,
+    );
+    assert_eq!(t.app.focus(), Focus::Files);
+    assert_eq!(t.app.scroll(), 3);
+}
+
+#[test]
+fn right_side_outline_click_selects_and_double_click_jumps() {
+    let mut t = right();
+    let outline = t.app.layout().outline.unwrap().pane;
+    let at = t.find_in(outline, "Second");
+    t.click(at, 0);
+    assert_eq!(t.app.focus(), Focus::Outline);
+    t.click(at, 100);
+    assert_eq!(t.app.focus(), Focus::Content);
+    assert_eq!(t.app.cursor().row, t.app.outline()[1].row);
+}

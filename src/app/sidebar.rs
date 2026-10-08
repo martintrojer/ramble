@@ -14,7 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::keys::{Action, KeyResult};
 use super::sidebar_width::{self, MIN_CONTENT};
 use super::{App, Mode, StartTarget};
-use crate::config::{SidebarConfig, SidebarMode, SidebarWidth};
+use crate::config::{SidebarConfig, SidebarMode, SidebarSide, SidebarWidth};
 use crate::nav::is_markdown;
 
 /// Status when the sidebar is meant to show but the content would get
@@ -45,10 +45,11 @@ pub enum SidebarAction {
     Toggle,
     /// `<leader>E`: outline → files → split → outline, and show it.
     Cycle,
-    /// `C-w h`
-    FocusLeft,
-    /// `C-w l`
-    FocusRight,
+    /// `C-w h` (`C-w l` with the sidebar on the right): the last sidebar
+    /// pane.
+    FocusSidebar,
+    /// `C-w l` (`C-w h` with the sidebar on the right).
+    FocusContent,
     /// `C-w w`
     FocusNext,
     /// `C-w W`
@@ -90,6 +91,9 @@ pub(super) struct Sidebar {
     auto: bool,
     /// `sidebar.reading` as a mode (outline or split).
     reading: SidebarMode,
+    /// The screen edge it is drawn at (`sidebar.side`, `:Sidebar
+    /// left|right`).
+    side: SidebarSide,
     /// The user picked a mode this session (`<leader>E`, `:Sidebar`),
     /// which stops the `auto` switching.
     manual: bool,
@@ -133,6 +137,7 @@ impl Sidebar {
             mode,
             auto: config.default == SidebarMode::Auto,
             reading,
+            side: config.side,
             manual: false,
             shown: config.show,
             narrow_override: None,
@@ -483,8 +488,10 @@ fn act(a: SidebarAction) -> KeyResult {
     KeyResult::Action(Action::Sidebar(a))
 }
 
-/// `C-w h l w W j k p` (the second key with or without Ctrl).
-pub(super) fn window_keymap(keys: &[KeyEvent]) -> Option<KeyResult> {
+/// `C-w h l w W j k p` (the second key with or without Ctrl). `h` and `l`
+/// follow the screen: the one pointing at the sidebar's `side` focuses
+/// it, the other the content (D9).
+pub(super) fn window_keymap(keys: &[KeyEvent], side: SidebarSide) -> Option<KeyResult> {
     let (first, rest) = keys.split_first()?;
     if !is_ctrl(first, 'w') {
         return None;
@@ -492,9 +499,13 @@ pub(super) fn window_keymap(keys: &[KeyEvent]) -> Option<KeyResult> {
     let Some(k) = rest.first() else {
         return Some(KeyResult::Pending);
     };
+    let (left, right) = match side {
+        SidebarSide::Left => (SidebarAction::FocusSidebar, SidebarAction::FocusContent),
+        SidebarSide::Right => (SidebarAction::FocusContent, SidebarAction::FocusSidebar),
+    };
     Some(match k.code {
-        KeyCode::Char('h') | KeyCode::Left => act(SidebarAction::FocusLeft),
-        KeyCode::Char('l') | KeyCode::Right => act(SidebarAction::FocusRight),
+        KeyCode::Char('h') | KeyCode::Left => act(left),
+        KeyCode::Char('l') | KeyCode::Right => act(right),
         KeyCode::Char('w') => act(SidebarAction::FocusNext),
         KeyCode::Char('W') => act(SidebarAction::FocusPrev),
         KeyCode::Char('j') | KeyCode::Down => act(SidebarAction::FocusBelow),
@@ -527,7 +538,7 @@ impl App {
         if let Some(r) = self.leader_keymap(keys) {
             return r;
         }
-        if let Some(r) = window_keymap(keys) {
+        if let Some(r) = window_keymap(keys, self.sidebar_side()) {
             return r;
         }
         match keys {
@@ -551,6 +562,17 @@ impl App {
             },
             _ => KeyResult::None,
         }
+    }
+
+    /// The screen edge the sidebar is drawn at.
+    pub fn sidebar_side(&self) -> SidebarSide {
+        self.sidebar.side
+    }
+
+    /// `:Sidebar left|right`: move the sidebar to that edge. Width,
+    /// visibility and focus are unchanged.
+    pub(super) fn set_sidebar_side(&mut self, side: SidebarSide) {
+        self.sidebar.side = side;
     }
 
     /// The resolved sidebar mode (never `Auto`).
@@ -942,7 +964,7 @@ impl App {
             S::Toggle if self.no_page() => self.set_status(TREE_STAYS_MESSAGE),
             S::Toggle => self.show_sidebar(!self.sidebar_visible()),
             S::Cycle => self.pick_sidebar_mode(self.sidebar.next_mode()),
-            S::FocusLeft
+            S::FocusSidebar
             | S::FocusNext
             | S::FocusPrev
             | S::FocusBelow
@@ -957,7 +979,7 @@ impl App {
                     NARROW_MESSAGE
                 });
             }
-            S::FocusLeft => {
+            S::FocusSidebar => {
                 let panes = self.sidebar_panes();
                 let f = if panes.contains(&self.sidebar.last_side) {
                     self.sidebar.last_side
@@ -966,7 +988,7 @@ impl App {
                 };
                 self.focus_pane(f);
             }
-            S::FocusRight => self.focus_pane(Focus::Content),
+            S::FocusContent => self.focus_pane(Focus::Content),
             S::FocusNext => {
                 let mut order = self.sidebar_panes().to_vec();
                 order.push(Focus::Content);

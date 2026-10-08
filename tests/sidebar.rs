@@ -9,7 +9,7 @@ use ramble::app::sidebar::{
     item_paths,
 };
 use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode, SidebarReading, SidebarWidth};
+use ramble::config::{Config, SidebarMode, SidebarReading, SidebarSide, SidebarWidth};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -470,7 +470,7 @@ fn sidebar_commands_set_mode_and_visibility() {
     app.execute("Sidebar split");
     assert!(app.sidebar_visible(), "a mode shows it");
     assert_eq!(app.sidebar_mode(), SidebarMode::Split);
-    app.execute("Sidebar left");
+    app.execute("Sidebar top");
     assert!(app.status().starts_with(":Sidebar files|outline|split"));
 }
 
@@ -1441,4 +1441,118 @@ fn filter_refits_the_width() {
     keys(&mut app, "/a-really-long-filter");
     app.handle_key(key(KeyCode::Enter));
     assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
+
+fn right_app(mode: SidebarMode) -> (TempDir, App) {
+    let (d, root) = fixture();
+    let mut c = config(mode);
+    c.sidebar.side = SidebarSide::Right;
+    c.sidebar.width = SidebarWidth::Fixed(20);
+    let app = app_on(&root, StartTarget::File(root.join("a.md")), c);
+    (d, app)
+}
+
+#[test]
+fn right_side_draws_the_sidebar_at_the_right_edge_with_the_border_inside() {
+    let (_d, app) = right_app(SidebarMode::Files);
+    let rows = screen(&app, SIZE.0, SIZE.1);
+    // 20 columns plus the border: the border at column 59, the pane after.
+    let border = (SIZE.0 - 21) as usize;
+    let col = |r: &str, x: usize| r.chars().nth(x).unwrap();
+    for r in &rows[..SIZE.1 as usize - 1] {
+        assert_eq!(col(r, border), '│', "border on the inner edge: {r:?}");
+        assert_ne!(col(r, SIZE.0 as usize - 1), '│', "no outer border: {r:?}");
+    }
+    let pane: String = rows[0].chars().skip(border + 1).collect();
+    assert!(pane.starts_with("Files"), "title left-aligned: {pane:?}");
+    assert!(
+        rows.iter().any(|r| r
+            .chars()
+            .skip(border + 1)
+            .collect::<String>()
+            .contains("a.md")),
+        "rows not mirrored"
+    );
+    // The page fills the columns left of the border.
+    assert!(
+        rows.iter()
+            .any(|r| r.chars().take(border).collect::<String>().contains("alpha")),
+        "page drawn left of the sidebar: {rows:#?}"
+    );
+}
+
+#[test]
+fn right_side_ctrl_w_l_goes_to_the_sidebar_and_h_back() {
+    let (_d, mut app) = right_app(SidebarMode::Split);
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Content, "C-w h on the right: content");
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Files, "C-w l goes to the sidebar");
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline);
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Outline, "C-w l in the sidebar stays");
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Content);
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Outline, "returns to the last pane");
+    // w, W, p unchanged.
+    win(&mut app, 'w');
+    assert_eq!(app.focus(), Focus::Content);
+    win(&mut app, 'W');
+    assert_eq!(app.focus(), Focus::Outline);
+    win(&mut app, 'p');
+    assert_eq!(app.focus(), Focus::Content);
+    // Hidden: the sidebar key reports it.
+    keys(&mut app, " e");
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Content);
+    assert_eq!(app.status(), HIDDEN_MESSAGE);
+}
+
+#[test]
+fn sidebar_left_and_right_commands_move_it_live() {
+    let (_d, root) = fixture();
+    let mut c = config(SidebarMode::Files);
+    c.sidebar.width = SidebarWidth::Fixed(20);
+    let mut app = app_on(&root, StartTarget::File(root.join("a.md")), c);
+    let border_at = |app: &App| {
+        let rows = screen(app, SIZE.0, SIZE.1);
+        let x: Vec<usize> = (0..SIZE.0 as usize)
+            .filter(|&x| rows[1].chars().nth(x) == Some('│'))
+            .collect();
+        x
+    };
+    assert_eq!(border_at(&app), [20]);
+    let cols = app.sidebar_cols();
+    app.execute("Sidebar right");
+    assert_eq!(app.sidebar_side(), SidebarSide::Right);
+    assert_eq!(border_at(&app), [(SIZE.0 - 21) as usize]);
+    assert_eq!(app.sidebar_cols(), cols, "width unchanged");
+    assert!(app.sidebar_visible());
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Files);
+    app.execute("Sidebar left");
+    assert_eq!(app.sidebar_side(), SidebarSide::Left);
+    assert_eq!(app.focus(), Focus::Files, "focus kept");
+    assert_eq!(border_at(&app), [20]);
+    win(&mut app, 'l');
+    assert_eq!(app.focus(), Focus::Content);
+    app.execute("Sidebar middle");
+    assert!(app.status().contains("left|right"), "{}", app.status());
+}
+
+#[test]
+fn right_side_still_auto_hides_on_a_narrow_terminal() {
+    let (_d, mut app) = right_app(SidebarMode::Files);
+    assert!(app.sidebar_cols() > 0);
+    resize(&mut app, 60);
+    assert_eq!(app.sidebar_cols(), 0);
+    assert!(!screen(&app, 60, SIZE.1)[1].contains('│'));
+    resize(&mut app, 100);
+    assert!(app.sidebar_cols() > 0);
+    assert_eq!(
+        screen(&app, 100, SIZE.1)[1].chars().nth(100 - 21),
+        Some('│')
+    );
 }

@@ -339,7 +339,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let normal = app(dir.path());
         let mut sidebar = app(dir.path());
-        sidebar.sidebar_action(super::super::sidebar::SidebarAction::FocusLeft);
+        sidebar.sidebar_action(super::super::sidebar::SidebarAction::FocusSidebar);
         assert_eq!(sidebar.focus(), Focus::Files);
         let keys = all_keys();
         let leader = normal.config.keys.leader;

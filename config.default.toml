@@ -39,6 +39,10 @@
 ## Hide the sidebar while the terminal is narrower than this many columns;
 ## it comes back when the terminal grows, unless you hid it. 0 disables.
 # auto_hide_below = 80
+## left | right: the screen edge the sidebar sits at (:Sidebar left|right
+## switches it). C-w h and C-w l follow the screen: on the right, C-w l
+## goes to the sidebar.
+# side = "left"
 
 ## ---------------------------------------------------------------------------
 ## Keys

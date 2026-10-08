@@ -157,7 +157,7 @@ impl App {
     fn click_text(&mut self, row: usize, col: usize, n: u8) {
         self.visual_leave();
         if self.focus() != Focus::Content {
-            self.sidebar_action(SidebarAction::FocusRight);
+            self.sidebar_action(SidebarAction::FocusContent);
         }
         self.cursor.row = row.min(self.last_row());
         self.set_col(col);

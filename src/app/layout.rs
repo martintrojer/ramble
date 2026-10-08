@@ -29,7 +29,8 @@ impl ListArea {
 /// Rects of the last drawn frame. `Default` (nothing drawn) hits nothing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Layout {
-    /// The whole sidebar, its right border included.
+    /// The whole sidebar, its border included (on the side facing the
+    /// content).
     pub sidebar: Option<Rect>,
     pub files: Option<ListArea>,
     pub outline: Option<ListArea>,
@@ -68,7 +69,7 @@ pub enum Hit {
     Clue,
     Status,
     Gutter,
-    /// The sidebar's right border.
+    /// The sidebar's border.
     Border,
 }
 

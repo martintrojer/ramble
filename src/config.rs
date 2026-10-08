@@ -59,6 +59,18 @@ pub struct SidebarConfig {
     /// Hide the sidebar while the terminal is narrower than this many
     /// columns (0 disables).
     pub auto_hide_below: u16,
+    /// Which edge of the screen the sidebar is drawn at (D9).
+    pub side: SidebarSide,
+}
+
+/// `sidebar.side`: the screen edge the sidebar sits at (`:Sidebar
+/// left|right` changes it at runtime).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
 }
 
 /// `sidebar.width`: `"auto"` fits the rows (spec D5), a number is used as
@@ -219,6 +231,7 @@ impl Default for Config {
                 show_all: false,
                 reading: SidebarReading::Outline,
                 auto_hide_below: 80,
+                side: SidebarSide::Left,
             },
             keys: KeysConfig {
                 leader: ' ',
@@ -315,6 +328,7 @@ struct RawSidebar {
     show_all: Option<bool>,
     reading: Option<SidebarReading>,
     auto_hide_below: Option<u16>,
+    side: Option<SidebarSide>,
 }
 
 #[derive(Deserialize)]
@@ -429,6 +443,7 @@ impl Config {
             set(&mut c.sidebar.show_all, s.show_all);
             set(&mut c.sidebar.reading, s.reading);
             set(&mut c.sidebar.auto_hide_below, s.auto_hide_below);
+            set(&mut c.sidebar.side, s.side);
         }
         if let Some(k) = raw.keys {
             set(&mut c.keys.leader, k.leader);

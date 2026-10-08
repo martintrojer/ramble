@@ -233,7 +233,7 @@ impl App {
         if let Some(r) = self.leader_keymap(keys) {
             return r;
         }
-        if let Some(r) = sidebar::window_keymap(keys) {
+        if let Some(r) = sidebar::window_keymap(keys, self.sidebar_side()) {
             return r;
         }
         if let Some(r) = super::picker::normal_keys(keys) {

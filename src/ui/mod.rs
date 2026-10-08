@@ -16,15 +16,27 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 
 use crate::app::{App, Layout as Hits};
+use crate::config::SidebarSide;
 
-/// Draw one full screen: sidebar (when shown), content view, status line.
+/// Draw one full screen: sidebar (when shown, on its side), content view,
+/// status line.
 /// Records where everything went in the app's layout (for the mouse).
 pub fn draw(frame: &mut Frame, app: &App) {
     let [main, status] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    let [side, content] =
-        Layout::horizontal([Constraint::Length(app.sidebar_cols()), Constraint::Min(0)])
-            .areas(main);
+    let cols = app.sidebar_cols();
+    let (side, content) = match app.sidebar_side() {
+        SidebarSide::Left => {
+            let [s, c] =
+                Layout::horizontal([Constraint::Length(cols), Constraint::Min(0)]).areas(main);
+            (s, c)
+        }
+        SidebarSide::Right => {
+            let [c, s] =
+                Layout::horizontal([Constraint::Min(0), Constraint::Length(cols)]).areas(main);
+            (s, c)
+        }
+    };
     let mut hits = Hits::default();
     if side.width > 0 {
         hits.sidebar = Some(side);

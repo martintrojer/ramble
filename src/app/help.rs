@@ -11,6 +11,7 @@ use ratatui::layout::Rect;
 use super::keys::{Action, KeyResult};
 use super::launch::{LeaderMatch, match_leader};
 use super::{App, Focus, Mode};
+use crate::config::SidebarSide;
 use crate::notebook::Op;
 
 /// Where a binding works.
@@ -99,6 +100,22 @@ pub(crate) struct Binding {
 
 fn always(_: &App) -> bool {
     true
+}
+
+fn side_left(a: &App) -> bool {
+    a.sidebar_side() == SidebarSide::Left
+}
+
+fn side_right(a: &App) -> bool {
+    a.sidebar_side() == SidebarSide::Right
+}
+
+fn sidebar_on_left(a: &App) -> bool {
+    side_left(a) && a.can_focus_sidebar()
+}
+
+fn sidebar_on_right(a: &App) -> bool {
+    side_right(a) && a.can_focus_sidebar()
 }
 
 const fn b(
@@ -293,14 +310,11 @@ pub(crate) static BINDINGS: &[Binding] = &[
         "cycle sidebar: outline, files, split",
         always,
     ),
-    b(
-        "C-w h",
-        Any,
-        G::Sidebar,
-        "focus the sidebar",
-        App::can_focus_sidebar,
-    ),
-    b("C-w l", S, G::Sidebar, "focus the content", always),
+    // `C-w h` / `C-w l` follow the screen (D9): one row pair per side.
+    b("C-w h", Any, G::Sidebar, "to the sidebar", sidebar_on_left),
+    b("C-w l", S, G::Sidebar, "to the content", side_left),
+    b("C-w l", Any, G::Sidebar, "to the sidebar", sidebar_on_right),
+    b("C-w h", S, G::Sidebar, "to the content", side_right),
     b(
         "C-w w",
         Any,
@@ -835,9 +849,14 @@ mod tests {
     }
 
     fn app(dir: &std::path::Path) -> App {
+        app_on(dir, SidebarSide::Left)
+    }
+
+    fn app_on(dir: &std::path::Path, side: SidebarSide) -> App {
         let path = dir.join("a.md");
         std::fs::write(&path, "# A\n\nSee [b](b.md).\n").unwrap();
         let mut config = Config::default();
+        config.sidebar.side = side;
         config.sidebar.default = SidebarMode::Files;
         config.lsp.server = vec![];
         config.launch.clear();
@@ -854,7 +873,7 @@ mod tests {
         let normal = || app(dir);
         let sidebar = || {
             let mut a = app(dir);
-            a.sidebar_action(super::super::sidebar::SidebarAction::FocusLeft);
+            a.sidebar_action(super::super::sidebar::SidebarAction::FocusSidebar);
             assert_eq!(a.focus(), Focus::Files);
             a
         };
@@ -913,6 +932,57 @@ mod tests {
                         b.context
                     );
                 }
+            }
+        }
+    }
+
+    /// On either side, every `C-w` row shown resolves, and the
+    /// direction rows run the action their description names (D9).
+    #[test]
+    fn ctrl_w_rows_resolve_and_match_the_side() {
+        use super::super::sidebar::SidebarAction as SA;
+        let dir = tempfile::tempdir().unwrap();
+        for side in [SidebarSide::Left, SidebarSide::Right] {
+            let (to_side, to_content) = match side {
+                SidebarSide::Left => ("C-w h", "C-w l"),
+                SidebarSide::Right => ("C-w l", "C-w h"),
+            };
+            let mut normal = app_on(dir.path(), side);
+            let mut sidebar = app_on(dir.path(), side);
+            sidebar.sidebar_action(SA::FocusSidebar);
+            assert_eq!(sidebar.focus(), Focus::Files);
+            for a in [&mut normal, &mut sidebar] {
+                let mut shown = Vec::new();
+                for b in BINDINGS.iter().filter(|b| b.keys.starts_with("C-w")) {
+                    if !a.ctx_shown(b.context) || !(b.avail)(a) {
+                        continue;
+                    }
+                    shown.push((b.keys, b.desc));
+                    let r = a.keymap(&parse(b.keys, a.config.keys.leader));
+                    let want = match b.desc {
+                        "to the sidebar" => Some(SA::FocusSidebar),
+                        "to the content" => Some(SA::FocusContent),
+                        _ => None,
+                    };
+                    match want {
+                        Some(w) => assert_eq!(
+                            r,
+                            KeyResult::Action(Action::Sidebar(w)),
+                            "{side:?} {}: {}",
+                            b.keys,
+                            b.desc
+                        ),
+                        None => assert!(matches!(r, KeyResult::Action(_)), "{}", b.keys),
+                    }
+                }
+                assert!(shown.contains(&(to_side, "to the sidebar")), "{side:?}");
+                let content_row = shown.contains(&(to_content, "to the content"));
+                assert_eq!(content_row, a.focus() != Focus::Content, "{side:?}");
+                assert!(
+                    !shown.contains(&(to_content, "to the sidebar"))
+                        && !shown.contains(&(to_side, "to the content")),
+                    "{side:?}: the other side's rows are hidden: {shown:?}"
+                );
             }
         }
     }

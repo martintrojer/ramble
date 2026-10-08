@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, CLUE_DELAY, Focus, Mode, StartOptions, StartTarget};
-use ramble::config::{Config, ServerConfig, ServerKind, SidebarMode};
+use ramble::config::{Config, ServerConfig, ServerKind, SidebarMode, SidebarSide};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use serde_json::json;
@@ -438,4 +438,20 @@ fn launchers_that_need_a_repo_say_so() {
     keys(&mut app, " r");
     assert_eq!(desc(&app, "r").unwrap(), "review");
     assert_eq!(desc(&app, "w").unwrap(), "review-changes (needs a repo)");
+}
+
+#[test]
+fn ctrl_w_rows_follow_the_sidebar_side() {
+    let mut c = config();
+    c.sidebar.side = SidebarSide::Right;
+    let (_d, mut app) = app_sized(c, (100, 30));
+    app.handle_key(ctrl('w'));
+    assert_eq!(row_keys(&app), ["W", "j", "k", "l", "p", "w"]);
+    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar");
+    app.handle_key(key(KeyCode::Char('l')));
+    assert_ne!(app.focus(), Focus::Content);
+    app.handle_key(ctrl('w'));
+    assert_eq!(row_keys(&app), ["W", "h", "j", "k", "l", "p", "w"]);
+    assert_eq!(desc(&app, "h").unwrap(), "to the content");
+    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar");
 }

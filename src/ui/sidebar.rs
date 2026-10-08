@@ -1,5 +1,6 @@
-//! The sidebar: file tree and/or outline, with a border on the right, and
-//! the filter prompt over the status row.
+//! The sidebar: file tree and/or outline, with a border on the edge facing
+//! the content (right, or left when the sidebar is on the right), and the
+//! filter prompt over the status row. Rows are never mirrored.
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -11,6 +12,7 @@ use super::clip::{clip_end, clip_middle};
 use crate::app::sidebar::OUTLINE_TITLE;
 use crate::app::sidebar_width::{GUTTER_COLS, ICON_COLS as ICON};
 use crate::app::{App, Focus, ListArea};
+use crate::config::SidebarSide;
 use crate::render::palette;
 
 /// Background of the selected row (Catppuccin Mocha surface0).
@@ -57,8 +59,12 @@ pub(super) fn draw(
     app: &App,
     area: Rect,
 ) -> (Option<ListArea>, Option<ListArea>) {
+    let border = match app.sidebar_side() {
+        SidebarSide::Left => Borders::RIGHT,
+        SidebarSide::Right => Borders::LEFT,
+    };
     let block = Block::new()
-        .borders(Borders::RIGHT)
+        .borders(border)
         .border_style(Style::new().fg(palette::OVERLAY));
     let inner = block.inner(area);
     frame.render_widget(block, area);
