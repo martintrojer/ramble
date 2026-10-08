@@ -73,28 +73,78 @@ pub fn parse(src: &str, kind: FmKind) -> FrontMatter {
         FmKind::Toml => toml_entries(src),
     };
     let entries = match real {
-        Some(real) => real
-            .into_iter()
-            .map(|(key, shape)| merge(key, shape, &scanned, src.len()))
-            .collect(),
+        Some(real) => combine(real, scanned, src, kind),
         None => scanned,
     };
     let parsed = !entries.is_empty() || src.trim().is_empty();
     FrontMatter { entries, parsed }
 }
 
-/// A parser entry with the line scan's text where it agrees on the shape.
-fn merge(key: String, shape: FmValue, scanned: &[FmEntry], len: usize) -> FmEntry {
-    let found = scanned.iter().find(|e| e.key == key);
-    let value = match (&shape, found.map(|e| &e.value)) {
-        (FmValue::Scalar(_), Some(v @ FmValue::Scalar(_)))
-        | (FmValue::List(_), Some(v @ FmValue::List(_))) => v.clone(),
+/// The parser's entries combined with the line scan's. When the scan
+/// found the same top-level keys as the parser, keys, order and text come
+/// from the source and the parser only decides each value's shape;
+/// duplicate keys all show, in source order. Otherwise (TOML tables,
+/// dotted keys, a flow mapping) the parser's entries are used, with the
+/// scan's text and lines where a key matches.
+fn combine(
+    real: Vec<(String, FmValue)>,
+    mut scanned: Vec<FmEntry>,
+    src: &str,
+    kind: FmKind,
+) -> Vec<FmEntry> {
+    let norm: Vec<String> = scanned
+        .iter()
+        .map(|e| match kind {
+            FmKind::Yaml if !src[e.src.start..].trim_start().starts_with(['"', '\'']) => {
+                yaml_key(&e.key)
+            }
+            _ => e.key.clone(),
+        })
+        .collect();
+    let covers = real.iter().all(|(k, _)| norm.contains(k))
+        && norm.iter().all(|n| real.iter().any(|(k, _)| k == n));
+    if covers && !scanned.is_empty() {
+        let mut real = real;
+        // The last occurrence of a key is the one the parser kept.
+        for (i, n) in norm.iter().enumerate().rev() {
+            if let Some(j) = real.iter().position(|(k, _)| k == n) {
+                let (_, shape) = real.swap_remove(j);
+                let value = std::mem::replace(&mut scanned[i].value, FmValue::Map);
+                scanned[i].value = pick(shape, value);
+            }
+        }
+        return scanned;
+    }
+    real.into_iter()
+        .map(|(key, shape)| {
+            let found = norm.iter().position(|n| *n == key).map(|i| &scanned[i]);
+            FmEntry {
+                value: match found {
+                    Some(e) => pick(shape, e.value.clone()),
+                    None => shape,
+                },
+                src: found.map_or(0..src.len(), |e| e.src.clone()),
+                key,
+            }
+        })
+        .collect()
+}
+
+/// An unquoted YAML key as the parser reads it (`1.10` -> `1.1`, `~` ->
+/// empty), so source keys can be matched to parsed ones.
+fn yaml_key(key: &str) -> String {
+    use saphyr::{LoadableYamlNode, Yaml};
+    Yaml::load_from_str(key)
+        .ok()
+        .and_then(|d| d.first().and_then(yaml_scalar))
+        .unwrap_or_else(|| key.to_string())
+}
+
+/// The parser's shape, with the scan's text when the shapes agree.
+fn pick(shape: FmValue, scanned: FmValue) -> FmValue {
+    match (&shape, &scanned) {
+        (FmValue::Scalar(_), FmValue::Scalar(_)) | (FmValue::List(_), FmValue::List(_)) => scanned,
         _ => shape,
-    };
-    FmEntry {
-        key,
-        value,
-        src: found.map_or(0..len, |e| e.src.clone()),
     }
 }
 
@@ -444,10 +494,39 @@ mod tests {
 
     #[test]
     fn broken_yaml_duplicate_key() {
-        let fm = parse("a: 1\nb: 2\na: 3\n", FmKind::Yaml);
+        let src = "a: 1\nb: 2\na: 3\n";
+        let fm = parse(src, FmKind::Yaml);
         assert!(fm.parsed);
-        let keys: Vec<&str> = fm.entries.iter().map(|e| e.key.as_str()).collect();
-        assert!(keys.contains(&"a") && keys.contains(&"b"), "{keys:?}");
+        assert_eq!(kv(&fm), [("a", s("1")), ("b", s("2")), ("a", s("3"))]);
+        let lines: Vec<&str> = fm.entries.iter().map(|e| &src[e.src.clone()]).collect();
+        assert_eq!(lines, ["a: 1", "b: 2", "a: 3"]);
+    }
+
+    #[test]
+    fn non_string_yaml_keys_keep_their_source_text_and_lines() {
+        let src = "1.10: y\n007: z\nnull: x\n~: n\ntags:\n  - a\n";
+        let fm = parse(src, FmKind::Yaml);
+        assert_eq!(
+            kv(&fm),
+            [
+                ("1.10", s("y")),
+                ("007", s("z")),
+                ("null", s("x")),
+                ("~", s("n")),
+                ("tags", l(&["a"])),
+            ]
+        );
+        let lines: Vec<&str> = fm.entries.iter().map(|e| &src[e.src.clone()]).collect();
+        assert_eq!(
+            lines,
+            ["1.10: y", "007: z", "null: x", "~: n", "tags:\n  - a"]
+        );
+    }
+
+    #[test]
+    fn toml_tables_and_dotted_keys_use_the_parser_keys() {
+        let fm = parse("a.b = 1\n[t]\nk = 2\n", FmKind::Toml);
+        assert_eq!(kv(&fm), [("a", FmValue::Map), ("t", FmValue::Map)]);
     }
 
     #[test]

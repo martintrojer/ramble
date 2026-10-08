@@ -355,3 +355,13 @@ fn an_empty_block_is_front_matter_not_rules() {
         assert!(parse(src.into()).front_matter.is_none(), "{src:?}");
     }
 }
+
+#[test]
+fn duplicate_and_non_string_keys_show_in_source_order_and_yank_their_line() {
+    let src = "---\na: 1\nb: 2\na: 3\n007: z\n---\n\nbody\n";
+    let r = rows(src, 40, true);
+    assert_eq!(r[1..5], ["a    1", "b    2", "a    3", "007  z"]);
+    let (_d, mut app, clip) = app_src(src);
+    keys(&mut app, "za5Gyy"); // row 4: 007
+    assert_eq!(clip.0.borrow().last().unwrap(), "007: z\n");
+}
