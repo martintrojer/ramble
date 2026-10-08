@@ -583,3 +583,164 @@ fn disabled_mouse_ignores_events() {
     t.mouse(MouseEventKind::ScrollDown, g, 10);
     assert_eq!((t.app.cursor(), t.app.focus(), t.app.scroll()), before);
 }
+
+// --- mouse_test_gaps: one test per surviving mutant -----------------------
+
+#[test]
+fn a_click_outside_the_hover_popup_closes_it_and_does_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    write(&root, ".fake", "");
+    let a = write(&root, "a.md", "# A\n\nsee [b](b.md) here\n\nmore text\n");
+    write(&root, "b.md", "# B\n");
+    let script = root.join("script.json");
+    let steps = serde_json::json!([
+        {"expect": "initialize", "reply": {"capabilities": {"hoverProvider": true}}},
+        {"expect": "textDocument/hover", "reply": {
+            "contents": {"kind": "markdown", "value": "hovered text"}}}
+    ]);
+    std::fs::write(&script, steps.to_string()).unwrap();
+    let mut config = Config::default();
+    config.review.enabled = false;
+    config.sidebar.show = false;
+    config.lsp.server = vec![ramble::config::ServerConfig {
+        kind: ramble::config::ServerKind::Generic,
+        command: vec![
+            env!("CARGO_BIN_EXE_fake-lsp").into(),
+            script.display().to_string(),
+        ],
+        root_markers: vec![".fake".into()],
+        position_encoding: None,
+    }];
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::File(a),
+            tree_root: root.clone(),
+            config,
+        },
+        SIZE,
+    )
+    .unwrap();
+    let mut t = T {
+        _dir: dir,
+        root,
+        app,
+        clip: RecClip::default(),
+        t0: Instant::now(),
+    };
+    let until = |t: &mut T, what: &str, f: &dyn Fn(&App) -> bool| {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !f(&t.app) {
+            assert!(Instant::now() < end, "timed out waiting for {what}");
+            t.app.pump_lsp(Duration::from_millis(20));
+        }
+    };
+    until(&mut t, "server", &|a| a.lsp_label().ends_with('●'));
+    t.draw();
+    let b = t.text_cell("b here");
+    t.click(b, 0);
+    t.keys("K");
+    until(&mut t, "hover", &|a| a.hover_popup().is_some());
+    t.draw();
+    let hover = t.app.layout().hover.expect("hover drawn");
+    t.click((hover.x + 1, hover.y + 1), 1000);
+    assert!(t.app.hover_popup().is_some(), "a click inside keeps it");
+    let before = t.app.cursor();
+    let more = t.text_cell("more");
+    t.click(more, 2000);
+    assert_eq!(t.app.hover_popup(), None);
+    assert_eq!(
+        t.app.cursor(),
+        before,
+        "the closing click does nothing else"
+    );
+}
+
+#[test]
+fn the_deleted_file_banner_row_is_not_text() {
+    let mut t = setup();
+    let path = t.root.join("a.md");
+    t.app
+        .event(AppEvent::FsWatch(path, ramble::app::FsEvent::Removed));
+    t.draw();
+    assert!(t.app.layout().banner);
+    t.keys("5j");
+    let before = t.app.cursor();
+    let text = t.app.layout().text.unwrap();
+    assert_eq!(t.app.hit(text.x + 2, text.y), Hit::None);
+    t.click((text.x + 2, text.y), 0);
+    assert_eq!(t.app.cursor(), before);
+}
+
+#[test]
+fn dragging_onto_the_top_row_scrolls_up() {
+    let mut t = setup();
+    let text = t.app.layout().text.unwrap();
+    t.mouse(MouseEventKind::ScrollDown, (text.x + 2, text.y + 5), 0);
+    t.mouse(MouseEventKind::ScrollDown, (text.x + 2, text.y + 5), 0);
+    assert_eq!(t.app.scroll(), 6);
+    t.draw();
+    t.press((text.x + 2, text.y + 8), 1000);
+    t.drag((text.x + 2, text.y + 4), 1010);
+    for i in 0..3 {
+        t.drag((text.x + 2, text.y), 1020 + i);
+    }
+    assert_eq!(t.app.scroll(), 3);
+    assert_eq!(t.app.cursor().row, 3);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+}
+
+#[test]
+fn a_text_click_moves_focus_from_the_sidebar_to_the_content() {
+    let mut t = setup();
+    let files = t.app.layout().files.unwrap().pane;
+    let b = t.find_in(files, "b.md");
+    t.click(b, 0);
+    assert_eq!(t.app.focus(), Focus::Files);
+    let g = t.text_cell("gamma");
+    t.click(g, 1000);
+    assert_eq!(t.app.focus(), Focus::Content);
+}
+
+#[test]
+fn a_files_click_leaves_visual_mode() {
+    let mut t = setup();
+    t.keys("vl");
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
+    let files = t.app.layout().files.unwrap().pane;
+    let b = t.find_in(files, "b.md");
+    t.click(b, 0);
+    assert_eq!(t.app.mode(), Mode::Normal);
+    assert_eq!(t.app.focus(), Focus::Files);
+}
+
+#[test]
+fn a_click_with_a_stale_layout_keeps_the_cursor_on_screen() {
+    // A resize lands between the last draw and the click: the recorded
+    // text area is taller than the new viewport.
+    let mut t = setup();
+    let text = t.app.layout().text.unwrap();
+    t.app.event(AppEvent::Resize(SIZE.0, 8));
+    let low = (text.x + 1, text.y + 12);
+    t.click(low, 0);
+    let (row, scroll, vh) = (t.app.cursor().row, t.app.scroll(), t.app.viewport_height());
+    assert_eq!(row, 12);
+    assert!(
+        (scroll..scroll + vh).contains(&row),
+        "row {row} scroll {scroll} vh {vh}"
+    );
+}
+
+#[test]
+fn a_drag_after_switching_to_linewise_visual_is_ignored() {
+    let mut t = setup();
+    let a = t.text_cell("Alpha");
+    let g = t.text_cell("gamma");
+    t.press(a, 0);
+    t.keys("V");
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Line));
+    t.drag(g, 10);
+    t.release(g, 20);
+    assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Line));
+    assert!(t.clip.all().is_empty());
+}

@@ -190,9 +190,11 @@ impl App {
             self.mouse.drag = None;
             return;
         }
-        // Past the top or bottom edge: scroll one row and extend there.
+        // On or past the top row, or past the bottom edge: scroll one row
+        // and extend there. The top text row counts as the edge because
+        // the text starts at screen row 0, so nothing is reported above it.
         let vh = self.viewport_height();
-        let target_row = if row < t.y {
+        let target_row = if row <= t.y {
             self.scroll = self.scroll.saturating_sub(1);
             self.scroll
         } else if row >= t.bottom() {
