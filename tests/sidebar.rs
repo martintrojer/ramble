@@ -1344,3 +1344,101 @@ fn colon_opens_the_command_line_from_the_tree() {
     keys(&mut app, ":");
     assert_eq!(app.mode(), ramble::app::Mode::Command);
 }
+
+// Each width hook (D5) has a test: delete the hook and its test fails.
+
+const LONG_NAME: &str = "2026-10-07-a-really-long-ramble-design-spec.md";
+
+#[test]
+fn terminal_resize_refits_the_width() {
+    let (_d, root) = fixture();
+    let path = write(&root, "w.md", &format!("# {}\n", "x".repeat(60)));
+    let mut app = sized(&root, StartTarget::File(path), Config::default(), (80, 16));
+    assert_eq!(app.sidebar_cols(), 28 + 1, "35% of 80");
+    app.event(AppEvent::Resize(200, 16));
+    assert_eq!(app.sidebar_cols(), 48 + 1, "max_width");
+}
+
+#[test]
+fn mode_change_refits_the_width() {
+    let (_d, root) = fixture();
+    write(&root, LONG_NAME, "# L\n");
+    let mut app = sized(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        Config::default(),
+        (160, 16),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    app.set_sidebar_mode(SidebarMode::Files);
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
+
+#[test]
+fn show_refits_the_width() {
+    let (_d, root) = fixture();
+    write(&root, LONG_NAME, "# L\n");
+    let mut c = hidden();
+    c.sidebar.auto_hide_below = 0;
+    let mut app = sized(&root, StartTarget::File(root.join("a.md")), c, (160, 16));
+    assert_eq!(app.sidebar_cols(), 0);
+    // `<leader>E` sets the mode while hidden, then shows: only the show
+    // refits for the files pane.
+    keys(&mut app, " E");
+    assert_eq!(app.sidebar_mode(), SidebarMode::Files);
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
+
+#[test]
+fn ctrl_l_refits_the_width() {
+    let (_d, root) = fixture();
+    let mut app = sized(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Files),
+        (160, 16),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    write(&root, LONG_NAME, "# L\n");
+    app.handle_key(ctrl('l'));
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
+
+#[test]
+fn review_marks_refit_the_width() {
+    let (_d, root) = fixture();
+    let mut app = sized(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Files),
+        (160, 16),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    let mut m = ramble::review::Markers::default();
+    m.files.insert(
+        ramble::review::canonical(&root.join("a.md")),
+        ramble::review::FileMarks {
+            count: 123_456_789,
+            lines: vec![(1, 1)],
+        },
+    );
+    app.event(AppEvent::Review(m));
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
+
+#[test]
+fn filter_refits_the_width() {
+    let (_d, root) = fixture();
+    let mut app = sized(
+        &root,
+        StartTarget::File(root.join("a.md")),
+        config(SidebarMode::Files),
+        (160, 16),
+    );
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    win(&mut app, 'h');
+    // The title shows the filter: `Files /a-really-long-filter`.
+    keys(&mut app, "/a-really-long-filter");
+    app.handle_key(key(KeyCode::Enter));
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+}
