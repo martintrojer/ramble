@@ -86,12 +86,13 @@ fn title(text: String, focused: bool) -> Line<'static> {
     Line::from(Span::styled(text, style))
 }
 
-/// The first item to draw: `prev` (the last frame's) moved only as far as
-/// needed to show `selected` in `body` rows, so a click does not shift the
-/// list under the pointer. No selection draws from the top.
+/// The first item to draw: `prev` (the last frame's, or where the wheel
+/// left it) moved only as far as needed to show `selected` in `body` rows,
+/// so a click does not shift the list under the pointer. With no selection
+/// `prev` stays, clamped so the last page is full.
 fn list_skip(prev: usize, selected: Option<usize>, body: usize, len: usize) -> usize {
-    let Some(s) = selected else { return 0 };
     let prev = prev.min(len.saturating_sub(body));
+    let Some(s) = selected else { return prev };
     if s < prev {
         s
     } else if s >= prev + body {
@@ -168,7 +169,7 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
         rows,
         (
             tree.selected_index(&items),
-            app.layout().files.map_or(0, |l| l.skip),
+            app.sidebar_list_top(Focus::Files),
         ),
     ))
 }
@@ -217,10 +218,7 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
         area,
         title(clip_end(OUTLINE_TITLE, width), focused),
         rows,
-        (
-            app.outline_selected(),
-            app.layout().outline.map_or(0, |l| l.skip),
-        ),
+        (app.outline_selected(), app.sidebar_list_top(Focus::Outline)),
     ))
 }
 
@@ -249,6 +247,7 @@ mod tests {
         assert_eq!(list_skip(24, Some(20), 6, 30), 20, "above: scrolls up");
         assert_eq!(list_skip(10, Some(16), 6, 30), 11, "below: scrolls down");
         assert_eq!(list_skip(28, Some(27), 6, 30), 24, "clamped to the end");
-        assert_eq!(list_skip(9, None, 6, 30), 0);
+        assert_eq!(list_skip(9, None, 6, 30), 9, "no selection: stays");
+        assert_eq!(list_skip(29, None, 6, 30), 24, "no selection: clamped");
     }
 }

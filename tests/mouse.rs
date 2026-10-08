@@ -881,3 +881,76 @@ fn clicks_in_a_scrolled_picker_hit_the_drawn_row() {
     t.click(at, 100);
     assert_eq!(opened(&t), "f20.md");
 }
+
+// --- mouse_outline_wheel_unfocused -------------------------------------------
+
+/// A page with 80 headings; the sidebar shows the outline only (auto).
+fn long_outline() -> T {
+    let mut t = setup_with(SidebarMode::Auto, |_| {});
+    let mut page = String::from("# Long\n\n");
+    for i in 1..=80 {
+        page.push_str(&format!("## H{i}\n\ntext {i}\n\n"));
+    }
+    std::fs::write(t.root.join("a.md"), page).unwrap();
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+    t.draw();
+    t
+}
+
+/// The outline rows as drawn (title excluded), trimmed.
+fn outline_rows(t: &mut T) -> Vec<String> {
+    let pane = t.app.layout().outline.expect("outline drawn").pane;
+    let rows = t.draw();
+    (pane.y + 1..pane.bottom())
+        .map(|y| {
+            let r: String = rows[y as usize]
+                .chars()
+                .skip(pane.x as usize)
+                .take(pane.width as usize)
+                .collect();
+            r.trim_matches(|c: char| c == ' ' || c == '▎').to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn wheel_over_the_unfocused_outline_scrolls_it_and_focus_keeps_the_view() {
+    let mut t = long_outline();
+    assert_eq!(t.app.focus(), Focus::Content);
+    let pane = t.app.layout().outline.expect("outline drawn").pane;
+    let before = outline_rows(&mut t);
+    assert_eq!(before[0], "Long");
+    let at = (pane.x + 3, pane.y + 4);
+    for i in 0..8 {
+        t.mouse(MouseEventKind::ScrollDown, at, i);
+    }
+    let after = outline_rows(&mut t);
+    assert_eq!(after[0], "H24", "8 notches x 3 rows");
+    assert_eq!(t.app.focus(), Focus::Content);
+    t.mouse(MouseEventKind::ScrollUp, at, 100);
+    assert_eq!(outline_rows(&mut t)[0], "H21");
+
+    // Focusing the outline keeps the scrolled view: the current heading
+    // (Long, at the top) is off screen, so the nearest drawn row is
+    // selected instead of jumping back.
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    t.keys("h");
+    assert_eq!(t.app.focus(), Focus::Outline);
+    assert_eq!(outline_rows(&mut t)[0], "H21");
+    assert_eq!(t.app.outline_selected(), Some(21));
+}
+
+#[test]
+fn focusing_the_outline_selects_the_current_heading_when_it_is_drawn() {
+    let mut t = long_outline();
+    t.keys("12j"); // into H3's section
+    t.draw();
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    t.keys("h");
+    let cur = t.app.outline().iter().position(|o| o.current).unwrap();
+    assert!(cur > 0);
+    assert_eq!(t.app.outline_selected(), Some(cur));
+}

@@ -5,6 +5,7 @@
 //! filter, and the `auto` mode switching from files to `sidebar.reading`
 //! when a page is first shown.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -110,6 +111,11 @@ pub(super) struct Sidebar {
     /// Built when the files pane is first shown.
     tree: Option<Tree>,
     outline_sel: usize,
+    /// First drawn row of the files / outline list: saved from each frame
+    /// (`App::set_layout`) and moved by the wheel over an unfocused
+    /// outline, which shows no selection to move.
+    files_top: Cell<usize>,
+    outline_top: Cell<usize>,
     outline_filter: Option<String>,
     /// The filter being typed (`Mode::Filter`).
     prompt: Option<String>,
@@ -137,6 +143,8 @@ impl Sidebar {
             last_side: Focus::Files,
             tree: None,
             outline_sel: 0,
+            files_top: Cell::new(0),
+            outline_top: Cell::new(0),
             outline_filter: None,
             prompt: None,
         }
@@ -716,6 +724,7 @@ impl App {
     /// focus to the content.
     pub(super) fn sidebar_page_loaded(&mut self, first: bool) {
         self.sidebar.loading = false;
+        self.sidebar.outline_top.set(0);
         if first {
             self.set_focus(Focus::Content);
         }
@@ -914,7 +923,8 @@ impl App {
         }
         self.sidebar.last_side = f;
         if f == Focus::Outline {
-            self.sidebar.outline_sel = self.outline().iter().position(|o| o.current).unwrap_or(0);
+            let current = self.outline().iter().position(|o| o.current).unwrap_or(0);
+            self.sidebar.outline_sel = self.outline_focus_row(current);
         }
         if f == Focus::Files
             && let Some(t) = &mut self.sidebar.tree
@@ -922,6 +932,22 @@ impl App {
         {
             t.select_index(0);
         }
+    }
+
+    /// The outline row to select on focus: the current heading, or, when
+    /// the drawn rows (maybe scrolled by the wheel) don't show it, the
+    /// nearest drawn row, so focusing never moves the list.
+    fn outline_focus_row(&self, current: usize) -> usize {
+        let Some(drawn) = self.layout().outline else {
+            return current;
+        };
+        let body = drawn.pane.height.saturating_sub(1) as usize;
+        let last = self.outline().len().saturating_sub(1);
+        if body == 0 {
+            return current;
+        }
+        let top = self.sidebar.outline_top.get().min(last);
+        current.clamp(top, (top + body - 1).min(last))
     }
 
     /// Run a sidebar action.
@@ -1089,6 +1115,37 @@ impl App {
     pub(super) fn folder_depth(&self, i: usize) -> Option<usize> {
         let item = self.tree()?.visible_items().into_iter().nth(i)?;
         item.is_dir.then_some(item.depth)
+    }
+
+    /// First drawn row of sidebar list `f` (files or outline).
+    pub fn sidebar_list_top(&self, f: Focus) -> usize {
+        match f {
+            Focus::Files => self.sidebar.files_top.get(),
+            Focus::Outline => self.sidebar.outline_top.get(),
+            Focus::Content => 0,
+        }
+    }
+
+    /// Record the first row the last frame drew for list `f`.
+    pub(super) fn set_sidebar_list_top(&self, f: Focus, top: usize) {
+        match f {
+            Focus::Files => self.sidebar.files_top.set(top),
+            Focus::Outline => self.sidebar.outline_top.set(top),
+            Focus::Content => {}
+        }
+    }
+
+    /// The wheel over a sidebar pane: move the selection when the pane
+    /// draws one (files always; outline while focused), else scroll the
+    /// list by `delta` rows, clamped to the last full page of `body` rows.
+    pub(super) fn pane_wheel(&mut self, f: Focus, delta: isize, body: usize) {
+        if f == Focus::Outline && self.outline_selected().is_none() {
+            let max = self.outline().len().saturating_sub(body);
+            let top = &self.sidebar.outline_top;
+            top.set(top.get().saturating_add_signed(delta).min(max));
+        } else {
+            self.pane_move_in(f, delta);
+        }
     }
 
     /// Move pane `f`'s selection without focusing it (the wheel).

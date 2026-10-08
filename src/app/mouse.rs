@@ -276,7 +276,14 @@ impl App {
                     && matches!(hit, Hit::Files { .. } | Hit::Outline(_) | Hit::None)
                 {
                     let d = WHEEL_ROWS as isize;
-                    self.pane_move_in(f, if down { d } else { -d });
+                    let l = self.layout();
+                    let pane = if f == Focus::Files {
+                        l.files
+                    } else {
+                        l.outline
+                    };
+                    let body = pane.map_or(0, |p| p.pane.height.saturating_sub(1) as usize);
+                    self.pane_wheel(f, if down { d } else { -d }, body);
                 } else if matches!(hit, Hit::Text { .. } | Hit::Gutter) {
                     for _ in 0..WHEEL_ROWS {
                         if down {

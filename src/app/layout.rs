@@ -79,6 +79,12 @@ fn inside(r: Option<Rect>, p: Position) -> bool {
 impl App {
     /// Record where the frame just drawn put everything.
     pub fn set_layout(&self, layout: Layout) {
+        if let Some(f) = layout.files {
+            self.set_sidebar_list_top(super::Focus::Files, f.skip);
+        }
+        if let Some(o) = layout.outline {
+            self.set_sidebar_list_top(super::Focus::Outline, o.skip);
+        }
         self.layout.set(layout);
     }
 
