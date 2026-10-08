@@ -158,7 +158,7 @@ uses mdroots. Starting ramble no longer looks for zk or marksman.
 the remains of `lsp_glue.rs` into `src/backend/lsp/`. It runs only when
 `[[lsp.server]]` is configured, and translates documentLink, hover,
 references, and zk commands into mdroots' types. The LSP e2e tests stay as
-tests of this backend. Shrink it later if it isn't used.
+tests of this backend. It is kept indefinitely (settled, below).
 
 ## Risks
 
@@ -167,13 +167,19 @@ tests of this backend. Shrink it later if it isn't used.
 | mdroots API not ready, or shaped differently | S1 needs only `mdroots-syntax`, which exists. ramble adopts each call as it lands; until then the current LSP glue keeps working for the index features. |
 | ramble regresses where its code had fixes mdroots lacks | S0 ports the fixes with their tests before ramble deletes anything. Snapshot and integration tests catch range drift. |
 | Two parses per page (ramble layout + mdroots semantics) | Both run at ~1 GB/s; a 50 KB page costs <0.1 ms each. mdroots could expose `parse_with(events)` later to share one event stream. |
-| Path dependency on a sibling checkout | Fine while both repos are local and have the same author. Switch to a git or crates.io dependency before ramble's next push that includes S1, so CI can build it. |
+| Path dependency on a sibling checkout | Local only. mdroots is published first and ramble switches to that dependency before any push that includes S1 (settled, below). |
 | Binary size and build time (bundled SQLite, S2) | Accepted; SQLite adds ~1.5 MB and one C compile. |
+
+## Settled after review
+
+1. **Push ordering (user: yes).** mdroots is published (git or crates.io)
+   before ramble pushes anything that includes S1. ramble then switches the
+   path dependency to the published one. No vendoring. S1 can be built and
+   reviewed locally on the path dependency, but stays unpushed until then.
+   Pushing mdroots is still the user's call.
+2. **The third-party LSP backend (user: keep it).** S4's backend stays
+   supported with no planned removal. Its e2e tests remain part of the gate.
 
 ## Open questions
 
-1. **Push ordering:** ramble CI must build `mdroots-syntax`. Publish
-   mdroots (git or crates.io) before S1 is pushed, or vendor the crate
-   temporarily? (Human decision: pushing mdroots.)
-2. **When to drop the third-party backend:** keep it until there is evidence
-   nobody uses it, or set a date?
+None.
