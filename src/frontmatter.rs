@@ -6,6 +6,7 @@
 //! (a line scan), and when the parser fails the line scan alone is used.
 //! See `docs/specs/2026-10-08-front-matter.md`.
 
+use std::collections::HashSet;
 use std::ops::Range;
 
 /// Which delimiters the block used.
@@ -288,6 +289,7 @@ fn scan(src: &str) -> Vec<FmEntry> {
         return Vec::new();
     };
 
+    let quoted = quoted_continuations(&lines, base);
     let mut out = Vec::new();
     let mut cur: Option<Building> = None;
     let start = |at: usize, t: &str, (k, v): (String, String)| Building {
@@ -301,7 +303,14 @@ fn scan(src: &str) -> Vec<FmEntry> {
         map: false,
         src: at..at + t.len(),
     };
-    for &(at, line) in &lines {
+    for (n, &(at, line)) in lines.iter().enumerate() {
+        if quoted.contains(&n)
+            && let Some(c) = &mut cur
+        {
+            c.parts.push(line.trim().to_string());
+            c.src.end = at + line.len();
+            continue;
+        }
         if !content(line) {
             continue;
         }
@@ -339,6 +348,46 @@ fn scan(src: &str) -> Vec<FmEntry> {
         c.src.end = at + line.len();
     }
     out.extend(cur.map(Building::finish));
+    out
+}
+
+/// Indices of lines inside a quoted value that runs past its key line:
+/// TOML `"""` / `\'\'\'` strings up to their closing fence, and YAML `"` /
+/// `'` scalars continued on lines that don't look like a new entry. An
+/// unclosed quote absorbs nothing.
+fn quoted_continuations(lines: &[(usize, &str)], base: usize) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    let indent = |t: &str| t.len() - t.trim_start_matches([' ', '\t']).len();
+    let mut n = 0;
+    while n < lines.len() {
+        let line = lines[n].1;
+        n += 1;
+        let Some((_, v)) = split_entry(line.trim()).filter(|_| indent(line) == base) else {
+            continue;
+        };
+        let fence = ["\"\"\"", "\'\'\'"].into_iter().find(|f| v.starts_with(f));
+        let open = match fence {
+            Some(f) => !v[3..].contains(f),
+            None => v.starts_with(['"', '\'']) && closing_quote(&v).is_none(),
+        };
+        if !open {
+            continue;
+        }
+        let close = lines[n..].iter().position(|(_, t)| match fence {
+            Some(f) => t.contains(f),
+            None => t.contains(&v[..1]),
+        });
+        let entry_before = |end: usize| {
+            fence.is_none()
+                && lines[n..n + end]
+                    .iter()
+                    .any(|(_, t)| indent(t) <= base && split_entry(t.trim()).is_some())
+        };
+        if let Some(end) = close.filter(|&e| !entry_before(e + 1)) {
+            out.extend(n..=n + end);
+            n += end + 1;
+        }
+    }
     out
 }
 
@@ -409,8 +458,14 @@ fn closing_quote(v: &str) -> Option<usize> {
     None
 }
 
-/// Strip one pair of surrounding quotes.
+/// Strip one pair of surrounding quotes, or a TOML `"""` / `\'\'\'` pair
+/// (and the space next to it).
 fn unquote(s: &str) -> &str {
+    for f in ["\"\"\"", "\'\'\'"] {
+        if s.len() >= 6 && s.starts_with(f) && s.ends_with(f) {
+            return s[3..s.len() - 3].trim();
+        }
+    }
     let b = s.as_bytes();
     if b.len() >= 2 && (b[0] == b'"' || b[0] == b'\'') && b[b.len() - 1] == b[0] {
         &s[1..s.len() - 1]
@@ -632,6 +687,41 @@ mod tests {
         assert_eq!(closing_quote("'it''s' # x"), Some(7));
         assert_eq!(closing_quote("\"a\\\"b\" # x"), Some(6));
         assert_eq!(closing_quote("'open"), None);
+    }
+
+    #[test]
+    fn multi_line_quoted_strings_are_joined_and_cover_all_their_lines() {
+        let src = "multi = \"\"\"\nline1\nline2\"\"\"\nlit = \'\'\'\na\nb\'\'\'\nz = 1\n";
+        let fm = parse(src, FmKind::Toml);
+        assert_eq!(
+            kv(&fm),
+            [
+                ("multi", s("line1 line2")),
+                ("lit", s("a b")),
+                ("z", s("1"))
+            ]
+        );
+        assert_eq!(
+            &src[fm.entries[0].src.clone()],
+            "multi = \"\"\"\nline1\nline2\"\"\""
+        );
+        // A YAML double-quoted scalar continued on an unindented line.
+        let src = "title: \"a\nb\"\nz: 1\n";
+        let fm = parse(src, FmKind::Yaml);
+        assert_eq!(kv(&fm), [("title", s("a b")), ("z", s("1"))]);
+        assert_eq!(&src[fm.entries[0].src.clone()], "title: \"a\nb\"");
+        // An indented continuation that looks like a key is still text.
+        let fm = parse("title: \"a\n  k: v\"\nz: 1\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("title", s("a k: v")), ("z", s("1"))]);
+        // Broken YAML keeps the scan's text.
+        let fm = parse("title: \"open\nz: 1\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("title", s("\"open")), ("z", s("1"))]);
+        // ... even when a later line has a quote.
+        let fm = parse("title: \"open\nz: 1\nw: \"x\"\n", FmKind::Yaml);
+        assert_eq!(
+            kv(&fm),
+            [("title", s("\"open")), ("z", s("1")), ("w", s("x"))]
+        );
     }
 
     #[test]

@@ -365,3 +365,16 @@ fn duplicate_and_non_string_keys_show_in_source_order_and_yank_their_line() {
     keys(&mut app, "za5Gyy"); // row 4: 007
     assert_eq!(clip.0.borrow().last().unwrap(), "007: z\n");
 }
+
+#[test]
+fn toml_multi_line_string_row_shows_the_text() {
+    let src = "+++\nmulti = \"\"\"\nline1\nline2\"\"\"\nz = 1\n+++\n\nbody\n";
+    let r = rows(src, 40, true);
+    assert_eq!(r[1..3], ["multi  line1 line2", "z      1"]);
+    let (_d, mut app, clip) = app_src(src);
+    keys(&mut app, "za2Gyy");
+    assert_eq!(
+        clip.0.borrow().last().unwrap(),
+        "multi = \"\"\"\nline1\nline2\"\"\"\n"
+    );
+}
