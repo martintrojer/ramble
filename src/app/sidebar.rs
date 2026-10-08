@@ -28,6 +28,8 @@ pub const TREE_STAYS_MESSAGE: &str = "No file loaded: the file tree stays shown"
 pub const NO_PANE_BELOW: &str = "No pane below";
 /// Status for `C-w k` without a pane above.
 pub const NO_PANE_ABOVE: &str = "No pane above";
+/// Status for `-` when the tree root is already `/`.
+pub const ROOT_TOP_MESSAGE: &str = "At the filesystem root";
 
 /// Which pane receives keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -68,6 +70,11 @@ pub enum SidebarAction {
     Collapse,
     /// `l`: expand the directory.
     Expand,
+    /// `-` (and `h` on a top-level row): re-root the tree at the parent
+    /// of its root (D10).
+    RootUp,
+    /// `.` on a folder row: make that folder the tree root (D10).
+    RootHere,
     /// `o` / `Enter`: open a file, toggle a directory, jump to a heading.
     Open,
     /// `/` in a sidebar pane.
@@ -209,6 +216,9 @@ struct Node {
 
 /// The file tree under a root. Directories are read one level at a time,
 /// when expanded, so a root of `$HOME` costs one directory read at start.
+///
+/// The root is a browsing view (D10): `-` and `.` move it, while
+/// `App::tree_root` (review discovery, notebook root, `yF`) never moves.
 #[derive(Debug, Clone)]
 pub struct Tree {
     root: PathBuf,
@@ -255,6 +265,40 @@ impl Tree {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Re-root the tree at `root` (D10). Expansion is kept (absolute
+    /// paths), the filter and selection are cleared. An
+    /// [`Tree::outside`] file that the new root covers is shown and
+    /// selected. Moving the root away from the followed file does not make
+    /// it outside: the title keeps showing the root you browse.
+    pub fn set_root(&mut self, root: &Path) {
+        self.root = canonical(root);
+        self.walk(&self.root.clone());
+        self.filter = None;
+        self.selected = None;
+        if let Some(f) = self.outside.clone()
+            && f.starts_with(&self.root)
+        {
+            self.reveal(&f);
+        }
+    }
+
+    /// Re-root at the parent of the root, expanding and selecting the old
+    /// root (unless a followed file just came into view, which is
+    /// selected instead). False at `/`.
+    pub fn root_up(&mut self) -> bool {
+        let Some(parent) = self.root.parent().map(Path::to_path_buf) else {
+            return false;
+        };
+        let old = self.root.clone();
+        let was_outside = self.outside.is_some();
+        self.set_root(&parent);
+        self.expand(&old);
+        if !was_outside || self.outside.is_some() {
+            self.selected = Some(old);
+        }
+        true
     }
 
     /// How many directory entries have been read so far; shows that a
@@ -554,6 +598,8 @@ impl App {
                 (_, Some('h')) | (KeyCode::Left, _) => act(S::Collapse),
                 (_, Some('l')) | (KeyCode::Right, _) => act(S::Expand),
                 (_, Some('o')) | (KeyCode::Enter, _) => act(S::Open),
+                (_, Some('-')) => act(S::RootUp),
+                (_, Some('.')) => act(S::RootHere),
                 (_, Some('/')) => act(S::FilterStart),
                 (_, Some(':')) => KeyResult::Action(Action::Cmd(super::CmdAction::Start)),
                 (KeyCode::Esc, _) => act(S::FilterClear),
@@ -675,10 +721,13 @@ impl App {
             match pane {
                 Focus::Files => {
                     let Some(t) = self.tree() else { continue };
-                    need.push(sidebar_width::cols(&files_title(
-                        &self.sidebar_title(),
-                        t.filter(),
-                    )));
+                    // The root in the title is clipped from the left to
+                    // fit (D10), so only `Files` counts, not the path.
+                    let title = match t.outside() {
+                        Some(_) => self.sidebar_title(),
+                        None => FILES_TITLE.into(),
+                    };
+                    need.push(sidebar_width::cols(&files_title(&title, t.filter())));
                     for i in t.visible_items() {
                         let mark = match self.file_marker(&i.path) {
                             Some((c, Some(n))) => format!(" {c} {n}"),
@@ -860,13 +909,31 @@ impl App {
             .then_some(self.sidebar.outline_sel)
     }
 
-    /// Title of the files pane: `Files`, or the current file's path when
-    /// it lies outside the tree root.
+    /// Title of the files pane: `Files <root>` (D10), or the current
+    /// file's path when it lies outside the tree root.
     pub fn sidebar_title(&self) -> String {
-        match self.tree().and_then(Tree::outside) {
-            Some(p) => p.display().to_string(),
-            None => "Files".into(),
+        match (
+            self.tree().and_then(Tree::outside),
+            self.sidebar_root_label(),
+        ) {
+            (Some(p), _) => p.display().to_string(),
+            (None, Some(root)) => format!("{FILES_TITLE} {root}"),
+            (None, None) => FILES_TITLE.into(),
         }
+    }
+
+    /// The tree root as shown in the title, with `~` for `$HOME`.
+    pub fn sidebar_root_label(&self) -> Option<String> {
+        let root = self.tree()?.root();
+        let home = (self.env)("HOME")
+            .filter(|h| !h.is_empty())
+            .map(|h| canonical(Path::new(&h)));
+        let rel = home.as_deref().and_then(|h| root.strip_prefix(h).ok());
+        Some(match rel {
+            Some(r) if r.as_os_str().is_empty() => "~".into(),
+            Some(r) => format!("~/{}", r.display()),
+            None => root.display().to_string(),
+        })
     }
 
     /// The current page's file, canonical like the tree's paths: the
@@ -1035,6 +1102,8 @@ impl App {
             S::Bottom => self.pane_move(isize::MAX),
             S::Collapse => self.tree_collapse(),
             S::Expand => self.tree_expand(),
+            S::RootUp => self.tree_root_up(),
+            S::RootHere => self.tree_root_here(),
             S::Open => self.pane_open(),
             S::FilterStart => {
                 let current = self.pane_filter().unwrap_or_default();
@@ -1203,7 +1272,42 @@ impl App {
             let parent = parent.to_path_buf();
             t.collapse(&parent);
             t.select(Some(parent));
+        } else {
+            self.tree_root_up();
         }
+    }
+
+    /// `-`: re-root the files pane one folder up.
+    fn tree_root_up(&mut self) {
+        if self.sidebar.focus != Focus::Files {
+            return;
+        }
+        let Some(t) = &mut self.sidebar.tree else {
+            return;
+        };
+        if t.root_up() {
+            self.sidebar_relayout(false);
+        } else {
+            self.set_status(ROOT_TOP_MESSAGE);
+        }
+    }
+
+    /// `.`: make the selected folder the root of the files pane.
+    fn tree_root_here(&mut self) {
+        if self.sidebar.focus != Focus::Files {
+            return;
+        }
+        let Some(item) = self.selected_item().filter(|i| i.is_dir) else {
+            return;
+        };
+        let Some(t) = &mut self.sidebar.tree else {
+            return;
+        };
+        t.set_root(&item.path);
+        if t.selected().is_none() {
+            t.select_index(0);
+        }
+        self.sidebar_relayout(false);
     }
 
     fn tree_expand(&mut self) {
@@ -1270,6 +1374,8 @@ impl App {
 
 /// Title of the outline pane.
 pub const OUTLINE_TITLE: &str = "Outline";
+/// The files pane title before the root.
+pub const FILES_TITLE: &str = "Files";
 
 /// The files pane title with the filter, if any.
 fn files_title(title: &str, filter: Option<&str>) -> String {

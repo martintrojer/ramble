@@ -91,6 +91,9 @@ can follow it.
   `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
   split, `C-w h/l/j/k` moves between panes. It sits on the left or the
   right (`side`, `:Sidebar left|right`); `C-w h/l` follow the screen.
+- In the tree, `-` moves the root up a folder (so does `h` on a top-level
+  row) and `.` makes the selected folder the root. The title shows where
+  you are: `Files ~/notes/sub`.
 - It hides on terminals narrower than 80 columns and comes back when the
   terminal grows, unless you hid it. With no file open, the tree always
   shows and has focus.

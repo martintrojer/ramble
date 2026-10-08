@@ -354,9 +354,17 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("k, Up", S, G::Sidebar, "up", always),
     b("gg", S, G::Sidebar, "first row", always),
     b("G", S, G::Sidebar, "last row", always),
-    b("h, Left", S, G::Sidebar, "collapse / parent", always),
+    b(
+        "h, Left",
+        S,
+        G::Sidebar,
+        "collapse / parent / root up",
+        always,
+    ),
     b("l, Right", S, G::Sidebar, "expand", always),
     b("o, Enter", S, G::Sidebar, "open / jump to heading", always),
+    b("-", S, G::Sidebar, "tree root up a folder", always),
+    b(".", S, G::Sidebar, "make the folder the tree root", always),
     b("/", S, G::Sidebar, "filter the pane", always),
     b("Esc", S, G::Sidebar, "clear the filter", always),
     // Pickers.
@@ -1093,7 +1101,7 @@ mod tests {
             assert!(has(k, &[Ctx::Any]), "no row for {k} in both panes");
         }
         let side = [
-            "j", "k", "gg", "G", "h", "l", "o", "Enter", "/", "Esc", "C-w l",
+            "j", "k", "gg", "G", "h", "l", "o", "Enter", "/", "Esc", "C-w l", "-", ".",
         ];
         for k in side {
             assert!(has(k, &[Ctx::Sidebar]), "no sidebar row for {k}");

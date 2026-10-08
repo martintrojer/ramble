@@ -46,6 +46,18 @@ pub fn clip_end(s: &str, width: usize) -> String {
     format!("{}{ELLIPSIS}", head(s, width - 1))
 }
 
+/// `s` in at most `width` columns, cut at the start with `…` when it
+/// does not fit, keeping the end: `…/notes/sub` (D10).
+pub fn clip_start(s: &str, width: usize) -> String {
+    if s.width() <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    format!("{ELLIPSIS}{}", tail(s, width - 1))
+}
+
 /// `s` in at most `width` columns, cut in the middle with `…` when it does
 /// not fit, keeping the end: `2026-10-07-ram…-spec.md`. The end keeps at
 /// least its last 6 columns, or the whole extension if that is longer, and
@@ -82,6 +94,17 @@ mod tests {
         assert_eq!(clip_end("short", 10), "short");
         assert_eq!(clip_end("exact", 5), "exact", "exact fit is not clipped");
         assert_eq!(clip_end("exact", 4), "exa…");
+    }
+
+    #[test]
+    fn start_keeps_the_end() {
+        assert_eq!(clip_start("~/notes/sub", 8), "…tes/sub");
+        assert_eq!(clip_start("~/notes/sub", 11), "~/notes/sub");
+        assert_eq!(clip_start("abc", 1), "…");
+        assert_eq!(clip_start("abc", 0), "");
+        let c = clip_start("日本語の見出し", 4);
+        assert_eq!(c, "…し");
+        assert!(w(&c) <= 4);
     }
 
     #[test]

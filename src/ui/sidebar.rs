@@ -7,9 +7,10 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
-use super::clip::{clip_end, clip_middle};
-use crate::app::sidebar::OUTLINE_TITLE;
+use super::clip::{clip_end, clip_middle, clip_start};
+use crate::app::sidebar::{FILES_TITLE, OUTLINE_TITLE, Tree};
 use crate::app::sidebar_width::{GUTTER_COLS, ICON_COLS as ICON};
 use crate::app::{App, Focus, ListArea};
 use crate::config::SidebarSide;
@@ -171,13 +172,26 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     Some(draw_list(
         frame,
         area,
-        title(clip_middle(&app.sidebar_files_title(), width), focused),
+        title(files_title(app, tree, width), focused),
         rows,
         (
             tree.selected_index(&items),
             app.sidebar_list_top(Focus::Files),
         ),
     ))
+}
+
+/// The files pane title in `width` columns: `Files <root>` with the root
+/// clipped from the left (D10); an outside file's path is clipped in the
+/// middle as before.
+fn files_title(app: &App, tree: &Tree, width: usize) -> String {
+    let (None, Some(root)) = (tree.outside(), app.sidebar_root_label()) else {
+        return clip_middle(&app.sidebar_files_title(), width);
+    };
+    let filter = tree.filter().map(|f| format!(" /{f}")).unwrap_or_default();
+    let head = format!("{FILES_TITLE} ");
+    let room = width.saturating_sub(head.width() + filter.width());
+    clip_end(&format!("{head}{}{filter}", clip_start(&root, room)), width)
 }
 
 /// The review marker of a tree row with `room` columns after the indent

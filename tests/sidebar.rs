@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::sidebar::{
-    HIDDEN_MESSAGE, NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, TREE_STAYS_MESSAGE, Tree,
-    item_paths,
+    HIDDEN_MESSAGE, NARROW_MESSAGE, NO_PANE_ABOVE, NO_PANE_BELOW, ROOT_TOP_MESSAGE,
+    TREE_STAYS_MESSAGE, Tree, item_paths,
 };
 use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarMode, SidebarReading, SidebarSide, SidebarWidth};
@@ -1018,7 +1018,9 @@ fn snapshot_split_mode() {
     let (_d, root) = fixture();
     let mut c = config(SidebarMode::Split);
     c.sidebar.width = SidebarWidth::Fixed(24);
-    let mut app = app_on(&root, StartTarget::File(root.join("docs/guide.md")), c);
+    let home = root.display().to_string();
+    let mut app = app_on(&root, StartTarget::File(root.join("docs/guide.md")), c)
+        .with_env(move |k| (k == "HOME").then(|| home.clone()));
     win(&mut app, 'h');
     let mut term = Terminal::new(TestBackend::new(SIZE.0, SIZE.1)).unwrap();
     term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
@@ -1554,5 +1556,173 @@ fn right_side_still_auto_hides_on_a_narrow_terminal() {
     assert_eq!(
         screen(&app, 100, SIZE.1)[1].chars().nth(100 - 21),
         Some('│')
+    );
+}
+
+// D10: moving the tree root.
+
+/// The fixture opened as a directory at `root/rel`, files pane focused,
+/// `$HOME` set to the fixture root.
+fn tree_at(root: &Path, rel: &str) -> App {
+    let start = root.join(rel);
+    let home = root.display().to_string();
+    let mut app = app_on(
+        &start,
+        StartTarget::Dir(start.clone()),
+        config(SidebarMode::Files),
+    )
+    .with_env(move |k| (k == "HOME").then(|| home.clone()));
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Files);
+    app
+}
+
+#[test]
+fn dash_goes_up_and_expands_and_selects_the_old_root() {
+    let (_d, root) = fixture();
+    let mut app = tree_at(&root, "docs/deep");
+    assert_eq!(app.sidebar_title(), "Files ~/docs/deep");
+    keys(&mut app, "/x");
+    app.handle_key(key(KeyCode::Enter));
+    assert_eq!(app.tree().unwrap().filter(), Some("x"));
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.root(), root.join("docs"));
+    assert_eq!(tree.filter(), None, "filter cleared");
+    assert!(tree.is_expanded(&root.join("docs/deep")));
+    assert_eq!(tree.selected(), Some(root.join("docs/deep").as_path()));
+    assert_eq!(names(tree), ["deep", "  x.md", "guide.md"]);
+    assert_eq!(app.sidebar_title(), "Files ~/docs");
+    keys(&mut app, "-");
+    assert_eq!(app.tree().unwrap().root(), root);
+    assert_eq!(app.sidebar_title(), "Files ~");
+    // Folders below keep their expansion.
+    assert_eq!(
+        names(app.tree().unwrap()),
+        ["docs", "  deep", "    x.md", "  guide.md", "img", "a.md"]
+    );
+}
+
+#[test]
+fn h_on_a_top_level_row_goes_up() {
+    let (_d, root) = fixture();
+    let mut app = tree_at(&root, "docs");
+    keys(&mut app, "ggl"); // expand deep
+    keys(&mut app, "jh"); // on x.md: select deep (collapsing it)
+    assert_eq!(app.tree().unwrap().root(), root.join("docs"));
+    assert_eq!(
+        app.tree().unwrap().selected(),
+        Some(root.join("docs/deep").as_path())
+    );
+    keys(&mut app, "h"); // deep is top level and collapsed
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.root(), root);
+    assert_eq!(tree.selected(), Some(root.join("docs").as_path()));
+}
+
+#[test]
+fn dot_on_a_folder_makes_it_the_root() {
+    let (_d, root) = fixture();
+    let mut app = tree_at(&root, "");
+    keys(&mut app, "G"); // a.md
+    keys(&mut app, ".");
+    assert_eq!(app.tree().unwrap().root(), root, "a file row does nothing");
+    keys(&mut app, "gg/do");
+    app.handle_key(key(KeyCode::Enter));
+    keys(&mut app, ".");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.root(), root.join("docs"));
+    assert_eq!(tree.filter(), None, "filter cleared");
+    assert_eq!(names(tree), ["deep", "guide.md"]);
+    assert_eq!(tree.selected(), Some(root.join("docs/deep").as_path()));
+    assert_eq!(app.sidebar_title(), "Files ~/docs");
+}
+
+#[test]
+fn root_moves_only_in_the_tree_and_dash_is_files_pane_only() {
+    let (_d, root) = fixture();
+    let mut app = app_on(
+        &root.join("docs"),
+        StartTarget::File(root.join("docs/guide.md")),
+        config(SidebarMode::Split),
+    );
+    // In the outline pane `-` does nothing.
+    win(&mut app, 'h');
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline);
+    keys(&mut app, "-");
+    assert_eq!(app.tree().unwrap().root(), root.join("docs"));
+    win(&mut app, 'k');
+    keys(&mut app, "-");
+    assert_eq!(app.tree().unwrap().root(), root);
+    // The status-line title stays relative to the original root.
+    assert_eq!(app.title(), "guide.md");
+    // A refresh keeps the browsing root.
+    app.handle_key(ctrl('l'));
+    assert_eq!(app.tree().unwrap().root(), root);
+}
+
+#[test]
+fn going_up_stops_at_the_filesystem_root() {
+    let (_d, root) = fixture();
+    let mut app = tree_at(&root, "");
+    for _ in 0..root.components().count() - 1 {
+        keys(&mut app, "-");
+        assert_ne!(app.status(), ROOT_TOP_MESSAGE);
+    }
+    assert_eq!(app.tree().unwrap().root(), Path::new("/"));
+    assert_eq!(app.sidebar_title(), "Files /");
+    keys(&mut app, "-");
+    assert_eq!(app.status(), ROOT_TOP_MESSAGE);
+    assert_eq!(app.tree().unwrap().root(), Path::new("/"));
+}
+
+#[test]
+fn an_outside_file_shows_once_the_root_covers_it() {
+    let (_d, root) = fixture();
+    let file = root.join("a.md");
+    let mut app = app_on(
+        &root.join("docs/deep"),
+        StartTarget::File(file.clone()),
+        config(SidebarMode::Files),
+    );
+    win(&mut app, 'h');
+    assert_eq!(app.tree().unwrap().outside(), Some(file.as_path()));
+    keys(&mut app, "-");
+    assert_eq!(app.tree().unwrap().outside(), Some(file.as_path()));
+    keys(&mut app, "-");
+    let tree = app.tree().unwrap();
+    assert_eq!(tree.outside(), None);
+    assert_eq!(tree.selected(), Some(file.as_path()));
+    assert!(app.sidebar_title().starts_with("Files "));
+}
+
+#[test]
+fn root_change_recomputes_the_width() {
+    let (_d, root) = fixture();
+    write(&root, "a-rather-long-file-name-for-width.md", "# L\n");
+    let mut app = tree_at(&root, "docs");
+    assert_eq!(app.sidebar_cols(), MIN_COLS);
+    keys(&mut app, "-");
+    assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
+    keys(&mut app, "gg.");
+    assert_eq!(app.tree().unwrap().root(), root.join("docs"));
+    assert_eq!(app.sidebar_cols(), MIN_COLS, "narrows after going down");
+}
+
+#[test]
+fn title_clips_the_root_from_the_left() {
+    let (_d, root) = fixture();
+    write(&root, "notes/a-long-folder-name/sub/n.md", "# N\n");
+    let mut c = config(SidebarMode::Files);
+    c.sidebar.width = SidebarWidth::Fixed(20);
+    let start = root.join("notes/a-long-folder-name/sub");
+    let home = root.display().to_string();
+    let app = app_on(&start, StartTarget::Dir(start.clone()), c)
+        .with_env(move |k| (k == "HOME").then(|| home.clone()));
+    let s = screen(&app, 60, 10);
+    assert_eq!(
+        s[0].split('│').next().unwrap().trim_end(),
+        "Files …lder-name/sub"
     );
 }
