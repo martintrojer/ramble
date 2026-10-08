@@ -378,3 +378,44 @@ fn toml_multi_line_string_row_shows_the_text() {
         "multi = \"\"\"\nline1\nline2\"\"\"\n"
     );
 }
+
+#[test]
+fn enter_on_row_0_in_raw_view_is_follow_not_the_fold() {
+    let (_d, mut app, _) = app_src(SRC);
+    keys(&mut app, "gR");
+    assert_eq!(row(&app, 0), "---");
+    // Toggling there would be a no-op (raw view), so check the keymap.
+    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(
+        app.keymap(&[enter]),
+        ramble::app::KeyResult::Action(ramble::app::Action::Follow)
+    );
+}
+
+#[test]
+fn unparsed_crlf_rows_have_no_carriage_return() {
+    let src = "---\r\n# only a comment\r\nstray text\r\n---\r\n\r\nbody\r\n";
+    let r = rows(src, 40, true);
+    assert_eq!(r[1..3], ["# only a comment", "stray text"]);
+}
+
+#[test]
+fn narrow_width_keeps_the_value_visible() {
+    let src = "---\nauthorname: A\n---\n\nx\n";
+    let entry = |w: u16| {
+        rows(src, w, true)
+            .into_iter()
+            .find(|r| r.starts_with("auth"))
+            .unwrap()
+    };
+    // 12 columns: the key column shrinks so the value keeps a column.
+    assert_eq!(entry(12), "authorna…  A");
+    for w in 4..=12 {
+        let r = rows(src, w, true);
+        assert!(
+            r.iter()
+                .all(|l| unicode_width::UnicodeWidthStr::width(l.as_str()) <= w as usize),
+            "{w}: {r:?}"
+        );
+    }
+}

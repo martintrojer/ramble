@@ -767,6 +767,36 @@ mod tests {
     }
 
     #[test]
+    fn crlf_lines() {
+        let src = "title: T\r\ntags:\r\n  - a\r\nz: 1\r\n";
+        let fm = parse(src, FmKind::Yaml);
+        assert_eq!(
+            kv(&fm),
+            [("title", s("T")), ("tags", l(&["a"])), ("z", s("1"))]
+        );
+        assert_eq!(&src[fm.entries[1].src.clone()], "tags:\r\n  - a");
+        // Through the scan alone (a tab makes it invalid YAML).
+        let fm = parse("a: x\r\n\tb: y\r\n", FmKind::Yaml);
+        assert_eq!(kv(&fm), [("a", s("x")), ("b", s("y"))]);
+    }
+
+    #[test]
+    fn tagged_yaml_values_take_the_inner_shape() {
+        let fm = parse(
+            "t: !!str 5\nl: !custom [a, b]\nm: !x {k: 1}\n",
+            FmKind::Yaml,
+        );
+        assert_eq!(
+            kv(&fm),
+            [
+                ("t", s("!!str 5")),
+                ("l", l(&["a", "b"])),
+                ("m", FmValue::Map),
+            ]
+        );
+    }
+
+    #[test]
     fn body_strips_the_delimiter_lines() {
         let src = "---\na: 1\n---\n\n# H\n";
         let r = 0..src.find("---\n\n").unwrap() + 3;
