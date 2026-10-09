@@ -2,7 +2,8 @@
 //! render, sidebar, review, send and mouse options.
 //!
 //! A user file overrides the defaults one field at a time. `[[lsp.server]]`
-//! replaces the default server list; `[[launch]]` entries merge by name.
+//! replaces the server list (empty by default: every page uses the built-in
+//! mdroots backend); `[[launch]]` entries merge by name.
 
 use std::path::{Path, PathBuf};
 
@@ -188,7 +189,8 @@ pub struct KeysConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LspConfig {
-    /// Tried in order; the first whose root marker is found wins.
+    /// Tried in order; the first whose root marker is found wins. Empty by
+    /// default; pages no server selects use the mdroots backend.
     pub server: Vec<ServerConfig>,
 }
 
@@ -285,22 +287,7 @@ impl Default for Config {
                 leader: ' ',
                 clue: true,
             },
-            lsp: LspConfig {
-                server: vec![
-                    ServerConfig {
-                        kind: ServerKind::Zk,
-                        command: strings(&["zk", "lsp"]),
-                        root_markers: strings(&[".zk"]),
-                        position_encoding: None,
-                    },
-                    ServerConfig {
-                        kind: ServerKind::Marksman,
-                        command: strings(&["marksman", "server"]),
-                        root_markers: strings(&[".marksman.toml", ".git"]),
-                        position_encoding: None,
-                    },
-                ],
-            },
+            lsp: LspConfig { server: vec![] },
             launch: vec![launcher(
                 "edit",
                 "<leader>o",

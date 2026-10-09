@@ -47,13 +47,10 @@ fn defaults_match_spec() {
     assert_eq!(c.sidebar.side, SidebarSide::Left);
     assert_eq!(c.keys.leader, ' ');
     assert!(c.mouse.enabled);
-    assert_eq!(c.lsp.server.len(), 2);
-    assert_eq!(c.lsp.server[0].kind, ServerKind::Zk);
-    assert_eq!(c.lsp.server[0].command, ["zk", "lsp"]);
-    assert_eq!(c.lsp.server[0].root_markers, [".zk"]);
-    assert_eq!(c.lsp.server[1].kind, ServerKind::Marksman);
-    assert_eq!(c.lsp.server[1].command, ["marksman", "server"]);
-    assert_eq!(c.lsp.server[1].root_markers, [".marksman.toml", ".git"]);
+    assert!(
+        c.lsp.server.is_empty(),
+        "mdroots serves every page by default"
+    );
     // Spec § Launchers, verbatim.
     let launcher = |name: &str, key: &str, command: &[&str], needs_vcs: bool| Launcher {
         name: name.into(),
@@ -112,6 +109,20 @@ fn lsp_servers_replace_defaults() {
     assert_eq!(s.command, ["my-ls"]);
     assert!(s.root_markers.is_empty());
     assert_eq!(s.position_encoding, Some(PositionEncoding::Utf16));
+}
+
+#[test]
+fn a_zk_server_entry_is_exactly_the_server_list() {
+    let c = load_str(
+        "[[lsp.server]]\nkind = \"zk\"\ncommand = [\"zk\", \"lsp\"]\nroot_markers = [\".zk\"]\n",
+    )
+    .unwrap();
+    assert_eq!(c.lsp.server.len(), 1);
+    let s = &c.lsp.server[0];
+    assert_eq!(s.kind, ServerKind::Zk);
+    assert_eq!(s.command, ["zk", "lsp"]);
+    assert_eq!(s.root_markers, [".zk"]);
+    assert_eq!(s.position_encoding, None);
 }
 
 #[test]
@@ -317,7 +328,6 @@ fn uncommented_default_file_equals_defaults() {
         "[review]",
         "[send]",
         "[mouse]",
-        "[[lsp.server]]",
         "[[launch]]",
     ] {
         assert!(uncommented.lines().any(|l| l == header), "missing {header}");
@@ -326,13 +336,8 @@ fn uncommented_default_file_equals_defaults() {
         uncommented.lines().filter(|l| *l == "[[launch]]").count(),
         1
     );
-    assert_eq!(
-        uncommented
-            .lines()
-            .filter(|l| *l == "[[lsp.server]]")
-            .count(),
-        2
-    );
+    // The server examples are documentation only: no server by default.
+    assert!(!uncommented.lines().any(|l| l == "[[lsp.server]]"));
     assert_eq!(load_str(&uncommented).unwrap(), Config::default());
 }
 
