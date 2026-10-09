@@ -72,7 +72,6 @@ fn defaults_match_spec() {
         ),]
     );
     assert!(c.review.enabled);
-    assert_eq!(c.review.command, "tuicr");
 }
 
 #[test]

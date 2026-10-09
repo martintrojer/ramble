@@ -106,9 +106,11 @@ pub enum Action {
     OpenOp(crate::notebook::Op),
     Picker(super::PickerAction),
     Cmd(super::CmdAction),
-    // Review markers.
+    // Review comments.
     /// `]r` (true) / `[r`.
     ReviewJump(bool),
+    /// `cc`, visual `c` and the comment prompt.
+    Comment(super::CommentAction),
     /// `gR`: toggle the raw source view.
     ToggleRaw,
     /// `g?` opens the help overlay; its own keys.
@@ -194,6 +196,7 @@ impl App {
             Mode::Help => super::help::help_keymap(self, keys),
             Mode::Visual(_) => self.visual_keymap(keys),
             Mode::OpPending => self.op_keymap(keys),
+            Mode::Comment => super::comment::comment_keymap(keys),
         }
     }
 
@@ -267,6 +270,9 @@ impl App {
                 ('[', '[') => KeyResult::Action(A::HeadingMotion(false, count)),
                 (']', 'r') => KeyResult::Action(A::ReviewJump(true)),
                 ('[', 'r') => KeyResult::Action(A::ReviewJump(false)),
+                ('c', 'c') if self.review_enabled() => {
+                    KeyResult::Action(A::Comment(super::CommentAction::Start(false)))
+                }
                 _ => KeyResult::None,
             };
         };
@@ -294,6 +300,8 @@ impl App {
             KeyCode::Char('g' | 'z' | 'Z' | 'm' | '\'') => return KeyResult::Pending,
             // `]l [l ]] [[` (links, headings) and `]r [r` (review markers).
             KeyCode::Char('[' | ']') => return KeyResult::Pending,
+            // `cc`: comment on the cursor line.
+            KeyCode::Char('c') if self.review_enabled() => return KeyResult::Pending,
             KeyCode::Char(';') => A::LinkRepeat(true, count),
             KeyCode::Char(',') => A::LinkRepeat(false, count),
             KeyCode::Char('s') => A::HintStart,
@@ -398,6 +406,7 @@ impl App {
             A::Picker(a) => self.picker_action(a),
             A::Cmd(a) => self.cmd_action(a),
             A::ReviewJump(fwd) => self.review_jump(fwd),
+            A::Comment(a) => self.comment_action(a),
             A::ToggleRaw => self.toggle_raw(),
             A::Help(a) => self.help_action(a),
             A::Refresh => self.refresh(),

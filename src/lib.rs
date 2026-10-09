@@ -10,5 +10,4 @@ pub mod lsp;
 pub mod nav;
 pub mod notebook;
 pub mod render;
-pub mod review;
 pub mod ui;

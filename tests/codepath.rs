@@ -23,6 +23,7 @@ fn opts(tree_root: &Path, target: StartTarget) -> StartOptions {
         target,
         tree_root: tree_root.to_path_buf(),
         config,
+        review_cache: None,
     }
 }
 

@@ -81,6 +81,7 @@ fn setup_with(mode: SidebarMode, edit: impl FnOnce(&mut Config)) -> T {
             target: StartTarget::File(a),
             tree_root: root.clone(),
             config,
+            review_cache: None,
         },
         SIZE,
     )
@@ -617,6 +618,7 @@ fn a_click_outside_the_hover_popup_closes_it_and_does_nothing_else() {
             target: StartTarget::File(a),
             tree_root: root.clone(),
             config,
+            review_cache: None,
         },
         SIZE,
     )

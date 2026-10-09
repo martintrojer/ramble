@@ -156,6 +156,7 @@ pub fn plan(args: &Args, env: &mut Env, config: &Config) -> Plan {
         target,
         tree_root,
         config: config.clone(),
+        review_cache: None,
     })
 }
 

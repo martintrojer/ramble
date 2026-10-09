@@ -37,6 +37,7 @@ fn opts(dir: &Path, target: StartTarget) -> StartOptions {
         target,
         tree_root: dir.to_path_buf(),
         config,
+        review_cache: None,
     }
 }
 

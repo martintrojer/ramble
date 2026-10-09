@@ -165,6 +165,7 @@ fn opts(dir: &Path, path: &Path) -> StartOptions {
         target: StartTarget::File(path.to_path_buf()),
         tree_root: dir.to_path_buf(),
         config,
+        review_cache: None,
     }
 }
 

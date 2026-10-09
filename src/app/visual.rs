@@ -19,6 +19,7 @@ use ratatui::text::Line;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use super::comment::CommentAction;
 use super::keys::{Action, KeyResult};
 use super::{App, Cursor, Mode};
 use crate::render::{ScreenSpan, Segment};
@@ -271,6 +272,9 @@ impl App {
                     'y' => return act(V::Yank),
                     'Y' => return act(V::YankLines),
                     'o' => return act(V::Swap),
+                    'c' if self.review_enabled() => {
+                        return KeyResult::Action(Action::Comment(CommentAction::Start(true)));
+                    }
                     'v' => return act(V::Start(VisualKind::Char)),
                     'V' => return act(V::Start(VisualKind::Line)),
                     _ => {}
@@ -322,6 +326,13 @@ impl App {
         self.pending.clear();
         self.count = None;
         true
+    }
+
+    /// First and last row of the active selection.
+    pub(super) fn visual_rows(&self) -> Option<(usize, usize)> {
+        let s = self.selection()?;
+        let (lo, hi) = ordered(s.anchor, s.cursor);
+        Some((lo.row, hi.row))
     }
 
     fn selection(&self) -> Option<Selection> {
@@ -523,7 +534,7 @@ impl App {
         }
     }
 
-    fn row_segments(&self, row: usize) -> &[Segment] {
+    pub(super) fn row_segments(&self, row: usize) -> &[Segment] {
         let Some(p) = &self.page else { return &[] };
         let segs = &p.rendered.srcmap.segments;
         let lo = segs.partition_point(|s| s.span.row < row);

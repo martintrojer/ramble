@@ -111,7 +111,6 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> any
     if let Err(e) = app.start_watcher() {
         app.set_status(format!("live reload off: {e:#}"));
     }
-    app.start_review();
     let mut title = None;
     while !app.should_quit() {
         update_title(app, &mut title)?;
@@ -206,6 +205,7 @@ mod tests {
                     lsp: crate::config::LspConfig { server: vec![] },
                     ..Default::default()
                 },
+                review_cache: None,
             },
             (40, 10),
         )

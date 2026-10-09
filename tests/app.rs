@@ -40,6 +40,7 @@ fn opts(dir: &Path, target: StartTarget) -> StartOptions {
         target,
         tree_root: dir.to_path_buf(),
         config,
+        review_cache: None,
     }
 }
 
@@ -2634,15 +2635,15 @@ fn review_jump_and_gutter_follow_markers() {
     let (dir, mut app) = app();
     keys(&mut app, "]r");
     assert_eq!(app.status(), ramble::app::NO_REVIEW);
-    let mut m = ramble::review::Markers::default();
+    let mut m = ramble::app::Markers::default();
     m.files.insert(
-        ramble::review::canonical(&dir.path().join("doc.md")),
-        ramble::review::FileMarks {
+        ramble::app::canonical(&dir.path().join("doc.md")),
+        ramble::app::FileMarks {
             count: 1,
             lines: vec![(5, 5)],
         },
     );
-    app.event(AppEvent::Review(m));
+    app.set_review_markers(m);
     assert_eq!(app.review_gutter(), 1);
     keys(&mut app, "]r");
     // Source line 5 is "Para 2".

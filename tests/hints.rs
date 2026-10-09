@@ -22,6 +22,7 @@ fn app_with(source: &str) -> (TempDir, App) {
         target: StartTarget::File(path),
         tree_root: dir.path().to_path_buf(),
         config,
+        review_cache: None,
     };
     let app = App::new(opts, (COLS, ROWS)).unwrap();
     (dir, app)

@@ -122,6 +122,7 @@ fn app_sees_a_write_that_lands_before_the_watcher_starts() {
             target: StartTarget::File(file.clone()),
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
+            review_cache: None,
         },
         (40, 10),
     )
@@ -149,6 +150,7 @@ fn app_reloads_through_real_watcher() {
             target: StartTarget::File(file.clone()),
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
+            review_cache: None,
         },
         (40, 10),
     )
@@ -184,6 +186,7 @@ fn opening_another_page_retargets_the_watcher() {
             target: StartTarget::File(a.clone()),
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
+            review_cache: None,
         },
         (40, 10),
     )

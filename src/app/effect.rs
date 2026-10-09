@@ -15,6 +15,14 @@ pub enum Effect {
     Edit { path: PathBuf, line: Option<usize> },
     /// Run a launcher, then reload the page.
     Launch(LaunchCommand),
+    /// `C-e` in the comment prompt: edit `initial` in the editor, then
+    /// save it as a comment on `lines` of `path` (batch-relative).
+    EditComment {
+        path: String,
+        lines: (u32, u32),
+        excerpt: String,
+        initial: String,
+    },
 }
 
 impl App {
@@ -26,14 +34,6 @@ impl App {
     /// Run the queued side effect (if any). The caller must have left the
     /// TUI first; `run` does this.
     pub fn run_pending_effect(&mut self) {
-        // The review thread pauses while ramble is suspended, and polls
-        // once on return.
-        self.review_pause(true);
-        self.run_effect();
-        self.review_pause(false);
-    }
-
-    fn run_effect(&mut self) {
         match self.pending_effect.take() {
             Some(Effect::Edit { path, line }) => {
                 if let Err(e) = (self.editor)(&path, line) {
@@ -41,6 +41,12 @@ impl App {
                 }
             }
             Some(Effect::Launch(cmd)) => self.run_launch(&cmd),
+            Some(Effect::EditComment {
+                path,
+                lines,
+                excerpt,
+                initial,
+            }) => self.run_comment_editor(path, lines, excerpt, initial),
             None => {}
         }
     }

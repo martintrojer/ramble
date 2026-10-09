@@ -1,17 +1,20 @@
 //! Owns state, applies actions, runs the event loop
-//! (key | mouse | fs-watch | lsp | review | resize).
+//! (key | mouse | fs-watch | lsp | resize | tick).
 //!
 //! Layout: `keys` (key → [`Action`] table and dispatch), `motion` (cursor
 //! motions), `follow` (links and history), `page` (loading and layout),
 //! `effect` (side effects run outside the TUI), `run` (terminal and loop),
 //! `search` (`/ ? n N * #`), `marks` (marks, path/link yank), `visual`
 //! (visual mode, the `y` operator), `launch` (launchers), `watch` (live
-//! reload), `mouse` (clicks, drag, wheel) over `layout` (hit-testing).
+//! reload), `mouse` (clicks, drag, wheel) over `layout` (hit-testing),
+//! `comment` (comment capture and prompt) and `review_glue` (the
+//! debrief-review batch, markers, `]r` / `[r`).
 //! Later units add a file and register in the tables here and in `keys`.
 
 mod clue;
 mod cmdline;
 mod codepath;
+mod comment;
 mod effect;
 mod fold;
 mod follow;
@@ -53,6 +56,7 @@ use crate::render::{RenderedPage, Theme};
 pub use clue::{CLUE_DELAY, ClueRow};
 pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
+pub use comment::{COMMENT_PROMPT, CommentAction, EMPTY_COMMENT, NO_SOURCE_LINE};
 pub use effect::{Clipboard, Effect, osc52};
 pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
@@ -62,7 +66,9 @@ pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
-pub use review_glue::{MARKER as REVIEW_MARKER, NO_MORE_REVIEW, NO_REVIEW};
+pub use review_glue::{
+    FileMarks, MARKER as REVIEW_MARKER, Markers, NO_MORE_REVIEW, NO_REVIEW, REVIEW_POLL, canonical,
+};
 pub use run::{TermCmd, mouse_setup, mouse_teardown, run, suspend_and_run};
 pub use search::find_all;
 pub use sidebar::Focus;
@@ -88,6 +94,8 @@ pub struct StartOptions {
     /// Tree root per spec § cli (argument dir, else VCS root, else $HOME).
     pub tree_root: PathBuf,
     pub config: Config,
+    /// Where review batches live; `None` means `debrief_review::cache_dir()`.
+    pub review_cache: Option<PathBuf>,
 }
 
 /// Message shown in the content area when no file is loaded; see
@@ -136,10 +144,12 @@ pub enum Mode {
     Visual(VisualKind),
     /// `y` typed, waiting for a motion.
     OpPending,
+    /// Typing a comment (`cc`, visual `c`).
+    Comment,
 }
 
-/// Everything the event loop feeds the app. Later units add variants
-/// (Lsp, FsWatch, Review) sent from background threads via [`App::sender`].
+/// Everything the event loop feeds the app. Background threads (fs watch,
+/// LSP) send through [`App::sender`].
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     Key(KeyEvent),
@@ -150,8 +160,6 @@ pub enum AppEvent {
     /// An event from a language server (`run` drains the app's own LSP
     /// channel with [`App::pump_lsp`]; this variant injects one directly).
     Lsp(crate::lsp::LspEvent),
-    /// New comment markers from the review thread.
-    Review(crate::review::Markers),
     /// A mouse event and when it arrived (double clicks are timed with it).
     Mouse(MouseEvent, Instant),
 }
@@ -220,6 +228,8 @@ pub struct App {
     cmdline: Option<String>,
     hints: hints::Hints,
     review: review_glue::ReviewState,
+    /// The comment being typed.
+    comment: Option<comment::Draft>,
     help: help::HelpState,
     /// `C-l` asked `run` to clear the terminal before the next draw.
     clear_request: bool,
@@ -283,7 +293,8 @@ impl App {
             picker: Default::default(),
             cmdline: None,
             hints: hints::Hints::default(),
-            review: Default::default(),
+            review: review_glue::ReviewState::new(opts.review_cache),
+            comment: None,
             help: Default::default(),
             clear_request: false,
             visual: Default::default(),
@@ -374,16 +385,17 @@ impl App {
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
-            AppEvent::Review(m) => self.review_event(m),
             AppEvent::Mouse(m, now) => self.mouse(m, now),
         }
     }
 
     /// Called once per loop iteration (at least every 100 ms): advances the
-    /// clock used for the slow-request spinner and opens the key clue.
+    /// clock used for the slow-request spinner, opens the key clue and
+    /// re-reads the review batch once a second.
     pub fn tick(&mut self, now: Instant) {
         self.now = now;
         self.clue_tick(now);
+        self.review_tick(now);
     }
 
     pub fn mode(&self) -> Mode {

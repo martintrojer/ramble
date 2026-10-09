@@ -29,6 +29,8 @@ pub(crate) enum Ctx {
     Help,
     /// A visual selection is active.
     Visual,
+    /// The comment prompt is open.
+    Comment,
 }
 
 /// Help sections, in display order.
@@ -291,7 +293,42 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("Y", V, G::Visual, "in visual: yank whole lines", always),
     b("v, V, C-v", V, G::Visual, "in visual: switch kind", always),
     b("Esc", V, G::Visual, "in visual: cancel", always),
-    // Review markers.
+    // Review comments.
+    b(
+        "cc",
+        N,
+        G::Review,
+        "comment on the cursor line",
+        App::can_comment,
+    ),
+    b(
+        "c",
+        V,
+        G::Review,
+        "in visual: comment on the selected lines",
+        App::can_comment,
+    ),
+    b(
+        "Enter",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: save",
+        App::can_comment,
+    ),
+    b(
+        "Esc",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: cancel",
+        App::can_comment,
+    ),
+    b(
+        "C-e",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: edit in $EDITOR",
+        App::can_comment,
+    ),
     b(
         "]r",
         N,
@@ -683,6 +720,7 @@ impl App {
             Ctx::Any | Ctx::Help => true,
             Ctx::Visual => content,
             Ctx::Picker => self.can_pick(),
+            Ctx::Comment => self.can_comment(),
         }
     }
 
@@ -891,6 +929,7 @@ mod tests {
             target: StartTarget::File(path),
             tree_root: dir.to_path_buf(),
             config,
+            review_cache: Some(dir.join(".cache")),
         };
         App::new(opts, (80, 24)).unwrap()
     }
@@ -923,6 +962,14 @@ mod tests {
                 let mut a = app(dir);
                 a.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
                 assert!(matches!(a.mode(), Mode::Visual(_)));
+                vec![a]
+            }
+            Ctx::Comment => {
+                let mut a = app(dir);
+                for _ in 0..2 {
+                    a.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+                }
+                assert_eq!(a.mode(), Mode::Comment, "{}", a.status());
                 vec![a]
             }
         }
@@ -1126,8 +1173,12 @@ mod tests {
         for k in side {
             assert!(has(k, &[Ctx::Sidebar]), "no sidebar row for {k}");
         }
-        for k in ["o", "y", "Y", "v", "V", "C-v", "Esc"] {
+        for k in ["o", "y", "Y", "v", "V", "C-v", "Esc", "c"] {
             assert!(has(k, &[Ctx::Visual]), "no visual row for {k}");
+        }
+        assert!(has("cc", &[Ctx::Normal]), "no row for cc");
+        for k in ["Enter", "Esc", "C-e"] {
+            assert!(has(k, &[Ctx::Comment]), "no comment row for {k}");
         }
         for k in ["C-n", "C-p", "Enter", "Esc"] {
             assert!(has(k, &[Ctx::Picker]), "no picker row for {k}");

@@ -42,6 +42,7 @@ fn launch_app(mut config: Config, vcs: bool, code: Exit) -> (TempDir, App, Calls
             target: StartTarget::File(path),
             tree_root: root,
             config,
+            review_cache: None,
         },
         SIZE,
     )
@@ -206,6 +207,7 @@ fn stdin_page_cannot_launch_editor() {
             target: StartTarget::Stdin("# S\n".into()),
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
+            review_cache: None,
         },
         SIZE,
     )

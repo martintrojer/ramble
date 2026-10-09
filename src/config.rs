@@ -231,8 +231,8 @@ pub struct Launcher {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReviewConfig {
+    /// Comment mode (`c`, `cc`) and markers from the debrief-review batch.
     pub enabled: bool,
-    pub command: String,
 }
 
 fn strings(xs: &[&str]) -> Vec<String> {
@@ -295,10 +295,7 @@ impl Default for Config {
                 &["${editor}", "+${line}", "${file}"],
                 false,
             )],
-            review: ReviewConfig {
-                enabled: true,
-                command: "tuicr".into(),
-            },
+            review: ReviewConfig { enabled: true },
             mouse: MouseConfig { enabled: true },
         }
     }
@@ -376,7 +373,6 @@ struct RawLauncher {
 #[serde(deny_unknown_fields)]
 struct RawReview {
     enabled: Option<bool>,
-    command: Option<String>,
 }
 
 /// 1-based line of byte offset `at` in `src`.
@@ -458,7 +454,6 @@ impl Config {
         }
         if let Some(r) = raw.review {
             set(&mut c.review.enabled, r.enabled);
-            set(&mut c.review.command, r.command);
         }
         if let Some(m) = raw.mouse {
             set(&mut c.mouse.enabled, m.enabled);

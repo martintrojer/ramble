@@ -1,0 +1,215 @@
+//! Comment mode (debrief spec §2): `cc` comments on the cursor line,
+//! visual `c` on the selection's source lines. Lines and excerpt are
+//! frozen from the displayed document when `c` is pressed; a one-line
+//! prompt takes the body (Enter saves, Esc cancels, `C-e` moves it into
+//! the editor). Comments go to the debrief-review batch for the page's
+//! repo root.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use super::effect::Effect;
+use super::keys::{Action, KeyResult};
+use super::launch::{Exit, LaunchCommand, editor_words};
+use super::{App, Mode};
+
+/// The prompt's label.
+pub const COMMENT_PROMPT: &str = "comment: ";
+/// Status when Enter (or the editor) leaves an empty body.
+pub const EMPTY_COMMENT: &str = "Empty comment not saved";
+/// Status when the cursor row stands for no source line.
+pub const NO_SOURCE_LINE: &str = "No source line here";
+
+/// Comment-mode actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentAction {
+    /// `cc` (false: the cursor row) or visual `c` (true: the selection).
+    Start(bool),
+    Input(char),
+    Backspace,
+    /// Enter: save a non-empty body.
+    Save,
+    /// Esc: drop the comment.
+    Cancel,
+    /// `C-e`: edit the body in `$VISUAL` / `$EDITOR`.
+    Editor,
+}
+
+/// A comment being typed: where it goes, frozen at `c`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Draft {
+    /// Relative to the batch root, `/`-separated.
+    path: String,
+    /// 1-based inclusive source lines.
+    lines: (u32, u32),
+    excerpt: String,
+    text: String,
+}
+
+/// Keys while typing a comment.
+pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
+    let Some(key) = keys.last() else {
+        return KeyResult::None;
+    };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let a = match key.code {
+        KeyCode::Char('e') if ctrl => CommentAction::Editor,
+        KeyCode::Enter => CommentAction::Save,
+        KeyCode::Esc => CommentAction::Cancel,
+        KeyCode::Backspace => CommentAction::Backspace,
+        KeyCode::Char(c) if !ctrl => CommentAction::Input(c),
+        _ => return KeyResult::None,
+    };
+    KeyResult::Action(Action::Comment(a))
+}
+
+impl App {
+    /// Comment mode is on and the page has a file to comment on.
+    pub(crate) fn can_comment(&self) -> bool {
+        self.review_enabled() && self.page.as_ref().is_some_and(|p| p.path.is_some())
+    }
+
+    /// The typed comment as the prompt shows it.
+    pub fn comment_prompt(&self) -> Option<String> {
+        let d = self.comment.as_ref()?;
+        Some(format!("{COMMENT_PROMPT}{}", d.text))
+    }
+
+    pub(super) fn comment_action(&mut self, a: CommentAction) {
+        match a {
+            CommentAction::Start(visual) => self.comment_start(visual),
+            CommentAction::Input(c) => {
+                if let Some(d) = &mut self.comment {
+                    d.text.push(c);
+                }
+            }
+            CommentAction::Backspace => {
+                if let Some(d) = &mut self.comment {
+                    d.text.pop();
+                }
+            }
+            CommentAction::Cancel => {
+                self.comment_end();
+            }
+            CommentAction::Save => {
+                if let Some(d) = self.comment_end() {
+                    self.comment_save(d);
+                }
+            }
+            CommentAction::Editor => {
+                if let Some(d) = self.comment_end() {
+                    self.pending_effect = Some(Effect::EditComment {
+                        path: d.path,
+                        lines: d.lines,
+                        excerpt: d.excerpt,
+                        initial: d.text,
+                    });
+                }
+            }
+        }
+    }
+
+    fn comment_end(&mut self) -> Option<Draft> {
+        if self.mode == Mode::Comment {
+            self.mode = Mode::Normal;
+        }
+        self.comment.take()
+    }
+
+    /// Freeze the target lines and excerpt, then open the prompt.
+    fn comment_start(&mut self, visual: bool) {
+        let (lo, hi) = match (visual, self.visual_rows()) {
+            (true, Some(rows)) => rows,
+            _ => (self.cursor.row, self.cursor.row),
+        };
+        self.visual_leave();
+        if self.page.is_none() {
+            return;
+        }
+        let path = match self.review_rel_path() {
+            Ok(p) => p,
+            Err(msg) => return self.set_status(msg),
+        };
+        let Some((a, b)) = self.source_line_range(lo, hi, true) else {
+            return self.set_status(NO_SOURCE_LINE);
+        };
+        let Some(p) = &self.page else { return };
+        let src = p.doc.source.as_str();
+        let excerpt = src[super::visual::line_bytes(src, a, b)].trim_end_matches(['\n', '\r']);
+        self.comment = Some(Draft {
+            path,
+            lines: (a as u32, b as u32),
+            excerpt: excerpt.to_string(),
+            text: String::new(),
+        });
+        self.status.clear();
+        self.mode = Mode::Comment;
+    }
+
+    /// Save `d` with `body` (trimmed); an empty body saves nothing.
+    fn comment_save(&mut self, d: Draft) {
+        let body = d.text.trim();
+        if body.is_empty() {
+            return self.set_status(EMPTY_COMMENT);
+        }
+        let Some(store) = self.review_store() else {
+            return self.set_status("Can't comment: no review batch");
+        };
+        let c = debrief_review::Comment::on_file(d.path, d.lines.0..=d.lines.1, d.excerpt, body);
+        let msg = match store.add(c) {
+            Ok(_) => format!("Comment added ({} in batch)", store.comments().len()),
+            Err(e) => format!("comment not saved: {e}"),
+        };
+        self.set_status(msg);
+        self.review_refresh_markers();
+    }
+
+    /// `C-e` (TUI suspended): write the text to a temp file, run the
+    /// editor on it through the launcher runner, save what it leaves.
+    pub(super) fn run_comment_editor(
+        &mut self,
+        path: String,
+        lines: (u32, u32),
+        excerpt: String,
+        initial: String,
+    ) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let file =
+            std::env::temp_dir().join(format!("ramble-comment-{}-{nanos}.md", std::process::id()));
+        if let Err(e) = std::fs::write(&file, &initial) {
+            return self.set_status(format!("editor: {e}"));
+        }
+        let mut argv = editor_words(self.env.as_ref());
+        argv.push(file.display().to_string());
+        let cwd = self
+            .review_root()
+            .map_or_else(|| self.link_dir(), std::path::Path::to_path_buf);
+        let cmd = LaunchCommand {
+            name: "editor".into(),
+            argv,
+            cwd,
+        };
+        let result = (self.runner)(&cmd);
+        let text = std::fs::read_to_string(&file);
+        let _ = std::fs::remove_file(&file);
+        let err = match result {
+            Ok(Exit::Code(0)) => None,
+            Ok(Exit::Code(n)) => Some(format!("exited with status {n}")),
+            Ok(Exit::Signal(n)) => Some(format!("killed by signal {n}")),
+            Err(e) => Some(format!("{e:#}")),
+        };
+        if let Some(e) = err {
+            return self.set_status(format!("editor: {e}; comment not saved"));
+        }
+        match text {
+            Ok(text) => self.comment_save(Draft {
+                path,
+                lines,
+                excerpt,
+                text,
+            }),
+            Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
+        }
+    }
+}

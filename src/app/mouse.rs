@@ -99,7 +99,12 @@ impl App {
         }
         let typing = matches!(
             self.mode,
-            Mode::Search | Mode::Filter | Mode::Command | Mode::Hint | Mode::OpPending
+            Mode::Search
+                | Mode::Filter
+                | Mode::Command
+                | Mode::Comment
+                | Mode::Hint
+                | Mode::OpPending
         );
         if typing {
             return;

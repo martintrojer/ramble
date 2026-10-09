@@ -80,6 +80,7 @@ fn app_on(root: &Path, target: StartTarget, config: Config) -> App {
             target,
             tree_root: root.to_path_buf(),
             config,
+            review_cache: None,
         },
         SIZE,
     )
@@ -211,6 +212,7 @@ fn auto_does_not_post_narrow_status_on_each_page() {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
             config: Config::default(),
+            review_cache: None,
         },
         (40, 10),
     )
@@ -333,6 +335,7 @@ fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
                 target: StartTarget::File(root.join("a.md")),
                 tree_root: root.clone(),
                 config: c,
+                review_cache: None,
             },
             (cols, 10),
         )
@@ -482,6 +485,7 @@ fn no_page_draws_the_tree_with_focus_despite_hidden_and_narrow() {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
             config: hidden(),
+            review_cache: None,
         },
         (60, 10),
     )
@@ -525,6 +529,7 @@ fn first_page_from_the_command_line_moves_focus_to_the_content() {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
             config: config(SidebarMode::Files),
+            review_cache: None,
         },
         (100, 16),
     )
@@ -559,6 +564,7 @@ fn no_page_tree_fits_a_tiny_terminal() {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
             config: c,
+            review_cache: None,
         },
         (20, 10),
     )
@@ -588,6 +594,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
             target: StartTarget::File(path.clone()),
             tree_root: root.clone(),
             config: c,
+            review_cache: None,
         },
         (60, 16),
     )
@@ -598,6 +605,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
             target: StartTarget::Dir(root.clone()),
             tree_root: root.clone(),
             config: Config::default(),
+            review_cache: None,
         },
         (60, 16),
     )
@@ -638,6 +646,7 @@ fn narrow_start_hides_the_sidebar() {
             target: StartTarget::File(root.join("a.md")),
             tree_root: root.clone(),
             config: Config::default(),
+            review_cache: None,
         },
         (79, 16),
     )
@@ -651,6 +660,7 @@ fn narrow_start_hides_the_sidebar() {
             target: StartTarget::File(root.join("a.md")),
             tree_root: root.clone(),
             config: c,
+            review_cache: None,
         },
         (79, 16),
     )
@@ -799,6 +809,7 @@ fn min_content_guard_drops_the_sidebar_and_says_so() {
                 target: StartTarget::File(root.join("a.md")),
                 tree_root: root.clone(),
                 config: c,
+                review_cache: None,
             },
             (cols, 10),
         )
@@ -1155,6 +1166,7 @@ fn sized(root: &Path, target: StartTarget, config: Config, size: (u16, u16)) -> 
             target,
             tree_root: root.to_path_buf(),
             config,
+            review_cache: None,
         },
         size,
     )
@@ -1256,22 +1268,22 @@ fn review_mark_survives_a_long_name() {
     let mut c = config(SidebarMode::Files);
     c.sidebar.width = SidebarWidth::Fixed(20);
     let mut app = sized(&root, StartTarget::File(root.join("a.md")), c, (80, 16));
-    let mut m = ramble::review::Markers::default();
+    let mut m = ramble::app::Markers::default();
     m.files.insert(
-        ramble::review::canonical(&long),
-        ramble::review::FileMarks {
+        ramble::app::canonical(&long),
+        ramble::app::FileMarks {
             count: 12,
             lines: vec![(1, 1)],
         },
     );
     m.files.insert(
-        ramble::review::canonical(&root.join("a.md")),
-        ramble::review::FileMarks {
+        ramble::app::canonical(&root.join("a.md")),
+        ramble::app::FileMarks {
             count: 3,
             lines: vec![(1, 1)],
         },
     );
-    app.event(AppEvent::Review(m));
+    app.set_review_markers(m);
     let rows: Vec<String> = screen(&app, 80, 16)[..15]
         .iter()
         .map(|r| side(r).to_string())
@@ -1416,15 +1428,15 @@ fn review_marks_refit_the_width() {
         (160, 16),
     );
     assert_eq!(app.sidebar_cols(), MIN_COLS);
-    let mut m = ramble::review::Markers::default();
+    let mut m = ramble::app::Markers::default();
     m.files.insert(
-        ramble::review::canonical(&root.join("a.md")),
-        ramble::review::FileMarks {
+        ramble::app::canonical(&root.join("a.md")),
+        ramble::app::FileMarks {
             count: 123_456_789,
             lines: vec![(1, 1)],
         },
     );
-    app.event(AppEvent::Review(m));
+    app.set_review_markers(m);
     assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
 }
 

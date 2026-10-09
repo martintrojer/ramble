@@ -176,7 +176,9 @@ impl App {
         let leader = self.config.keys.leader;
         let mut out = Vec::new();
         for b in BINDINGS {
-            if matches!(b.context, Ctx::Help | Ctx::Picker) || !self.ctx_shown(b.context) {
+            if matches!(b.context, Ctx::Help | Ctx::Picker | Ctx::Comment)
+                || !self.ctx_shown(b.context)
+            {
                 continue;
             }
             if (avail && !(b.avail)(self)) || !self.leader_free(b.keys) {
@@ -298,6 +300,7 @@ mod tests {
             target: StartTarget::File(path),
             tree_root: dir.to_path_buf(),
             config,
+            review_cache: None,
         };
         App::new(opts, (100, 30)).unwrap()
     }

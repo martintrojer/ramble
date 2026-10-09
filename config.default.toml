@@ -62,10 +62,9 @@
 # enabled = true
 
 ## ---------------------------------------------------------------------------
-## Review markers from a live tuicr session.
+## Comments on source lines, kept in debrief-review's batch for the repo.
 # [review]
-# enabled = true
-# command = "tuicr"
+# enabled = true  # comment mode (c, cc) and markers; comments go to debrief-review's batch
 
 ## ---------------------------------------------------------------------------
 ## Language servers, tried in order; the first whose root marker is found

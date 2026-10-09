@@ -89,9 +89,9 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
     Some(hit)
 }
 
-/// The `:` prompt over the status line while typing a command.
+/// The `:` prompt (or the `comment: ` prompt) over the status line.
 pub(super) fn draw_cmdline(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(prompt) = app.cmdline_prompt() else {
+    let Some(prompt) = app.cmdline_prompt().or_else(|| app.comment_prompt()) else {
         return;
     };
     let x = area.x + Span::raw(prompt.as_str()).width() as u16;

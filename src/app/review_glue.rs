@@ -1,12 +1,15 @@
-//! Review markers in the app (spec § Review markers): starts the review
-//! thread, keeps its discovery directories on the current file, pauses it
-//! around launchers, and maps comment lines to rendered rows for the
-//! gutter, the file tree, the status line and `]r` / `[r`.
+//! Review comments in the app (debrief spec §2): the debrief-review batch
+//! for the current page's repo root, polled once a second from the tick,
+//! and mapped to rendered rows for the gutter, the file tree, the status
+//! line and `]r` / `[r`. Capture and the prompt live in `comment`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use super::{App, AppEvent};
-use crate::review::{self, FileMarks, Intervals, Markers, Tuicr};
+use debrief_review::{Comment, Review};
+
+use super::App;
 
 /// Status when `]r` / `[r` finds nothing at all.
 pub const NO_REVIEW: &str = "No review comments";
@@ -14,73 +17,216 @@ pub const NO_REVIEW: &str = "No review comments";
 pub const NO_MORE_REVIEW: &str = "No more review comments";
 /// The marker drawn in the gutter and the file tree.
 pub const MARKER: char = '●';
+/// How often the batch file is re-read.
+pub const REVIEW_POLL: Duration = Duration::from_secs(1);
+
+/// Comment marks for one file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileMarks {
+    /// Comments on the file.
+    pub count: usize,
+    /// 1-based inclusive source line ranges of the comments.
+    pub lines: Vec<(usize, usize)>,
+}
+
+/// Comment marks per canonical file path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Markers {
+    pub files: BTreeMap<PathBuf, FileMarks>,
+}
+
+impl Markers {
+    /// Marks from the working-copy comments (no `rev`) of `review`.
+    fn from_review(review: &Review) -> Markers {
+        let mut m = Markers::default();
+        for c in review.comments().iter().filter(|c| c.rev.is_none()) {
+            let path = canonical(&review.root().join(&c.path));
+            let f = m.files.entry(path).or_default();
+            f.count += 1;
+            f.lines.push((c.lines.0 as usize, c.lines.1 as usize));
+        }
+        m
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    /// Marks for `path` (canonicalised first).
+    pub fn get(&self, path: &Path) -> Option<&FileMarks> {
+        self.files.get(&canonical(path))
+    }
+
+    /// Whether any marked file lies under the folder `dir`.
+    pub fn under(&self, dir: &Path) -> bool {
+        let dir = canonical(dir);
+        self.files.keys().any(|f| f.starts_with(&dir) && *f != dir)
+    }
+}
+
+/// The canonical path (symlinks resolved), else the absolute path. Marker
+/// keys and comment paths use it so they compare equal to tree paths.
+pub fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
+}
 
 #[derive(Debug, Default)]
 pub(super) struct ReviewState {
-    handle: Option<review::Handle>,
+    /// Cache dir override (tests); else `debrief_review::cache_dir()`.
+    cache: Option<PathBuf>,
+    /// The batch for the current page's repo root.
+    store: Option<Review>,
+    /// Why there is no store for the current page, if it has a path.
+    error: Option<String>,
     markers: Markers,
+    polled_at: Option<Instant>,
     /// Columns reserved for the gutter in the current layout (0 or 1).
     pub(super) gutter: u16,
 }
 
+impl ReviewState {
+    pub(super) fn new(cache: Option<PathBuf>) -> ReviewState {
+        ReviewState {
+            cache,
+            ..Default::default()
+        }
+    }
+}
+
 impl App {
-    /// Start the review thread when `review.enabled` and the command
-    /// resolves; markers arrive as [`AppEvent::Review`] through the sender.
-    /// Returns whether it started.
-    pub fn start_review(&mut self) -> bool {
-        self.start_review_with(Intervals::default())
+    /// Whether comment mode is on (`[review] enabled`).
+    pub(crate) fn review_enabled(&self) -> bool {
+        self.config.review.enabled
     }
 
-    /// [`App::start_review`] with custom polling intervals (tests).
-    pub fn start_review_with(&mut self, every: Intervals) -> bool {
-        if !self.config.review.enabled {
-            return false;
-        }
-        let (Some(tx), Some(command)) = (
-            self.sender.clone(),
-            review::resolve_command(&self.config.review.command),
-        ) else {
-            return false;
+    /// The open batch for the current page's repo root (t4 edits it, then
+    /// calls [`App::review_refresh_markers`]).
+    pub(crate) fn review_store(&mut self) -> Option<&mut Review> {
+        self.review.store.as_mut()
+    }
+
+    /// The repo root of the open batch.
+    pub fn review_root(&self) -> Option<&Path> {
+        self.review.store.as_ref().map(Review::root)
+    }
+
+    /// Comments with no `rev` on the current file.
+    pub fn review_comments_here(&self) -> Vec<&Comment> {
+        let (Some(store), Ok(rel)) = (&self.review.store, self.review_rel_path()) else {
+            return Vec::new();
         };
-        let handle = review::spawn(Tuicr { command }, every, move |m| {
-            let _ = tx.send(AppEvent::Review(m));
-        });
-        handle.control.set_dirs(self.review_dirs());
-        self.review.handle = Some(handle);
-        true
+        store
+            .comments()
+            .iter()
+            .filter(|c| c.rev.is_none() && c.path == rel)
+            .collect()
     }
 
-    /// Whether the review thread is running.
-    pub fn review_running(&self) -> bool {
-        self.review.handle.is_some()
-    }
-
-    /// The discovery directories for the current page (none for stdin).
-    pub fn review_dirs(&self) -> Vec<PathBuf> {
+    /// The current page's path relative to the batch root, `/`-separated,
+    /// from its canonical path. `Err` is the status to show.
+    pub(super) fn review_rel_path(&self) -> Result<String, String> {
         let path = self.page.as_ref().and_then(|p| p.path.as_deref());
-        path.map(review::discovery_dirs).unwrap_or_default()
-    }
-
-    /// Pause (true) or resume the review thread; resuming polls at once.
-    pub(super) fn review_pause(&self, paused: bool) {
-        if let Some(h) = &self.review.handle {
-            h.control.set_paused(paused);
+        let Some(path) = path else {
+            return Err("Can't comment on stdin".into());
+        };
+        let Some(store) = &self.review.store else {
+            let why = self.review.error.as_deref().unwrap_or("no review batch");
+            return Err(format!("Can't comment: {why}"));
+        };
+        let root = store.root();
+        let outside = || format!("Can't comment here: outside {}", root.display());
+        let canon = path.canonicalize().map_err(|_| outside())?;
+        let rel = canon.strip_prefix(root).map_err(|_| outside())?;
+        let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+        match parts {
+            Some(p) if !p.is_empty() => Ok(p.join("/")),
+            _ => Err(outside()),
         }
     }
 
-    /// Called for every page shown.
+    /// Called for every page shown: open the batch for its repo root (kept
+    /// when the root is the same), then re-read it.
     pub(super) fn review_page_changed(&mut self) {
-        if let Some(h) = &self.review.handle {
-            h.control.set_dirs(self.review_dirs());
+        let path = self.page.as_ref().and_then(|p| p.path.clone());
+        match path.filter(|_| self.review_enabled()) {
+            None => {
+                self.review.store = None;
+                self.review.error = None;
+            }
+            Some(path) => {
+                let root = debrief_review::repo_root(&canonical(&path));
+                let same = self
+                    .review
+                    .store
+                    .as_ref()
+                    .is_some_and(|s| s.root() == canonical(&root));
+                if same {
+                    if let Some(s) = &mut self.review.store {
+                        let _ = s.reload();
+                    }
+                } else {
+                    self.review_open(&root);
+                }
+            }
         }
-        self.review_relayout();
+        self.review.polled_at = Some(self.now);
+        self.review_refresh_markers();
     }
 
-    /// New markers from the review thread.
-    pub(super) fn review_event(&mut self, markers: Markers) {
+    fn review_open(&mut self, root: &Path) {
+        self.review.store = None;
+        self.review.error = None;
+        let cache = self.review.cache.clone().or_else(debrief_review::cache_dir);
+        let Some(cache) = cache else {
+            self.review.error = Some("no cache directory".into());
+            return;
+        };
+        match Review::open(&cache, root) {
+            Ok(r) => self.review.store = Some(r),
+            Err(e) => {
+                let msg = format!("review: {e}");
+                self.set_status(msg.clone());
+                self.review.error = Some(msg);
+            }
+        }
+    }
+
+    /// From the tick: re-read the batch at most once per [`REVIEW_POLL`].
+    pub(super) fn review_tick(&mut self, now: Instant) {
+        let Some(store) = &mut self.review.store else {
+            return;
+        };
+        if self.review.polled_at.is_some_and(|t| now < t + REVIEW_POLL) {
+            return;
+        }
+        self.review.polled_at = Some(now);
+        if let Ok(true) = store.reload() {
+            self.review_refresh_markers();
+        }
+    }
+
+    /// Rebuild the markers from the batch and re-lay out the gutter and
+    /// the tree when they changed.
+    pub(crate) fn review_refresh_markers(&mut self) {
+        let markers = self
+            .review
+            .store
+            .as_ref()
+            .map(Markers::from_review)
+            .unwrap_or_default();
+        self.set_review_markers(markers);
+    }
+
+    /// Show `markers` (the batch's, or injected by layout tests) and re-lay
+    /// out the gutter and the tree. The next batch change replaces them.
+    pub fn set_review_markers(&mut self, markers: Markers) {
+        if markers == self.review.markers {
+            return self.review_relayout();
+        }
         self.review.markers = markers;
         self.review_relayout();
-        // Marks add ` ● N` to tree rows; they arrive after the page.
+        // Marks add ` ● N` to tree rows.
         self.sidebar_relayout(true);
     }
 
@@ -123,14 +269,24 @@ impl App {
         (path.is_dir() && self.review.markers.under(path)).then_some((MARKER, None))
     }
 
+    /// Whether rendered `row` stands for source: drawn text, or a source
+    /// anchor (blank code lines, empty raw lines). Separators do not.
+    pub(super) fn row_has_source(&self, row: usize) -> bool {
+        !self.cells(row).is_empty()
+            || self
+                .page
+                .as_ref()
+                .is_some_and(|p| p.rendered.anchored.get(row).copied().unwrap_or(false))
+    }
+
     /// Rendered rows showing each line comment of the current file, in
     /// comment order; each list is sorted. A comment's lines map to rows
     /// through the srcmap (so a line in the middle of a reflowed paragraph
-    /// finds its row), plus rows that start on one of those lines (blank
-    /// code lines draw no segments). A range that reaches no row falls back
-    /// to the last drawn row at or before its start line. Lines past the end
-    /// of the file count as the last line; rows with no text are never
-    /// marked.
+    /// finds its row), plus rows with a source anchor that start on one of
+    /// those lines (blank code lines draw no segments). A range that
+    /// reaches no row falls back to the last such row at or before its
+    /// start line. Lines past the end of the file count as the last line;
+    /// separator rows are never marked.
     fn review_rows(&self) -> Vec<Vec<usize>> {
         let (Some(m), Some(p)) = (self.current_marks(), &self.page) else {
             return Vec::new();
@@ -143,7 +299,7 @@ impl App {
         // Byte where 1-based `line` starts (the end of the source past it).
         let line_start = |line: usize| starts.get(line - 1).copied().unwrap_or(src.len());
         let lines = &p.rendered.source_lines;
-        let drawn = |r: &usize| !self.cells(*r).is_empty();
+        let sourced = |r: &usize| self.row_has_source(*r);
         m.lines
             .iter()
             .map(|&(s, e)| {
@@ -160,13 +316,13 @@ impl App {
                 rows.extend(
                     (0..lines.len())
                         .filter(|&r| (s..=e).contains(&lines[r]))
-                        .filter(drawn),
+                        .filter(sourced),
                 );
                 if rows.is_empty() {
                     rows.extend(
                         (0..lines.len())
                             .rev()
-                            .filter(drawn)
+                            .filter(sourced)
                             .find(|&r| lines[r] <= s),
                     );
                 }
@@ -202,12 +358,12 @@ impl App {
         rows
     }
 
-    /// `]r` (true) / `[r`: jump to the next / previous commented line.
     /// `]r` / `[r` have a commented line to go to.
     pub(crate) fn can_review_jump(&self) -> bool {
         !self.review_targets().is_empty()
     }
 
+    /// `]r` (true) / `[r`: jump to the next / previous commented line.
     pub(super) fn review_jump(&mut self, forward: bool) {
         if !self.can_review_jump() {
             return self.set_status(NO_REVIEW);

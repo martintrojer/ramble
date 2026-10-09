@@ -9,8 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ramble::app::{
     App, AppEvent, Effect, Focus, FsEvent, HelpLine, Hit, Layout, StartOptions, StartTarget,
 };
+use ramble::app::{FileMarks, Markers, canonical};
 use ramble::config::{Config, SidebarMode, SidebarShow, SidebarSide};
-use ramble::review::{FileMarks, Markers, canonical};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -94,6 +94,7 @@ fn start(target: impl FnOnce(&Path) -> StartTarget, cols: u16, config: Config) -
             target: target(&root),
             tree_root: root.clone(),
             config,
+            review_cache: None,
         },
         (cols, ROWS),
     )
@@ -282,7 +283,7 @@ fn the_review_gutter_counts_against_the_room_beside() {
             lines: vec![(1, 1)],
         },
     );
-    t.app.event(AppEvent::Review(m));
+    t.app.set_review_markers(m);
     assert_eq!(t.app.review_gutter(), 1);
     win(&mut t.app, 'h');
     assert!(t.app.sidebar_overlay(), "117 - 1 gutter - 100 < 17");
