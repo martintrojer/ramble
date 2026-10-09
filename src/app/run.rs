@@ -134,6 +134,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> any
             app.event(ev);
         }
         app.pump_lsp(Duration::ZERO);
+        app.pump_mdroots(Duration::ZERO);
         app.tick(Instant::now());
         write_terminal_output(app, &mut std::io::stdout())?;
     }
@@ -206,6 +207,7 @@ mod tests {
                     ..Default::default()
                 },
                 review_cache: None,
+                mdroots: crate::app::MdrootsOptions::memory(),
             },
             (40, 10),
         )

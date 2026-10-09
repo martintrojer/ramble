@@ -66,9 +66,16 @@ fn main() -> ExitCode {
                 Err(e) => fail(format!("ramble: {e}"), 1),
             }
         }
-        Plan::Interactive(opts) => match app::run(opts) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => fail(format!("ramble: {e:#}"), 1),
-        },
+        Plan::Interactive(mut opts) => {
+            // Same variable as the mdroots CLI: another cache dir than the
+            // user's (tests point it at a temp dir).
+            if let Some(dir) = std::env::var_os("MDROOTS_CACHE_DIR") {
+                opts.mdroots = app::MdrootsOptions::cache_dir(dir.into());
+            }
+            match app::run(*opts) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => fail(format!("ramble: {e:#}"), 1),
+            }
+        }
     }
 }

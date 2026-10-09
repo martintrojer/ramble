@@ -47,6 +47,7 @@ fn app_sized(config: Config, size: (u16, u16)) -> (TempDir, App) {
         tree_root: dir.path().to_path_buf(),
         config,
         review_cache: None,
+        mdroots: ramble::app::MdrootsOptions::memory(),
     };
     let app = App::new(opts, size).unwrap();
     (dir, app)
@@ -85,6 +86,7 @@ fn zk_app() -> (TempDir, App) {
         tree_root: root.clone(),
         config: c,
         review_cache: None,
+        mdroots: ramble::app::MdrootsOptions::memory(),
     };
     let mut app = App::new(opts, (100, 30)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);

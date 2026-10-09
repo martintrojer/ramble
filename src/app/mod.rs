@@ -25,6 +25,7 @@ mod launch;
 mod layout;
 mod lsp_glue;
 mod marks;
+mod mdroots_glue;
 mod motion;
 mod mouse;
 mod page;
@@ -64,6 +65,7 @@ pub use keys::{Action, KeyResult};
 pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
 pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
+pub use mdroots_glue::MdrootsOptions;
 pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use review_glue::{
@@ -96,6 +98,9 @@ pub struct StartOptions {
     pub config: Config,
     /// Where review batches live; `None` means `debrief_review::cache_dir()`.
     pub review_cache: Option<PathBuf>,
+    /// Where the [mdroots](https://github.com/martintrojer/mdroots) backend
+    /// keeps its index (pages no `[[lsp.server]]` serves).
+    pub mdroots: MdrootsOptions,
 }
 
 /// Message shown in the content area when no file is loaded; see
@@ -223,6 +228,8 @@ pub struct App {
     banner: Option<String>,
     /// Language servers and per-page LSP state.
     lsp: lsp_glue::LspState,
+    /// The in-process mdroots backend and its per-page state.
+    mdroots: mdroots_glue::MdrootsState,
     /// The clock, advanced by [`App::tick`].
     now: Instant,
     sidebar: sidebar::Sidebar,
@@ -292,6 +299,7 @@ impl App {
             loaded_hash: None,
             banner: None,
             lsp,
+            mdroots: mdroots_glue::MdrootsState::new(opts.mdroots),
             now: Instant::now(),
             sidebar,
             picker: Default::default(),

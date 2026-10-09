@@ -38,6 +38,7 @@ fn opts(dir: &Path, target: StartTarget) -> StartOptions {
         tree_root: dir.to_path_buf(),
         config,
         review_cache: None,
+        mdroots: ramble::app::MdrootsOptions::memory(),
     }
 }
 

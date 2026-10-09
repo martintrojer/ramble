@@ -82,6 +82,7 @@ fn setup_with(mode: SidebarMode, edit: impl FnOnce(&mut Config)) -> T {
             tree_root: root.clone(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         SIZE,
     )
@@ -619,6 +620,7 @@ fn a_click_outside_the_hover_popup_closes_it_and_does_nothing_else() {
             tree_root: root.clone(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         SIZE,
     )

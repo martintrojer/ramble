@@ -23,6 +23,7 @@ fn app_with(source: &str) -> (TempDir, App) {
         tree_root: dir.path().to_path_buf(),
         config,
         review_cache: None,
+        mdroots: ramble::app::MdrootsOptions::memory(),
     };
     let app = App::new(opts, (COLS, ROWS)).unwrap();
     (dir, app)

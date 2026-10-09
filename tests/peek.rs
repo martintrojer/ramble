@@ -95,6 +95,7 @@ fn start(target: impl FnOnce(&Path) -> StartTarget, cols: u16, config: Config) -
             tree_root: root.clone(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (cols, ROWS),
     )

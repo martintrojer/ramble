@@ -72,6 +72,7 @@ impl Repo {
                 tree_root: self.root.clone(),
                 config,
                 review_cache: Some(self.cache.clone()),
+                mdroots: ramble::app::MdrootsOptions::memory(),
             },
             (COLS, ROWS),
         )
@@ -550,6 +551,7 @@ fn a_tmp_path_resolves_through_its_canonical_form() {
             tree_root: root.clone(),
             config: config(None),
             review_cache: Some(cache.clone()),
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (COLS, ROWS),
     )

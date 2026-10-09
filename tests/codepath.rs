@@ -24,6 +24,7 @@ fn opts(tree_root: &Path, target: StartTarget) -> StartOptions {
         tree_root: tree_root.to_path_buf(),
         config,
         review_cache: None,
+        mdroots: ramble::app::MdrootsOptions::memory(),
     }
 }
 

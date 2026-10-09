@@ -965,6 +965,7 @@ mod tests {
             tree_root: dir.to_path_buf(),
             config,
             review_cache: Some(dir.join(".cache")),
+            mdroots: crate::app::MdrootsOptions::memory(),
         };
         App::new(opts, (80, 24)).unwrap()
     }

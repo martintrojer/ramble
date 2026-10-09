@@ -45,6 +45,7 @@ fn app_named(name: &str, config: Config, size: (u16, u16)) -> (TempDir, App) {
             tree_root: dir.path().to_path_buf(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         size,
     )

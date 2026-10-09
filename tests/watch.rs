@@ -123,6 +123,7 @@ fn app_sees_a_write_that_lands_before_the_watcher_starts() {
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (40, 10),
     )
@@ -151,6 +152,7 @@ fn app_reloads_through_real_watcher() {
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (40, 10),
     )
@@ -187,6 +189,7 @@ fn opening_another_page_retargets_the_watcher() {
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (40, 10),
     )

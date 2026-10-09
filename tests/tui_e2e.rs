@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 struct Tmux {
     sock: std::path::PathBuf,
     home: std::path::PathBuf,
+    /// mdroots' cache for the spawned ramble, outside the browsed tree.
+    _cache: tempfile::TempDir,
 }
 
 impl Tmux {
@@ -95,17 +97,21 @@ fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
     }
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
+    // The pages have no zk/marksman marker, so mdroots serves them: its
+    // cache goes to a temp dir, never the user's.
+    let cache = tempfile::tempdir().unwrap();
+    let shell_cmd = format!(
+        "env HOME={} MDROOTS_CACHE_DIR={} {} {}",
+        quote(&home),
+        quote(cache.path()),
+        quote(Path::new(env!("CARGO_BIN_EXE_ramble"))),
+        quote(doc)
+    );
     let tmux = Tmux {
         sock: dir.join("sock"),
         home: home.clone(),
+        _cache: cache,
     };
-    let bin = env!("CARGO_BIN_EXE_ramble");
-    let shell_cmd = format!(
-        "env HOME={} {} {}",
-        quote(&home),
-        quote(Path::new(bin)),
-        quote(doc)
-    );
     let out = tmux.cmd(&[
         "-f",
         "/dev/null",

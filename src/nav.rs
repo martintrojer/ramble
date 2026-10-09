@@ -142,7 +142,8 @@ fn scheme(dest: &str) -> Option<&str> {
     ok.then_some(s)
 }
 
-fn percent_decode(s: &str) -> String {
+/// Decode `%XX` escapes (invalid UTF-8 is replaced).
+pub fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

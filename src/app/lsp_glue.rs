@@ -163,6 +163,9 @@ pub(super) struct LspState {
     version: Option<i32>,
     /// documentLink target per local link index.
     targets: HashMap<usize, PathBuf>,
+    /// The `#anchor` mdroots gave per local link index, raw (percent-
+    /// encoded as written).
+    anchors: HashMap<usize, String>,
     /// Byte ranges of the current page's diagnostics.
     diagnostics: Vec<Range<usize>>,
     broken: BTreeSet<usize>,
@@ -189,6 +192,7 @@ impl LspState {
             instance: None,
             version: None,
             targets: HashMap::new(),
+            anchors: HashMap::new(),
             diagnostics: Vec::new(),
             broken: BTreeSet::new(),
             requests: Vec::new(),
@@ -261,13 +265,17 @@ fn definition_path(v: &Value) -> Option<PathBuf> {
 impl App {
     /// Called by `set_page` for every page shown: a new page id, fresh
     /// per-page LSP state, then `didOpen` + `documentLink` (starting the
-    /// server first if needed). Stdin pages get no LSP.
+    /// server first if needed). A page no configured server selects (no
+    /// root marker found) goes to mdroots instead; a selected server that
+    /// is dead or missing does not fall back. Stdin pages get neither.
     pub(super) fn lsp_page_changed(&mut self) {
+        self.mdroots_reset();
         let l = &mut self.lsp;
         l.page_id += 1;
         l.instance = None;
         l.version = None;
         l.targets.clear();
+        l.anchors.clear();
         l.diagnostics.clear();
         l.broken.clear();
         l.requests.clear();
@@ -277,6 +285,7 @@ impl App {
             return;
         };
         let Some((spec, root)) = select_server(&l.specs, &path) else {
+            self.mdroots_page_changed(path);
             return;
         };
         let spec = instance_spec(spec, &root);
@@ -519,14 +528,19 @@ impl App {
         }
     }
 
-    /// Open `path` for link `i`, taking the `#anchor` from the local parse.
+    /// Open `path` for link `i`, taking the `#anchor` from mdroots when it
+    /// gave one (percent-decoded like the local parse), else the local
+    /// parse.
     fn follow_lsp_path(&mut self, i: usize, path: PathBuf) {
         let Some(link) = self.page.as_ref().and_then(|p| p.doc.links.get(i)).cloned() else {
             return;
         };
-        let anchor = match nav::resolve(&link.dest, &link.kind, &self.link_dir()) {
-            Target::File { anchor, .. } => anchor,
-            _ => None,
+        let anchor = match self.lsp.anchors.get(&i) {
+            Some(a) => Some(nav::percent_decode(a)),
+            None => match nav::resolve(&link.dest, &link.kind, &self.link_dir()) {
+                Target::File { anchor, .. } => anchor,
+                _ => None,
+            },
         };
         let as_written = link.dest.split('#').next().unwrap_or("").to_string();
         self.open_link_file(path, anchor, &as_written);
@@ -646,6 +660,28 @@ impl App {
         self.lsp.backlink = Some((from, at));
     }
 
+    /// The pending backlink landing, if any (see `lsp_await_backlink`).
+    pub(super) fn lsp_backlink(&self) -> Option<(PathBuf, super::Cursor)> {
+        self.lsp.backlink.clone()
+    }
+
+    pub(super) fn lsp_await_backlink_clear(&mut self) {
+        self.lsp.backlink = None;
+    }
+
+    /// Replace the page's link targets, anchors and broken links (the
+    /// mdroots backend's answer).
+    pub(super) fn lsp_set_links(
+        &mut self,
+        targets: HashMap<usize, PathBuf>,
+        anchors: HashMap<usize, String>,
+        broken: BTreeSet<usize>,
+    ) {
+        self.lsp.targets = targets;
+        self.lsp.anchors = anchors;
+        self.lsp.broken = broken;
+    }
+
     pub fn link_target(&self, i: usize) -> Option<&Path> {
         self.lsp.targets.get(&i).map(PathBuf::as_path)
     }
@@ -675,21 +711,29 @@ impl App {
             .requests
             .iter()
             .map(|r| self.now.saturating_duration_since(r.sent_at))
+            .chain(self.mdroots_waiting())
             .filter(|d| *d > SPINNER_AFTER)
             .max()
     }
 
-    /// LSP state for the status line: `zk ●` running, `zk ○` starting, `—`
-    /// none; a spinner follows while a request is slow.
+    /// Backend state for the status line: `zk ●` running, `zk ○` starting;
+    /// for a page mdroots serves, `mdroots ●` from its root's workspace,
+    /// `mdroots ○` from the single-file one; `—` none (or no answer yet).
+    /// A spinner follows while a request is slow.
     pub fn lsp_label(&self) -> String {
-        let Some((name, kind)) = &self.lsp.instance else {
-            return "—".into();
-        };
-        let kind = spec_kind_label(*kind);
-        let mut label = match self.lsp.instances.get(name) {
-            Some(Instance::Running(_)) => format!("{kind} ●"),
-            Some(Instance::Starting) => format!("{kind} ○"),
-            Some(Instance::Dead) | None => return "—".into(),
+        let mut label = match &self.lsp.instance {
+            Some((name, kind)) => {
+                let kind = spec_kind_label(*kind);
+                match self.lsp.instances.get(name) {
+                    Some(Instance::Running(_)) => format!("{kind} ●"),
+                    Some(Instance::Starting) => format!("{kind} ○"),
+                    Some(Instance::Dead) | None => return "—".into(),
+                }
+            }
+            None => match self.mdroots_label() {
+                Some(l) => l,
+                None => return "—".into(),
+            },
         };
         if let Some(d) = self.oldest_slow_request() {
             let frame = (d.as_millis() / 100) as usize % SPINNER.len();

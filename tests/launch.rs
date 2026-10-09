@@ -43,6 +43,7 @@ fn launch_app(mut config: Config, vcs: bool, code: Exit) -> (TempDir, App, Calls
             tree_root: root,
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         SIZE,
     )
@@ -207,6 +208,7 @@ fn stdin_page_cannot_launch_editor() {
             tree_root: dir.path().to_path_buf(),
             config: no_lsp(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         SIZE,
     )

@@ -73,7 +73,7 @@ fn fixture() -> Fixture {
 
 fn interactive(p: Plan) -> ramble::app::StartOptions {
     match p {
-        Plan::Interactive(o) => o,
+        Plan::Interactive(o) => *o,
         other => panic!("expected Interactive, got {other:?}"),
     }
 }

@@ -81,6 +81,7 @@ fn app_on(root: &Path, target: StartTarget, config: Config) -> App {
             tree_root: root.to_path_buf(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         SIZE,
     )
@@ -213,6 +214,7 @@ fn auto_does_not_post_narrow_status_on_each_page() {
             tree_root: root.clone(),
             config: Config::default(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (40, 10),
     )
@@ -336,6 +338,7 @@ fn ctrl_w_j_k_in_single_pane_and_hidden_sidebar() {
                 tree_root: root.clone(),
                 config: c,
                 review_cache: None,
+                mdroots: ramble::app::MdrootsOptions::memory(),
             },
             (cols, 10),
         )
@@ -486,6 +489,7 @@ fn no_page_draws_the_tree_with_focus_despite_hidden_and_narrow() {
             tree_root: root.clone(),
             config: hidden(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (60, 10),
     )
@@ -530,6 +534,7 @@ fn first_page_from_the_command_line_moves_focus_to_the_content() {
             tree_root: root.clone(),
             config: config(SidebarMode::Files),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (100, 16),
     )
@@ -565,6 +570,7 @@ fn no_page_tree_fits_a_tiny_terminal() {
             tree_root: root.clone(),
             config: c,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (20, 10),
     )
@@ -595,6 +601,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
             tree_root: root.clone(),
             config: c,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (60, 16),
     )
@@ -606,6 +613,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
             tree_root: root.clone(),
             config: Config::default(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (60, 16),
     )
@@ -647,6 +655,7 @@ fn narrow_start_hides_the_sidebar() {
             tree_root: root.clone(),
             config: Config::default(),
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (79, 16),
     )
@@ -661,6 +670,7 @@ fn narrow_start_hides_the_sidebar() {
             tree_root: root.clone(),
             config: c,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         (79, 16),
     )
@@ -810,6 +820,7 @@ fn min_content_guard_drops_the_sidebar_and_says_so() {
                 tree_root: root.clone(),
                 config: c,
                 review_cache: None,
+                mdroots: ramble::app::MdrootsOptions::memory(),
             },
             (cols, 10),
         )
@@ -1167,6 +1178,7 @@ fn sized(root: &Path, target: StartTarget, config: Config, size: (u16, u16)) -> 
             tree_root: root.to_path_buf(),
             config,
             review_cache: None,
+            mdroots: ramble::app::MdrootsOptions::memory(),
         },
         size,
     )

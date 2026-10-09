@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-use crate::app::{StartOptions, StartTarget};
+use crate::app::{MdrootsOptions, StartOptions, StartTarget};
 use crate::config::Config;
 
 /// Label used for a document read from stdin.
@@ -84,7 +84,7 @@ pub enum Plan {
         label: String,
         width: u16,
     },
-    Interactive(StartOptions),
+    Interactive(Box<StartOptions>),
     /// Write the default config. `None` means `Config::default_path()`.
     InitConfig(Option<PathBuf>),
     UsageError {
@@ -152,12 +152,13 @@ pub fn plan(args: &Args, env: &mut Env, config: &Config) -> Plan {
         &env.cwd,
         &env.home,
     );
-    Plan::Interactive(StartOptions {
+    Plan::Interactive(Box::new(StartOptions {
         target,
         tree_root,
         config: config.clone(),
         review_cache: None,
-    })
+        mdroots: MdrootsOptions::user_cache(),
+    }))
 }
 
 /// Tree root: a file argument's parent dir; a dir argument itself; with no

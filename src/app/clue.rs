@@ -301,6 +301,7 @@ mod tests {
             tree_root: dir.to_path_buf(),
             config,
             review_cache: None,
+            mdroots: crate::app::MdrootsOptions::memory(),
         };
         App::new(opts, (100, 30)).unwrap()
     }
