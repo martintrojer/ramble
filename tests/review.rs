@@ -1189,3 +1189,67 @@ fn review_keys_are_unbound_with_review_disabled() {
     leader(&mut app, "rl");
     assert!(app.picker().is_none());
 }
+
+#[test]
+fn kinds_show_in_the_list_the_k_popup_and_the_status_preview() {
+    let repo = Repo::new();
+    let mut r = repo.review();
+    let kind = |k: &str| Some(k.to_string());
+    r.add(Comment::on_file("doc.md", 5..=5, "beta", "fix this").with_kind(kind("issue")))
+        .unwrap();
+    r.add(Comment::on_file("doc.md", 5..=5, "beta", "plain"))
+        .unwrap();
+    r.add(diff_comment("doc.md", "0123456789abcdef", "why?").with_kind(kind("question")))
+        .unwrap();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    assert_eq!(app.review_preview().as_deref(), Some("● [ISSUE] fix this"));
+    assert!(status_line(&app).contains("● [ISSUE] fix this"));
+    keys(&mut app, "K");
+    assert_eq!(
+        app.hover_popup(),
+        Some("● line 5 [ISSUE]\nfix this\n\n● line 5\nplain")
+    );
+    send(&mut app, key(KeyCode::Esc));
+    leader(&mut app, "rl");
+    assert_eq!(
+        picker_labels(&app),
+        [
+            "doc.md:2-3 @01234567  [QUESTION] why?",
+            "doc.md:5  [ISSUE] fix this",
+            "doc.md:5  plain",
+        ]
+    );
+}
+
+#[test]
+fn leader_rr_labels_typed_items_with_a_legend_of_the_configured_kinds() {
+    let repo = Repo::new();
+    let out = repo.root.parent().unwrap().join("out.md");
+    let mut r = repo.review();
+    r.add(Comment::on_file("doc.md", 5..=5, "beta", "keep it").with_kind(Some("praise".into())))
+        .unwrap();
+    r.add(Comment::on_file("doc.md", 9..=9, "delta", "untyped"))
+        .unwrap();
+    let path = repo.write("doc.md", DOC);
+    let script = format!("cat > '{}'", out.display());
+    let mut config = send_config(&["sh", "-c", &script]);
+    config.review.kinds = vec![
+        debrief_review::Kind {
+            id: "issue".into(),
+            definition: Some("Fix it.".into()),
+        },
+        debrief_review::Kind {
+            id: "praise".into(),
+            definition: Some("Leave it as it is.".into()),
+        },
+    ];
+    let mut app = repo.app(StartTarget::File(path), config);
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(md.contains("## Item 1 [PRAISE]\n"), "{md}");
+    assert!(md.contains("## Item 2\n"), "{md}");
+    assert!(md.contains("- PRAISE: Leave it as it is.\n"), "{md}");
+    assert!(!md.contains("ISSUE"), "only used kinds in the legend: {md}");
+}

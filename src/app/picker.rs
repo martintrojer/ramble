@@ -740,7 +740,11 @@ fn review_items(store: &debrief_review::Review) -> (Vec<Item>, Vec<u64>) {
             });
             let item = Item {
                 label: format!("{}:{lines}{rev}", c.path),
-                detail: c.body.lines().next().unwrap_or("").to_string(),
+                detail: format!(
+                    "{}{}",
+                    super::review_glue::kind_tag(c),
+                    c.body.lines().next().unwrap_or("")
+                ),
                 path: c.rev.is_none().then(|| store.root().join(&c.path)),
                 line: Some(a as usize),
                 link: None,

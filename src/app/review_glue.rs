@@ -74,6 +74,14 @@ pub fn canonical(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
+/// `[ISSUE] ` for a typed comment, `` for an untyped one: what the
+/// picker, the `K` popup and the status preview put before it.
+pub(super) fn kind_tag(c: &Comment) -> String {
+    c.kind.as_deref().map_or(String::new(), |k| {
+        format!("[{}] ", debrief_review::Kind::label(k))
+    })
+}
+
 /// The first 8 characters of a commit id, as the export shows it.
 pub(super) fn short_commit(commit: &str) -> String {
     commit.chars().take(8).collect()
@@ -371,15 +379,16 @@ impl App {
             .collect()
     }
 
-    /// The status-line preview for the cursor row: `● ` and the first line
-    /// of the first comment on it.
+    /// The status-line preview for the cursor row: `● `, the kind
+    /// (`[ISSUE] `) and the first line of the first comment on it.
     pub fn review_preview(&self) -> Option<String> {
         let c = *self.review_comments_at_cursor().first()?;
-        Some(format!("{MARKER} {}", c.body.lines().next().unwrap_or("")))
+        let first = c.body.lines().next().unwrap_or("");
+        Some(format!("{MARKER} {}{first}", kind_tag(c)))
     }
 
     /// `K` on a commented line: the popup text, every comment on the row
-    /// as `● line a` / `● lines a-b` over its body.
+    /// as `● line a` / `● lines a-b` (then ` [ISSUE]`) over its body.
     pub(super) fn review_hover_text(&self) -> Option<String> {
         let cs = self.review_comments_at_cursor();
         if cs.is_empty() {
@@ -394,7 +403,9 @@ impl App {
                 } else {
                     format!("lines {a}-{b}")
                 };
-                format!("{MARKER} {at}\n{}", c.body.trim_end())
+                let kind = kind_tag(c);
+                let head = format!("{MARKER} {at} {kind}");
+                format!("{}\n{}", head.trim_end(), c.body.trim_end())
             })
             .collect();
         Some(parts.join("\n\n"))
@@ -513,7 +524,7 @@ impl App {
         let n = ids.len();
         let md = store.to_markdown(
             self.config.send.preamble.as_deref(),
-            &debrief_review::builtin_kinds(),
+            &self.config.review.kinds,
         );
         let root = store.root().to_path_buf();
         let clipboard = &mut self.clipboard;
