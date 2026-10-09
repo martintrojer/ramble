@@ -289,32 +289,12 @@ impl Default for Config {
                     },
                 ],
             },
-            launch: vec![
-                launcher(
-                    "edit",
-                    "<leader>o",
-                    &["${editor}", "+${line}", "${file}"],
-                    false,
-                ),
-                launcher(
-                    "review",
-                    "<leader>rr",
-                    &["tuicr", "--file", "${file}", "--line", "${line}"],
-                    false,
-                ),
-                launcher(
-                    "review-changes",
-                    "<leader>rw",
-                    &["tuicr", "-w", "-p", "${file}", "--line", "${line}"],
-                    true,
-                ),
-                launcher(
-                    "review-dir",
-                    "<leader>rd",
-                    &["tuicr", "--file", "${dir}"],
-                    false,
-                ),
-            ],
+            launch: vec![launcher(
+                "edit",
+                "<leader>o",
+                &["${editor}", "+${line}", "${file}"],
+                false,
+            )],
             review: ReviewConfig {
                 enabled: true,
                 command: "tuicr".into(),

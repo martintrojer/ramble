@@ -64,32 +64,12 @@ fn defaults_match_spec() {
     };
     assert_eq!(
         c.launch,
-        [
-            launcher(
-                "edit",
-                "<leader>o",
-                &["${editor}", "+${line}", "${file}"],
-                false
-            ),
-            launcher(
-                "review",
-                "<leader>rr",
-                &["tuicr", "--file", "${file}", "--line", "${line}"],
-                false
-            ),
-            launcher(
-                "review-changes",
-                "<leader>rw",
-                &["tuicr", "-w", "-p", "${file}", "--line", "${line}"],
-                true
-            ),
-            launcher(
-                "review-dir",
-                "<leader>rd",
-                &["tuicr", "--file", "${dir}"],
-                false
-            ),
-        ]
+        [launcher(
+            "edit",
+            "<leader>o",
+            &["${editor}", "+${line}", "${file}"],
+            false
+        ),]
     );
     assert!(c.review.enabled);
     assert_eq!(c.review.command, "tuicr");
@@ -133,10 +113,6 @@ name = "edit"
 command = ["hx", "${file}"]
 
 [[launch]]
-name = "review"
-disabled = true
-
-[[launch]]
 name = "open"
 key = "<leader>x"
 command = ["open", "${file}"]
@@ -148,7 +124,7 @@ disabled = true
 "#,
     )
     .unwrap();
-    assert_eq!(names(&c), ["edit", "review-changes", "review-dir", "open"]);
+    assert_eq!(names(&c), ["edit", "open"]);
     assert_eq!(
         c.launch[0],
         Launcher {
@@ -159,8 +135,10 @@ disabled = true
             disabled: false,
         }
     );
-    assert_eq!(c.launch[3].key.as_deref(), Some("<leader>x"));
-    assert!(c.launch[3].needs_vcs);
+    assert_eq!(c.launch[1].key.as_deref(), Some("<leader>x"));
+    assert!(c.launch[1].needs_vcs);
+    let c = load_str("[[launch]]\nname = \"edit\"\ndisabled = true\n").unwrap();
+    assert!(c.launch.is_empty(), "disabled removes a default");
 }
 
 #[test]
@@ -335,7 +313,7 @@ fn uncommented_default_file_equals_defaults() {
     }
     assert_eq!(
         uncommented.lines().filter(|l| *l == "[[launch]]").count(),
-        4
+        1
     );
     assert_eq!(
         uncommented

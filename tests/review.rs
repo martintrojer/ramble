@@ -632,7 +632,15 @@ fn a_launcher_pauses_the_thread_and_it_polls_on_return() {
         discovery: Duration::from_millis(50),
         comments: Duration::from_millis(50),
     };
-    let app = app_in(&dir, config(Some(&fake.command()), None));
+    let mut c = config(Some(&fake.command()), None);
+    c.launch.push(ramble::config::Launcher {
+        name: "review".into(),
+        key: Some("<leader>rr".into()),
+        command: vec!["tuicr".into(), "--file".into(), "${file}".into()],
+        needs_vcs: false,
+        disabled: false,
+    });
+    let app = app_in(&dir, c);
     let (tx, rx) = mpsc::channel();
     let fake_for_runner = Fake {
         dir: fake_dir.clone(),

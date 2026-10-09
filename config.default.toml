@@ -92,7 +92,7 @@
 ## An entry with the same name replaces a default; new names are added;
 ## `disabled = true` removes a default, e.g.:
 ##   [[launch]]
-##   name = "review"
+##   name = "edit"
 ##   disabled = true
 
 # [[launch]]
@@ -100,21 +100,3 @@
 # key = "<leader>o"
 # command = ["${editor}", "+${line}", "${file}"]
 
-# [[launch]]
-# name = "review"
-## Annotate this document; works without VCS.
-# key = "<leader>rr"
-# command = ["tuicr", "--file", "${file}", "--line", "${line}"]
-
-# [[launch]]
-# name = "review-changes"
-## Uncommitted changes to this document.
-# key = "<leader>rw"
-# command = ["tuicr", "-w", "-p", "${file}", "--line", "${line}"]
-# needs_vcs = true
-
-# [[launch]]
-# name = "review-dir"
-## Annotate a folder.
-# key = "<leader>rd"
-# command = ["tuicr", "--file", "${dir}"]

@@ -163,7 +163,17 @@ fn leader_z_without_a_server_hides_unavailable_pickers() {
 
 #[test]
 fn leader_lists_groups_built_ins_and_launchers() {
-    let (_d, mut app) = app();
+    let mut c = config();
+    for (name, key) in [("one", "<leader>rr"), ("two", "<leader>rw")] {
+        c.launch.push(ramble::config::Launcher {
+            name: name.into(),
+            key: Some(key.into()),
+            command: vec!["true".into()],
+            needs_vcs: false,
+            disabled: false,
+        });
+    }
+    let (_d, mut app) = app_sized(c, (100, 30));
     keys(&mut app, " ");
     let rows = app.clue_rows();
     let find = |k: &str| rows.iter().find(|r| r.key == k);
@@ -442,10 +452,20 @@ fn a_launcher_on_a_built_in_leader_key_wins() {
 
 #[test]
 fn launchers_that_need_a_repo_say_so() {
-    let (_d, mut app) = app();
+    let mut c = config();
+    let l = |name: &str, key: &str, needs_vcs| ramble::config::Launcher {
+        name: name.into(),
+        key: Some(key.into()),
+        command: vec!["true".into()],
+        needs_vcs,
+        disabled: false,
+    };
+    c.launch.push(l("browse", "<leader>rd", false));
+    c.launch.push(l("changes", "<leader>rw", true));
+    let (_d, mut app) = app_sized(c, (100, 30));
     keys(&mut app, " r");
-    assert_eq!(desc(&app, "r").unwrap(), "review");
-    assert_eq!(desc(&app, "w").unwrap(), "review-changes (needs a repo)");
+    assert_eq!(desc(&app, "d").unwrap(), "browse");
+    assert_eq!(desc(&app, "w").unwrap(), "changes (needs a repo)");
 }
 
 #[test]

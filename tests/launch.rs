@@ -1,5 +1,5 @@
 //! Launchers (spec § Launchers, § Testing "launchers"): a recording runner
-//! stands in for the terminal; no real editor or tuicr is spawned.
+//! stands in for the terminal; no real editor is spawned.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -123,41 +123,70 @@ fn no_vcs_cwd_is_dir_and_editor_defaults_to_vi() {
     assert_eq!(c.cwd, root(&dir).join("sub"));
 }
 
+/// A config with two `<leader>r…` launchers, one needing a repo.
+fn dir_and_vcs_launchers() -> Config {
+    let mut c = Config::default();
+    let l = |name: &str, key: &str, cmd: &[&str], needs_vcs| ramble::config::Launcher {
+        name: name.into(),
+        key: Some(key.into()),
+        command: s(cmd),
+        needs_vcs,
+        disabled: false,
+    };
+    c.launch
+        .push(l("browse", "<leader>rd", &["lf", "${dir}"], false));
+    c.launch.push(l(
+        "changes",
+        "<leader>rw",
+        &["jjui", "${file}", "+${line}"],
+        true,
+    ));
+    c
+}
+
 #[test]
-fn review_dir_uses_dir_and_review_changes_needs_vcs() {
-    let (dir, mut app, calls) = launch_app(Config::default(), false, Exit::Code(0));
+fn dir_variable_and_needs_vcs() {
+    let (dir, mut app, calls) = launch_app(dir_and_vcs_launchers(), false, Exit::Code(0));
     keys(&mut app, " rd");
     app.run_pending_effect();
     let sub = root(&dir).join("sub");
-    assert_eq!(
-        calls.borrow()[0].argv,
-        s(&["tuicr", "--file", sub.to_str().unwrap()])
-    );
+    assert_eq!(calls.borrow()[0].argv, s(&["lf", sub.to_str().unwrap()]));
 
     keys(&mut app, " rw");
     assert!(app.pending_effect().is_none());
     assert_eq!(
         app.status(),
-        "review-changes: unavailable: not in a VCS repository"
+        "changes: unavailable: not in a VCS repository"
     );
     assert_eq!(calls.borrow().len(), 1);
 }
 
 #[test]
 fn needs_vcs_launcher_runs_inside_a_repo() {
-    let (dir, mut app, calls) = launch_app(Config::default(), true, Exit::Code(0));
+    let (dir, mut app, calls) = launch_app(dir_and_vcs_launchers(), true, Exit::Code(0));
     keys(&mut app, " rw");
     app.run_pending_effect();
     let file = root(&dir).join("sub/a.md");
     assert_eq!(
         calls.borrow()[0].argv,
-        s(&["tuicr", "-w", "-p", file.to_str().unwrap(), "--line", "1"])
+        s(&["jjui", file.to_str().unwrap(), "+1"])
     );
 }
 
 #[test]
-fn leader_r_waits_and_unknown_cancels() {
+fn the_old_review_keys_are_unbound_by_default() {
     let (_d, mut app, calls) = launch_app(Config::default(), false, Exit::Code(0));
+    for k in [" rr", " rw", " rd"] {
+        keys(&mut app, k);
+        assert!(app.pending_effect().is_none(), "{k}");
+        assert_eq!(app.status(), "No mapping", "{k}");
+    }
+    assert!(calls.borrow().is_empty());
+}
+
+#[test]
+fn leader_r_waits_and_unknown_cancels() {
+    let (_d, mut app, calls) = launch_app(dir_and_vcs_launchers(), false, Exit::Code(0));
     keys(&mut app, " r");
     assert!(app.pending_effect().is_none());
     assert_eq!(app.status(), "");
@@ -190,10 +219,10 @@ fn stdin_page_cannot_launch_editor() {
 
 #[test]
 fn non_zero_exit_and_signal_show_in_status() {
-    let (_d, mut app, _c) = launch_app(Config::default(), false, Exit::Code(2));
-    keys(&mut app, " rr");
+    let (_d, mut app, _c) = launch_app(dir_and_vcs_launchers(), false, Exit::Code(2));
+    keys(&mut app, " rd");
     app.run_pending_effect();
-    assert_eq!(app.status(), "review: exited with status 2");
+    assert_eq!(app.status(), "browse: exited with status 2");
 
     let (_d, mut app, _c) = launch_app(Config::default(), false, Exit::Signal(9));
     app.launch("edit");
@@ -220,7 +249,12 @@ key = "<leader>e"
 command = ["myed", "${file}:${line}"]
 
 [[launch]]
-name = "review"
+name = "browse"
+key = "<leader>rr"
+command = ["lf"]
+
+[[launch]]
+name = "browse"
 disabled = true
 
 [[launch]]
@@ -240,7 +274,7 @@ command = ["x"]
         calls.borrow()[0].argv,
         s(&["myed", &format!("{}:1", file.display())])
     );
-    // `review` is gone, `,rr` is unbound; space is no longer the leader.
+    // `browse` is gone, `,rr` is unbound; space is no longer the leader.
     keys(&mut app, ",rr");
     assert!(app.pending_effect().is_none());
     assert_eq!(calls.borrow().len(), 1);
