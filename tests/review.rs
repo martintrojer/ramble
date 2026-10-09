@@ -226,6 +226,91 @@ fn a_multi_line_paste_lands_in_the_prompt_as_one_line_and_runs_no_keys() {
     assert_eq!(only(&repo).2, "first second third jj");
 }
 
+fn alt(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT)
+}
+
+#[test]
+fn the_prompt_edits_at_the_cursor() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "cc");
+    keys(&mut app, "why this here");
+    send(&mut app, alt('b'));
+    send(&mut app, alt('b'));
+    keys(&mut app, "is ");
+    assert_eq!(app.comment_prompt().unwrap(), "comment: why is this here");
+    send(&mut app, ctrl('a'));
+    send(&mut app, key(KeyCode::Delete));
+    keys(&mut app, "W");
+    send(&mut app, key(KeyCode::End));
+    send(&mut app, ctrl('w'));
+    keys(&mut app, "there?");
+    assert_eq!(app.comment_prompt().unwrap(), "comment: Why is this there?");
+    send(&mut app, key(KeyCode::Home));
+    send(&mut app, alt('f'));
+    send(&mut app, key(KeyCode::Right));
+    send(&mut app, key(KeyCode::Right));
+    send(&mut app, ctrl('u'));
+    send(&mut app, key(KeyCode::Left));
+    send(&mut app, key(KeyCode::Backspace));
+    assert_eq!(app.comment_prompt().unwrap(), "comment:  this there?");
+    send(&mut app, key(KeyCode::Delete));
+    // Pasted text goes in at the cursor too.
+    app.event(AppEvent::Paste("is\n".into()));
+    assert_eq!(app.comment_prompt().unwrap(), "comment: is this there?");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(only(&repo).2, "is this there?");
+}
+
+/// The status row (a wide grapheme's second cell left out) and the
+/// terminal cursor.
+fn prompt_row(app: &App) -> (String, (u16, u16)) {
+    let mut term = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let mut row = String::new();
+    let mut x = 0;
+    while x < COLS {
+        let sym = buf[(x, ROWS - 1)].symbol();
+        row.push_str(sym);
+        x += unicode_width::UnicodeWidthStr::width(sym).max(1) as u16;
+    }
+    let pos = term.get_cursor_position().unwrap();
+    (row, (pos.x, pos.y))
+}
+
+#[test]
+fn a_long_comment_scrolls_in_the_prompt_and_shows_the_cursor() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "cc");
+    let (row, cur) = prompt_row(&app);
+    assert_eq!((row.trim_end(), cur), ("comment:", (9, ROWS - 1)));
+    let long = "the quick brown fox jumps over the lazy dog and then it runs off";
+    keys(&mut app, long);
+    // 60 cells: 9 for the label, 50 for text, 1 for the cursor.
+    let (row, cur) = prompt_row(&app);
+    assert_eq!(row, format!("comment: {} ", &long[long.len() - 50..]));
+    assert_eq!(cur, (59, ROWS - 1));
+    send(&mut app, key(KeyCode::Home));
+    let (row, cur) = prompt_row(&app);
+    assert_eq!(row, format!("comment: {}", &long[..51]));
+    assert_eq!(cur, (9, ROWS - 1));
+    // Wide graphemes count two cells; the one under the cursor fits whole.
+    send(&mut app, key(KeyCode::End));
+    send(&mut app, ctrl('w'));
+    keys(&mut app, "좋아요");
+    send(&mut app, key(KeyCode::Left));
+    let (row, cur) = prompt_row(&app);
+    assert!(row.ends_with("runs 좋아요"), "{row:?}");
+    assert_eq!(cur, (58, ROWS - 1));
+    send(&mut app, key(KeyCode::Enter));
+    assert!(only(&repo).2.ends_with("runs 좋아요"));
+}
+
 #[test]
 fn visual_lines_over_three_list_items_cover_their_source_lines() {
     let repo = Repo::new();
@@ -805,10 +890,15 @@ fn status_line(app: &App) -> String {
 #[test]
 fn the_status_line_shows_the_comment_on_the_cursor_line() {
     let repo = Repo::new();
-    let mut app = repo.open("doc.md", DOC);
+    // A two-line body comes from the editor; the prompt is one line.
+    let mut app = repo.open("doc.md", DOC).with_runner(|cmd| {
+        std::fs::write(cmd.argv.last().unwrap(), "first line\nsecond").unwrap();
+        Ok(Exit::Code(0))
+    });
     goto_text(&mut app, "beta");
     keys(&mut app, "cc");
-    type_and_save(&mut app, "first line\nsecond");
+    send(&mut app, ctrl('e'));
+    app.run_pending_effect();
     // The action's own message wins until the cursor moves.
     assert_eq!(app.status(), "Comment added (1 in batch)");
     assert!(status_line(&app).contains("Comment added"));

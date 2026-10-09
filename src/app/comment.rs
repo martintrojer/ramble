@@ -2,8 +2,9 @@
 //! visual `c` on the selection's source lines. Lines and excerpt are
 //! frozen from the displayed document when `c` is pressed; a one-line
 //! prompt takes the body (Enter saves, Esc cancels, `C-e` moves it into
-//! the editor, Tab / S-Tab pick the kind from `[review] kinds`). Comments
-//! go to the debrief-review batch for the page's repo root.
+//! the editor, Tab / S-Tab pick the kind from `[review] kinds`, readline
+//! keys edit it: see [`super::textbox`]). Comments go to the
+//! debrief-review batch for the page's repo root.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use debrief_review::Kind;
@@ -11,6 +12,7 @@ use debrief_review::Kind;
 use super::effect::Effect;
 use super::keys::{Action, KeyResult};
 use super::launch::{Exit, LaunchCommand, editor_words};
+use super::textbox::{Edit, TextBox};
 use super::{App, Mode};
 
 /// The prompt's label.
@@ -25,8 +27,8 @@ pub const NO_SOURCE_LINE: &str = "No source line here";
 pub enum CommentAction {
     /// `cc` (false: the cursor row) or visual `c` (true: the selection).
     Start(bool),
-    Input(char),
-    Backspace,
+    /// A key that edits the text or moves the cursor.
+    Edit(Edit),
     /// Enter: save a non-empty body.
     Save,
     /// Esc: drop the comment.
@@ -45,7 +47,7 @@ pub(super) struct Draft {
     /// 1-based inclusive source lines.
     lines: (u32, u32),
     excerpt: String,
-    text: String,
+    text: TextBox,
     /// The kind id; new comments start untyped.
     kind: Option<String>,
 }
@@ -60,13 +62,22 @@ pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
         KeyCode::Char('e') if ctrl => CommentAction::Editor,
         KeyCode::Enter => CommentAction::Save,
         KeyCode::Esc => CommentAction::Cancel,
-        KeyCode::Backspace => CommentAction::Backspace,
         KeyCode::Tab | KeyCode::Char('\t') => CommentAction::Kind(true),
         KeyCode::BackTab => CommentAction::Kind(false),
-        KeyCode::Char(c) if !ctrl => CommentAction::Input(c),
-        _ => return KeyResult::None,
+        _ => match Edit::from_key(key) {
+            Some(e) => CommentAction::Edit(e),
+            None => return KeyResult::None,
+        },
     };
     KeyResult::Action(Action::Comment(a))
+}
+
+/// The prompt's label, with the kind: `comment [ISSUE]: `.
+fn comment_label(d: &Draft) -> String {
+    match &d.kind {
+        Some(k) => format!("comment [{}]: ", Kind::label(k)),
+        None => COMMENT_PROMPT.to_string(),
+    }
 }
 
 impl App {
@@ -84,10 +95,17 @@ impl App {
     /// (`comment [ISSUE]: `).
     pub fn comment_prompt(&self) -> Option<String> {
         let d = self.comment.as_ref()?;
-        Some(match &d.kind {
-            Some(k) => format!("comment [{}]: {}", Kind::label(k), d.text),
-            None => format!("{COMMENT_PROMPT}{}", d.text),
-        })
+        Some(format!("{}{}", comment_label(d), d.text.text()))
+    }
+
+    /// The prompt in `width` cells: the label, the part of the text around
+    /// the cursor that fits, and the cursor's column.
+    pub fn comment_prompt_view(&self, width: usize) -> Option<(String, usize)> {
+        let d = self.comment.as_ref()?;
+        let label = comment_label(d);
+        let lw = unicode_width::UnicodeWidthStr::width(label.as_str());
+        let (range, col) = d.text.line_view(width.saturating_sub(lw));
+        Some((format!("{label}{}", &d.text.text()[range]), lw + col))
     }
 
     /// Tab (`forward`) / S-Tab: move the draft's kind along untyped ->
@@ -122,14 +140,10 @@ impl App {
     pub(super) fn comment_action(&mut self, a: CommentAction) {
         match a {
             CommentAction::Start(visual) => self.comment_start(visual),
-            CommentAction::Input(c) => {
+            CommentAction::Edit(e) => {
                 if let Some(d) = &mut self.comment {
-                    d.text.push(c);
-                }
-            }
-            CommentAction::Backspace => {
-                if let Some(d) = &mut self.comment {
-                    d.text.pop();
+                    // One line: Up/Down have no row to go to.
+                    d.text.apply(e, 0);
                 }
             }
             CommentAction::Kind(forward) => self.comment_cycle_kind(forward),
@@ -147,7 +161,7 @@ impl App {
                         path: d.path,
                         lines: d.lines,
                         excerpt: d.excerpt,
-                        initial: d.text,
+                        initial: d.text.into_text(),
                         kind: d.kind,
                     });
                 }
@@ -155,10 +169,10 @@ impl App {
         }
     }
 
-    /// Pasted text (one line) appended to the typed comment.
+    /// Pasted text (one line) typed at the cursor.
     pub(super) fn comment_insert(&mut self, text: &str) {
         if let Some(d) = &mut self.comment {
-            d.text.push_str(text);
+            d.text.insert_line(text);
         }
     }
 
@@ -193,7 +207,7 @@ impl App {
             path,
             lines: (a as u32, b as u32),
             excerpt: excerpt.to_string(),
-            text: String::new(),
+            text: TextBox::new(),
             kind: None,
         });
         self.status.clear();
@@ -202,7 +216,7 @@ impl App {
 
     /// Save `d` with `body` (trimmed); an empty body saves nothing.
     fn comment_save(&mut self, d: Draft) {
-        let body = d.text.trim();
+        let body = d.text.text().trim();
         if body.is_empty() {
             return self.set_status(EMPTY_COMMENT);
         }
@@ -234,7 +248,7 @@ impl App {
                 path,
                 lines,
                 excerpt,
-                text,
+                text: TextBox::from_text(&text),
                 kind,
             }),
             Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
