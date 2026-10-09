@@ -511,7 +511,10 @@ impl App {
             return self.review_refresh_markers();
         }
         let n = ids.len();
-        let md = store.to_markdown(self.config.send.preamble.as_deref());
+        let md = store.to_markdown(
+            self.config.send.preamble.as_deref(),
+            &debrief_review::builtin_kinds(),
+        );
         let root = store.root().to_path_buf();
         let clipboard = &mut self.clipboard;
         let mut copy = |text: &str| clipboard.copy(text).map_err(std::io::Error::other);

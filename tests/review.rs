@@ -950,7 +950,9 @@ fn leader_rr_falls_back_to_the_clipboard_when_the_command_fails() {
     repo.add("doc.md", 5, 5);
     let path = repo.write("doc.md", DOC);
     let mut app = repo.app(StartTarget::File(path), send_config(&["false"]));
-    let md = repo.review().to_markdown(None);
+    let md = repo
+        .review()
+        .to_markdown(None, &debrief_review::builtin_kinds());
     leader(&mut app, "rr");
     app.run_pending_effect();
     assert_eq!(app.status(), "Review copied to clipboard (1 comments)");
