@@ -692,6 +692,25 @@ fn k_on_a_link_with_no_note_is_a_status() {
 }
 
 #[test]
+fn k_on_a_link_with_no_note_closes_an_open_preview() {
+    let (tree, cache) = notebook();
+    write(
+        &tree.path().join("p.md"),
+        "# P\n\n[[b]] and [gone](missing)\n",
+    );
+    let mut app = open(tree.path(), cache.path(), "p.md");
+    ready(&mut app);
+    to_link(&mut app, 0);
+    keys(&mut app, "K");
+    hovered(&mut app);
+    // The popup is open; `K` on a link with no note must not leave it.
+    to_link(&mut app, 1);
+    keys(&mut app, "K");
+    assert_eq!(app.status(), "No hover information");
+    assert_eq!(app.hover_popup(), None);
+}
+
+#[test]
 fn a_preview_reply_is_dropped_only_when_the_page_changed() {
     let (tree, cache) = notebook();
     let mut app = open(tree.path(), cache.path(), "wiki.md");

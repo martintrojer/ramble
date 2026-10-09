@@ -763,10 +763,11 @@ impl App {
     /// `K` on an mdroots page: ask the worker for the link target's
     /// preview, replacing any preview in flight. Before the page's links
     /// arrive, or for a link with no note to preview, the status says
-    /// "No hover information".
+    /// "No hover information" and an open preview closes.
     pub(super) fn mdroots_hover(&mut self) {
         let Some(target) = self.mdroots_preview_target() else {
             self.mdroots.preview = None;
+            self.hover_close();
             self.set_status("No hover information");
             return;
         };
