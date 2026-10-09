@@ -461,7 +461,7 @@ fn sidebar_commands_set_mode_and_visibility() {
     app.execute("Sidebar toggle");
     assert!(app.sidebar_visible());
     app.execute("Sidebar hide");
-    assert!(!app.sidebar_visible(), "off is hide");
+    assert!(!app.sidebar_visible(), "hide hides");
     assert_eq!(
         app.sidebar_mode(),
         SidebarMode::Outline,
@@ -508,7 +508,7 @@ fn no_page_draws_the_tree_with_focus_despite_hidden_and_narrow() {
     keys(&mut app, " e");
     assert!(app.sidebar_visible());
     assert_eq!(app.status(), TREE_STAYS_MESSAGE);
-    // The first page applies steps 2-4: hidden (show = false), focus moves.
+    // The first page applies steps 2-4: hidden (show = "never"), focus moves.
     app.handle_key(key(KeyCode::Enter));
     assert!(app.page().is_some());
     assert!(!app.sidebar_visible());

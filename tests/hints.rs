@@ -9,7 +9,7 @@ use tempfile::TempDir;
 const COLS: u16 = 40;
 const ROWS: u16 = 12;
 
-/// An app on `dir/a.md` holding `source`, sidebar off and no language
+/// An app on `dir/a.md` holding `source`, sidebar hidden and no language
 /// servers, so the content gets the full width.
 fn app_with(source: &str) -> (TempDir, App) {
     let dir = tempfile::tempdir().unwrap();

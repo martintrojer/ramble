@@ -30,7 +30,7 @@ fn para_row(i: usize) -> usize {
 }
 
 /// Options with no language servers configured, so no test starts a real
-/// one, and the sidebar off, so the content gets the full width these tests
+/// one, and the sidebar hidden, so the content gets the full width these tests
 /// assume.
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();

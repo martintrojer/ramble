@@ -224,9 +224,12 @@ is the current page's file. The selection highlight is unchanged.
 ### D11. `show = always | never | auto` (peek); no compatibility shims (user request)
 
 `sidebar.show` takes exactly one of three values. There are no aliases:
-`true`, `false` and the old `default = "off"` are config errors. The serde
-enum parse rejects them (`show` is the `SidebarShow` enum and
-`SidebarMode` has no `Off`), with the usual line number.
+`true`, `false` and the old `default = "off"` are config errors, with the
+usual line number. `SidebarShow` has its own `Deserialize`, so any other
+`show` value fails with `sidebar.show: expected "always", "never" or
+"auto", got true`, which names the key and the values. `SidebarMode` has
+no `Off`, so `default = "off"` gets serde's unknown-variant error, which
+lists the four modes.
 
 | `show` | Meaning |
 |---|---|
