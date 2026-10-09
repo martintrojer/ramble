@@ -10,6 +10,7 @@ use ramble::app::{
     App, AppEvent, Effect, Focus, FsEvent, HelpLine, Hit, Layout, StartOptions, StartTarget,
 };
 use ramble::config::{Config, SidebarMode, SidebarShow, SidebarSide};
+use ramble::review::{FileMarks, Markers, canonical};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -271,6 +272,68 @@ fn beside_needs_the_width_plus_border_past_max_width_and_the_gutter() {
 }
 
 #[test]
+fn the_review_gutter_counts_against_the_room_beside() {
+    let mut t = on_file(117);
+    let mut m = Markers::default();
+    m.files.insert(
+        canonical(&t.root.join("a.md")),
+        FileMarks {
+            count: 1,
+            lines: vec![(1, 1)],
+        },
+    );
+    t.app.event(AppEvent::Review(m));
+    assert_eq!(t.app.review_gutter(), 1);
+    win(&mut t.app, 'h');
+    assert!(t.app.sidebar_overlay(), "117 - 1 gutter - 100 < 17");
+}
+
+#[test]
+fn a_narrow_terminal_overlays_even_with_room_beside() {
+    // max_width 40 leaves 30 spare columns at 70, but 70 < auto_hide_below.
+    let mut t = on_file_with(70, |c| c.render.max_width = 40);
+    win(&mut t.app, 'h');
+    assert!(t.app.sidebar_overlay());
+    assert_eq!(page_width(&t.app), 40, "the page isn't narrowed");
+}
+
+#[test]
+fn beside_or_overlay_is_decided_on_the_refitted_width() {
+    // Outline rows fit in 16 columns (beside at 120); the long file name
+    // widens the files pane past the 19 spare columns.
+    let mut t = on_file(120);
+    write(&t.root, &format!("{}.md", "n".repeat(30)), "# N\n");
+    keys(&mut t.app, " E");
+    assert_eq!(t.app.sidebar_mode(), SidebarMode::Files);
+    assert!(
+        t.app.sidebar_drawn_cols() > 20,
+        "{}",
+        t.app.sidebar_drawn_cols()
+    );
+    assert!(t.app.sidebar_overlay(), "decided after the refit");
+}
+
+#[test]
+fn the_overlay_clears_the_text_under_it() {
+    let mut t = on_file(80);
+    let before = screen(&t.app);
+    assert!(before[3].starts_with("word word"), "{before:?}");
+    win(&mut t.app, 'h');
+    let s = screen(&t.app);
+    for (y, row) in s.iter().enumerate().take(ROWS as usize - 1) {
+        let cells: String = row.chars().take(17).collect();
+        assert!(
+            !cells.contains("word"),
+            "row {y} shows the page through: {row:?}"
+        );
+    }
+    assert_eq!(
+        s[3].chars().take(17).collect::<String>(),
+        format!("{:16}│", "")
+    );
+}
+
+#[test]
 fn right_side_peeks_with_c_w_l_and_draws_the_overlay_at_the_right_edge() {
     let mut t = on_file_with(80, |c| c.sidebar.side = SidebarSide::Right);
     win(&mut t.app, 'h');
@@ -298,7 +361,12 @@ fn every_focus_key_into_the_sidebar_peeks_and_back_hides() {
         assert_eq!(t.app.focus(), Focus::Content, "C-w {back}");
         assert!(hidden(&t.app), "C-w {back} hides");
     }
-    // C-w p from the content into the sidebar peeks too.
+    // C-w p with no sidebar pane to return to opens nothing.
+    let mut t = on_file(80);
+    win(&mut t.app, 'p');
+    assert!(hidden(&t.app), "C-w p back to the content: no peek");
+    assert_eq!(t.app.focus(), Focus::Content);
+    // C-w p from the content into the sidebar peeks.
     let mut t = on_file(80);
     win(&mut t.app, 'h');
     win(&mut t.app, 'l');
@@ -525,6 +593,20 @@ fn overlay_clicks_hit_the_sidebar_and_a_text_click_hides_it() {
 }
 
 #[test]
+fn a_text_click_hides_a_peek_even_with_the_content_focused() {
+    let mut t = on_file(80);
+    win(&mut t.app, 'h');
+    // A mode change (history restore's path) that drops the focused pane
+    // gives focus to the content and keeps the peek.
+    t.app.set_sidebar_mode(SidebarMode::Files);
+    assert_eq!(t.app.focus(), Focus::Content);
+    assert!(t.app.sidebar_visible(), "the peek stays");
+    screen(&t.app);
+    click(&mut t.app, (40, 3), Instant::now());
+    assert!(hidden(&t.app));
+}
+
+#[test]
 fn right_side_overlay_clicks_hit_the_sidebar() {
     let mut t = on_file_with(80, |c| c.sidebar.side = SidebarSide::Right);
     win(&mut t.app, 'l');
@@ -600,7 +682,7 @@ fn help_items(app: &App) -> Vec<(String, String)> {
 fn help_lists_the_focus_keys_while_peek_hidden_and_the_pin_text() {
     let t = on_file(80);
     let items = help_items(&t.app);
-    for k in ["C-w h", "C-w w", "C-w W", "C-w p"] {
+    for k in ["C-w h", "C-w w", "C-w W", "C-w j", "C-w k", "C-w p"] {
         assert!(
             items.iter().any(|(keys, _)| keys == k),
             "{k} row while a peek could open: {items:?}"

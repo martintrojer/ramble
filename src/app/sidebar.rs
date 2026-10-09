@@ -756,15 +756,16 @@ impl App {
     }
 
     /// A peek goes beside the page when the page keeps its full
-    /// `render.max_width` next to it and the terminal isn't narrow:
-    /// `w + 1 <= cols - review gutter - max_width` (P9).
+    /// `render.max_width` next to it: `w + 1 <= cols - review gutter -
+    /// max_width` (P9). A narrow terminal overlays regardless; that is
+    /// [`App::sidebar_overlay`].
     fn peek_fits_beside(&self) -> bool {
         let room = self
             .size
             .0
             .saturating_sub(self.review_gutter())
             .saturating_sub(self.config.render.max_width);
-        !self.narrow() && self.sidebar_width_cols() < room
+        self.sidebar_width_cols() < room
     }
 
     /// Open an unpinned peek (D11): `auto` only, while hidden.
