@@ -3,6 +3,7 @@
 
 pub mod clip;
 mod clue;
+mod comment_box;
 mod content;
 mod gutter;
 mod help;
@@ -51,6 +52,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hits.banner = app.banner().is_some();
     hits.hover = hover::draw(frame, app, content);
     hints::draw(frame, app, content);
+    comment_box::draw(frame, app, content);
     // A peek without room beside the page is drawn over its sidebar-side
     // edge, above the text, gutter, hover and hints (D11).
     if app.sidebar_overlay() {

@@ -325,7 +325,7 @@ impl App {
     /// segments). A range that reaches no row falls back to the last such
     /// row at or before its start line. Lines past the end of the file
     /// count as the last line; separator rows are never included.
-    fn rows_for_lines(&self, (s, e): (usize, usize)) -> Vec<usize> {
+    pub(super) fn rows_for_lines(&self, (s, e): (usize, usize)) -> Vec<usize> {
         let Some(p) = &self.page else {
             return Vec::new();
         };

@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use debrief_review::{Comment, Rev, Review, Side};
 use ramble::app::{
-    App, AppEvent, EMPTY_COMMENT, Effect, Exit, LaunchCommand, Mode, NO_MORE_REVIEW, NO_REVIEW,
-    NO_SOURCE_LINE, REVIEW_POLL, StartOptions, StartTarget,
+    App, AppEvent, CommentBox, EMPTY_COMMENT, Effect, Exit, LaunchCommand, Mode, NO_MORE_REVIEW,
+    NO_REVIEW, NO_SOURCE_LINE, REVIEW_POLL, StartOptions, StartTarget,
 };
 use ramble::config::{Config, SidebarMode, SidebarShow};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
 use tempfile::TempDir;
 
 const COLS: u16 = 60;
@@ -163,6 +164,15 @@ fn screen(app: &App) -> Vec<String> {
         .collect()
 }
 
+/// The comment box's title and text as one line: `comment [ISSUE] L5: why`.
+fn prompt(app: &App) -> String {
+    format!(
+        "{}: {}",
+        app.comment_title().unwrap().trim(),
+        app.comment_text().unwrap()
+    )
+}
+
 fn gutter_rows(app: &App) -> Vec<usize> {
     let s = screen(app);
     (0..ROWS as usize - 1)
@@ -190,12 +200,12 @@ fn cc_on_a_paragraph_line_saves_one_comment() {
     keys(&mut app, "cc");
     assert_eq!(app.mode(), Mode::Comment);
     assert!(
-        screen(&app)[ROWS as usize - 1].starts_with("comment: "),
-        "prompt drawn"
+        screen(&app).iter().any(|l| l.contains("╭ comment L5 ")),
+        "box drawn"
     );
     keys(&mut app, "too vaguex");
     send(&mut app, key(KeyCode::Backspace));
-    assert_eq!(app.comment_prompt().unwrap(), "comment: too vague");
+    assert_eq!(prompt(&app), "comment L5: too vague");
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(app.status(), "Comment added (1 in batch)");
     let (lines, excerpt, body, path) = only(&repo);
@@ -208,22 +218,19 @@ fn cc_on_a_paragraph_line_saves_one_comment() {
 }
 
 #[test]
-fn a_multi_line_paste_lands_in_the_prompt_as_one_line_and_runs_no_keys() {
+fn a_multi_line_paste_keeps_its_newlines_in_the_box_and_runs_no_keys() {
     let repo = Repo::new();
     let mut app = repo.open("doc.md", DOC);
     goto_text(&mut app, "beta");
     keys(&mut app, "cc");
     let cursor = app.cursor();
-    app.event(AppEvent::Paste("first\r\nsecond\tthird\njj".into()));
+    app.event(AppEvent::Paste("first\r\nsecond\tthird\rjj".into()));
     assert_eq!(app.mode(), Mode::Comment, "the newline was not Enter");
-    assert_eq!(
-        app.comment_prompt().unwrap(),
-        "comment: first second third jj"
-    );
+    assert_eq!(app.comment_text(), Some("first\nsecond third\njj"));
     assert_eq!(app.cursor(), cursor, "no keys replayed");
     assert!(repo.comments().is_empty(), "nothing saved yet");
     send(&mut app, key(KeyCode::Enter));
-    assert_eq!(only(&repo).2, "first second third jj");
+    assert_eq!(only(&repo).2, "first\nsecond third\njj");
 }
 
 fn alt(c: char) -> KeyEvent {
@@ -240,14 +247,14 @@ fn the_prompt_edits_at_the_cursor() {
     send(&mut app, alt('b'));
     send(&mut app, alt('b'));
     keys(&mut app, "is ");
-    assert_eq!(app.comment_prompt().unwrap(), "comment: why is this here");
+    assert_eq!(prompt(&app), "comment L5: why is this here");
     send(&mut app, ctrl('a'));
     send(&mut app, key(KeyCode::Delete));
     keys(&mut app, "W");
     send(&mut app, key(KeyCode::End));
     send(&mut app, ctrl('w'));
     keys(&mut app, "there?");
-    assert_eq!(app.comment_prompt().unwrap(), "comment: Why is this there?");
+    assert_eq!(prompt(&app), "comment L5: Why is this there?");
     send(&mut app, key(KeyCode::Home));
     send(&mut app, alt('f'));
     send(&mut app, key(KeyCode::Right));
@@ -255,60 +262,13 @@ fn the_prompt_edits_at_the_cursor() {
     send(&mut app, ctrl('u'));
     send(&mut app, key(KeyCode::Left));
     send(&mut app, key(KeyCode::Backspace));
-    assert_eq!(app.comment_prompt().unwrap(), "comment:  this there?");
+    assert_eq!(prompt(&app), "comment L5:  this there?");
     send(&mut app, key(KeyCode::Delete));
     // Pasted text goes in at the cursor too.
-    app.event(AppEvent::Paste("is\n".into()));
-    assert_eq!(app.comment_prompt().unwrap(), "comment: is this there?");
+    app.event(AppEvent::Paste("is ".into()));
+    assert_eq!(prompt(&app), "comment L5: is this there?");
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(only(&repo).2, "is this there?");
-}
-
-/// The status row (a wide grapheme's second cell left out) and the
-/// terminal cursor.
-fn prompt_row(app: &App) -> (String, (u16, u16)) {
-    let mut term = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
-    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
-    let buf = term.backend().buffer().clone();
-    let mut row = String::new();
-    let mut x = 0;
-    while x < COLS {
-        let sym = buf[(x, ROWS - 1)].symbol();
-        row.push_str(sym);
-        x += unicode_width::UnicodeWidthStr::width(sym).max(1) as u16;
-    }
-    let pos = term.get_cursor_position().unwrap();
-    (row, (pos.x, pos.y))
-}
-
-#[test]
-fn a_long_comment_scrolls_in_the_prompt_and_shows_the_cursor() {
-    let repo = Repo::new();
-    let mut app = repo.open("doc.md", DOC);
-    goto_text(&mut app, "beta");
-    keys(&mut app, "cc");
-    let (row, cur) = prompt_row(&app);
-    assert_eq!((row.trim_end(), cur), ("comment:", (9, ROWS - 1)));
-    let long = "the quick brown fox jumps over the lazy dog and then it runs off";
-    keys(&mut app, long);
-    // 60 cells: 9 for the label, 50 for text, 1 for the cursor.
-    let (row, cur) = prompt_row(&app);
-    assert_eq!(row, format!("comment: {} ", &long[long.len() - 50..]));
-    assert_eq!(cur, (59, ROWS - 1));
-    send(&mut app, key(KeyCode::Home));
-    let (row, cur) = prompt_row(&app);
-    assert_eq!(row, format!("comment: {}", &long[..51]));
-    assert_eq!(cur, (9, ROWS - 1));
-    // Wide graphemes count two cells; the one under the cursor fits whole.
-    send(&mut app, key(KeyCode::End));
-    send(&mut app, ctrl('w'));
-    keys(&mut app, "좋아요");
-    send(&mut app, key(KeyCode::Left));
-    let (row, cur) = prompt_row(&app);
-    assert!(row.ends_with("runs 좋아요"), "{row:?}");
-    assert_eq!(cur, (58, ROWS - 1));
-    send(&mut app, key(KeyCode::Enter));
-    assert!(only(&repo).2.ends_with("runs 좋아요"));
 }
 
 #[test]
@@ -432,7 +392,7 @@ fn esc_cancels_and_empty_enter_saves_nothing() {
     keys(&mut app, "ccdraft");
     send(&mut app, key(KeyCode::Esc));
     assert_eq!(app.mode(), Mode::Normal);
-    assert!(app.comment_prompt().is_none());
+    assert!(app.comment_text().is_none());
     assert!(!repo.cache.join("reviews").exists(), "nothing written");
 
     keys(&mut app, "cc   ");
@@ -745,48 +705,42 @@ fn tab_cycles_the_kind_through_untyped_and_saves_it() {
     let mut app = repo.open("doc.md", DOC);
     goto_text(&mut app, "beta");
     keys(&mut app, "ccwhy");
-    assert_eq!(
-        app.comment_prompt().unwrap(),
-        "comment: why",
-        "starts untyped"
-    );
+    assert_eq!(prompt(&app), "comment L5: why", "starts untyped");
     let tab = key(KeyCode::Tab);
     let back = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
     let mut labels = Vec::new();
     for _ in 0..5 {
         send(&mut app, tab);
-        labels.push(app.comment_prompt().unwrap());
+        labels.push(prompt(&app));
     }
     assert_eq!(
         labels,
         [
-            "comment [ISSUE]: why",
-            "comment [SUGGESTION]: why",
-            "comment [QUESTION]: why",
-            "comment [NIT]: why",
-            "comment: why",
+            "comment [ISSUE] L5: why",
+            "comment [SUGGESTION] L5: why",
+            "comment [QUESTION] L5: why",
+            "comment [NIT] L5: why",
+            "comment L5: why",
         ]
     );
     send(&mut app, back);
-    assert_eq!(app.comment_prompt().unwrap(), "comment [NIT]: why");
+    assert_eq!(prompt(&app), "comment [NIT] L5: why");
     send(&mut app, back);
     send(&mut app, key(KeyCode::Char('\t')));
-    assert_eq!(app.comment_prompt().unwrap(), "comment [NIT]: why");
+    assert_eq!(prompt(&app), "comment [NIT] L5: why");
     send(&mut app, back);
-    assert_eq!(
-        screen(&app)[ROWS as usize - 1].trim_end(),
-        "comment [QUESTION]: why"
+    assert!(
+        screen(&app)
+            .iter()
+            .any(|l| l.contains("╭ comment [QUESTION] L5 ")),
+        "the title shows the kind"
     );
     send(&mut app, key(KeyCode::Enter));
     let cs = repo.comments();
     assert_eq!(cs[0].kind.as_deref(), Some("question"));
     assert_eq!(cs[0].body, "why");
     keys(&mut app, "ccplain");
-    assert_eq!(
-        app.comment_prompt().unwrap(),
-        "comment: plain",
-        "next one untyped"
-    );
+    assert_eq!(prompt(&app), "comment L5: plain", "next one untyped");
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(repo.comments()[1].kind, None);
 }
@@ -803,9 +757,9 @@ fn configured_kinds_replace_the_builtins_and_none_leaves_tab_inert() {
     let mut app = repo.app(StartTarget::File(path.clone()), c);
     keys(&mut app, "ccx");
     send(&mut app, key(KeyCode::Tab));
-    assert_eq!(app.comment_prompt().unwrap(), "comment [PRAISE]: x");
+    assert_eq!(prompt(&app), "comment [PRAISE] L1: x");
     send(&mut app, key(KeyCode::Tab));
-    assert_eq!(app.comment_prompt().unwrap(), "comment: x");
+    assert_eq!(prompt(&app), "comment L1: x");
     send(&mut app, key(KeyCode::Esc));
     let mut c = config(None);
     c.review.kinds = vec![];
@@ -816,7 +770,7 @@ fn configured_kinds_replace_the_builtins_and_none_leaves_tab_inert() {
         &mut app,
         KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
     );
-    assert_eq!(app.comment_prompt().unwrap(), "comment: x");
+    assert_eq!(prompt(&app), "comment L1: x");
     assert_eq!(app.mode(), Mode::Comment);
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(repo.comments()[0].kind, None);
@@ -1342,4 +1296,162 @@ fn leader_rr_labels_typed_items_with_a_legend_of_the_configured_kinds() {
     assert!(md.contains("## Item 2\n"), "{md}");
     assert!(md.contains("- PRAISE: Leave it as it is.\n"), "{md}");
     assert!(!md.contains("ISSUE"), "only used kinds in the legend: {md}");
+}
+
+// The comment box.
+
+/// Draw at `w`x`h`; the screen's lines, the box (as the app places it,
+/// in the content pane: the whole width with no sidebar) and the terminal
+/// cursor.
+fn draw_box(app: &App, w: u16, h: u16) -> (Vec<String>, Option<CommentBox>, (u16, u16)) {
+    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
+    let buf = term.backend().buffer().clone();
+    let lines = (0..h)
+        .map(|y| (0..w).map(|x| buf[(x, y)].symbol()).collect::<String>())
+        .collect();
+    let pos = term.get_cursor_position().unwrap();
+    (
+        lines,
+        app.comment_box(Rect::new(0, 0, w, h - 1)),
+        (pos.x, pos.y),
+    )
+}
+
+/// `n` paragraphs `p1`..`pn`, a blank line apart.
+fn paras(n: usize) -> String {
+    (1..=n).map(|i| format!("p{i}\n\n")).collect()
+}
+
+#[test]
+fn the_box_opens_below_a_selection_in_the_middle_and_keeps_it_highlighted() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "Vjjc");
+    assert_eq!(app.mode(), Mode::Comment);
+    let (ya, yb) = (row_of(&app, "beta"), row_of(&app, "gamma"));
+    assert_eq!(app.comment_rows(), Some((ya, yb)));
+    let (lines, bx, cur) = draw_box(&app, COLS, ROWS);
+    let bx = bx.expect("box open");
+    assert_eq!(bx.rect.y as usize, yb - app.scroll() + 1, "right below");
+    assert_eq!(
+        (bx.rect.x, bx.rect.width),
+        (1, COLS - 2),
+        "pane less a margin"
+    );
+    assert_eq!(bx.rect.height, 3);
+    assert_eq!(bx.title, " comment L5-7 ");
+    assert!(lines[bx.rect.y as usize].contains("╭ comment L5-7 "));
+    assert!(lines[bx.rect.y as usize + 2].contains("Enter save"));
+    assert_eq!(cur, (bx.rect.x + 1, bx.rect.y + 1), "cursor in the box");
+    // The rows stay drawn, with the selection background.
+    assert!(lines[ya - app.scroll()].contains("beta"));
+    let mut term = Terminal::new(TestBackend::new(COLS, ROWS)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    let buf = term.backend().buffer();
+    let bg = |y: usize| buf[(5, (y - app.scroll()) as u16)].bg;
+    assert_eq!(bg(ya), bg(yb));
+    assert_eq!(bg(ya), bg(ya + 1), "the blank row between too");
+    assert_ne!(bg(ya), bg(row_of(&app, "Title")), "highlighted");
+    keys(&mut app, "ab");
+    let (lines, _, cur) = draw_box(&app, COLS, ROWS);
+    assert_eq!(cur, (bx.rect.x + 3, bx.rect.y + 1));
+    assert!(lines[bx.rect.y as usize + 1].contains("│ab"));
+}
+
+#[test]
+fn the_box_opens_above_rows_at_the_bottom() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", &paras(40));
+    keys(&mut app, "G");
+    let r = row_of(&app, "p40");
+    goto(&mut app, r);
+    keys(&mut app, "cc");
+    assert_eq!(app.mode(), Mode::Comment, "{}", app.status());
+    let (lines, bx, _) = draw_box(&app, COLS, ROWS);
+    let bx = bx.unwrap();
+    let y = (r - app.scroll()) as u16;
+    assert!(y >= ROWS - 3, "the row is at the bottom: {y}");
+    assert_eq!(bx.rect.bottom(), y, "directly above the row");
+    assert!(lines[y as usize].contains("p40"), "not covered");
+}
+
+#[test]
+fn a_multi_line_body_is_saved_with_its_newlines_and_the_box_grows() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "ccone");
+    send(&mut app, ctrl('j'));
+    keys(&mut app, "two");
+    send(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    keys(&mut app, "three");
+    let (_, bx, cur) = draw_box(&app, COLS, ROWS);
+    let bx = bx.unwrap();
+    assert_eq!(bx.lines, ["one", "two", "three"]);
+    assert_eq!(bx.rect.height, 5);
+    assert_eq!(cur, (bx.rect.x + 6, bx.rect.y + 3));
+    send(&mut app, key(KeyCode::Up));
+    keys(&mut app, "!");
+    assert_eq!(app.comment_text(), Some("one\ntwo!\nthree"));
+    send(&mut app, key(KeyCode::Down));
+    for i in 0..9 {
+        send(&mut app, key(KeyCode::End));
+        send(&mut app, ctrl('j'));
+        keys(&mut app, &format!("l{i}"));
+    }
+    let (_, bx, cur) = draw_box(&app, COLS, ROWS);
+    let bx = bx.unwrap();
+    assert_eq!(bx.rect.height, 10, "8 text rows, then it scrolls");
+    assert_eq!(bx.lines.last().map(String::as_str), Some("l8"));
+    assert_eq!(cur.1, bx.rect.y + 8);
+    send(&mut app, key(KeyCode::Enter));
+    let body = only(&repo).2;
+    assert!(body.starts_with("one\ntwo!\nthree\nl0\n"), "{body:?}");
+    assert_eq!(body.lines().count(), 12);
+}
+
+#[test]
+fn esc_closes_the_box_and_drops_the_highlight() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "ccdraft");
+    send(&mut app, key(KeyCode::Esc));
+    let (lines, bx, _) = draw_box(&app, COLS, ROWS);
+    assert!(bx.is_none());
+    assert!(app.comment_rows().is_none());
+    assert!(!lines.iter().any(|l| l.contains("comment L")));
+    assert!(repo.comments().is_empty());
+}
+
+#[test]
+fn the_box_follows_a_resize_and_a_reflow() {
+    let repo = Repo::new();
+    let long = "word ".repeat(30);
+    let doc = format!("{}{}\n\nafter\n", paras(3), long.trim());
+    let mut app = repo.open("doc.md", &doc);
+    goto_text(&mut app, "after");
+    keys(&mut app, "cc");
+    keys(&mut app, &"note ".repeat(15));
+    let (_, wide, _) = draw_box(&app, COLS, ROWS);
+    let wide = wide.unwrap();
+    app.event(AppEvent::Resize(30, 12));
+    let r = row_of(&app, "after");
+    assert_eq!(app.comment_rows(), Some((r, r)), "follows the reflow");
+    let (lines, narrow, _) = draw_box(&app, 30, 12);
+    let narrow = narrow.unwrap();
+    assert_eq!(narrow.rect.width, 28);
+    assert!(narrow.rect.height > wide.rect.height, "rewrapped taller");
+    let y = (r - app.scroll()) as u16;
+    assert!(
+        narrow.rect.bottom() <= y || narrow.rect.y > y,
+        "not over the row: {:?} row {y}",
+        narrow.rect
+    );
+    assert!(lines[y as usize].contains("after"));
+    assert!(narrow.rect.bottom() <= 11, "inside the pane");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(only(&repo).2, "note ".repeat(15).trim());
 }

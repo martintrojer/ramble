@@ -1,13 +1,18 @@
 //! Comment mode (debrief spec §2): `cc` comments on the cursor line,
 //! visual `c` on the selection's source lines. Lines and excerpt are
-//! frozen from the displayed document when `c` is pressed; a one-line
-//! prompt takes the body (Enter saves, Esc cancels, `C-e` moves it into
-//! the editor, Tab / S-Tab pick the kind from `[review] kinds`, readline
-//! keys edit it: see [`super::textbox`]). Comments go to the
+//! frozen from the displayed document when `c` is pressed; a bordered box
+//! anchored below the commented rows (above when it doesn't fit) takes
+//! the body: Enter saves, `C-j` / `Alt-Enter` insert a newline, Esc
+//! cancels, `C-e` moves it into the editor, Tab / S-Tab pick the kind
+//! from `[review] kinds`, readline keys edit it (see [`super::textbox`]).
+//! The rows stay highlighted while typing. Comments go to the
 //! debrief-review batch for the page's repo root.
+
+use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use debrief_review::Kind;
+use ratatui::layout::Rect;
 
 use super::effect::Effect;
 use super::keys::{Action, KeyResult};
@@ -15,14 +20,16 @@ use super::launch::{Exit, LaunchCommand, editor_words};
 use super::textbox::{Edit, TextBox};
 use super::{App, Mode};
 
-/// The prompt's label.
-pub const COMMENT_PROMPT: &str = "comment: ";
+/// Text rows the comment box grows to before it scrolls.
+pub const BOX_ROWS: usize = 8;
+/// Columns left free on each side of the comment box.
+pub const BOX_MARGIN: u16 = 1;
 /// Status when Enter (or the editor) leaves an empty body.
 pub const EMPTY_COMMENT: &str = "Empty comment not saved";
 /// Status when the cursor row stands for no source line.
 pub const NO_SOURCE_LINE: &str = "No source line here";
 
-/// Comment-mode actions.
+/// Comment-box actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommentAction {
     /// `cc` (false: the cursor row) or visual `c` (true: the selection).
@@ -37,6 +44,8 @@ pub enum CommentAction {
     Editor,
     /// Tab (true) / S-Tab: the next / previous kind, through untyped.
     Kind(bool),
+    /// `C-j`, `Alt-Enter`: a line break at the cursor.
+    Newline,
 }
 
 /// A comment being typed: where it goes, frozen at `c`.
@@ -50,6 +59,80 @@ pub(super) struct Draft {
     text: TextBox,
     /// The kind id; new comments start untyped.
     kind: Option<String>,
+    /// The first text row the box shows.
+    scroll: Cell<usize>,
+}
+
+/// The comment box as drawn: where, its border titles, the visible text
+/// rows and the terminal cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentBox {
+    pub rect: Rect,
+    /// ` comment [ISSUE] L12-18 `.
+    pub title: String,
+    /// The key hints on the bottom border.
+    pub hint: String,
+    pub lines: Vec<String>,
+    pub cursor: (u16, u16),
+}
+
+/// The box's width in a pane `pane_w` wide.
+fn box_width(pane_w: u16) -> u16 {
+    if pane_w >= 2 * BOX_MARGIN + 3 {
+        pane_w - 2 * BOX_MARGIN
+    } else {
+        pane_w
+    }
+}
+
+/// The wrap width of a box `w` wide: inside the border, with a spare cell
+/// for the cursor at the end of a full row.
+fn wrap_width(w: u16) -> usize {
+    (w as usize).saturating_sub(3).max(1)
+}
+
+/// The box's top row and height, `h` rows wanted, for selected rows at
+/// screen rows `lo..=hi` (relative to the pane's top, may lie outside it)
+/// in a pane `ph` rows high: below the rows, else above them, else on the
+/// roomier side, shrunk to fit (at least one text row), else over the
+/// bottom. Rows scrolled off pin the box to that edge.
+pub(super) fn place(lo: i64, hi: i64, h: u16, ph: u16) -> (u16, u16) {
+    let (h, ph64) = (h.min(ph), i64::from(ph));
+    let hh = i64::from(h);
+    if hi < 0 {
+        return (0, h);
+    }
+    if lo >= ph64 {
+        return (ph - h, h);
+    }
+    let below = (ph64 - hi - 1).max(0);
+    let above = lo.max(0);
+    if hh <= below {
+        return ((hi + 1) as u16, h);
+    }
+    if hh <= above {
+        return ((lo - hh) as u16, h);
+    }
+    let room = below.max(above);
+    if room >= 3 {
+        let y = if below >= above { hi + 1 } else { 0 };
+        return (y as u16, room as u16);
+    }
+    (ph - h, h)
+}
+
+/// Pasted text for the box: CRLF and CR as LF, a tab as a space, other
+/// control characters dropped.
+fn paste_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\r' | '\n' => Some('\n'),
+            '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
 }
 
 /// Keys while typing a comment.
@@ -58,8 +141,11 @@ pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
         return KeyResult::None;
     };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
     let a = match key.code {
         KeyCode::Char('e') if ctrl => CommentAction::Editor,
+        KeyCode::Char('j') if ctrl => CommentAction::Newline,
+        KeyCode::Enter if alt || ctrl => CommentAction::Newline,
         KeyCode::Enter => CommentAction::Save,
         KeyCode::Esc => CommentAction::Cancel,
         KeyCode::Tab | KeyCode::Char('\t') => CommentAction::Kind(true),
@@ -72,11 +158,20 @@ pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
     KeyResult::Action(Action::Comment(a))
 }
 
-/// The prompt's label, with the kind: `comment [ISSUE]: `.
-fn comment_label(d: &Draft) -> String {
-    match &d.kind {
-        Some(k) => format!("comment [{}]: ", Kind::label(k)),
-        None => COMMENT_PROMPT.to_string(),
+impl Draft {
+    /// The box title: ` comment [ISSUE] L12-18 `.
+    fn title(&self) -> String {
+        let kind = self
+            .kind
+            .as_deref()
+            .map_or(String::new(), |k| format!(" [{}]", Kind::label(k)));
+        let (a, b) = self.lines;
+        let range = if a == b {
+            format!("L{a}")
+        } else {
+            format!("L{a}-{b}")
+        };
+        format!(" comment{kind} {range} ")
     }
 }
 
@@ -91,21 +186,85 @@ impl App {
         self.can_comment() && !self.config.review.kinds.is_empty()
     }
 
-    /// The typed comment as the prompt shows it, its kind in the label
-    /// (`comment [ISSUE]: `).
-    pub fn comment_prompt(&self) -> Option<String> {
-        let d = self.comment.as_ref()?;
-        Some(format!("{}{}", comment_label(d), d.text.text()))
+    /// The comment box's title (` comment [ISSUE] L12-18 `).
+    pub fn comment_title(&self) -> Option<String> {
+        Some(self.comment.as_ref()?.title())
     }
 
-    /// The prompt in `width` cells: the label, the part of the text around
-    /// the cursor that fits, and the cursor's column.
-    pub fn comment_prompt_view(&self, width: usize) -> Option<(String, usize)> {
+    /// The comment's text so far.
+    pub fn comment_text(&self) -> Option<&str> {
+        Some(self.comment.as_ref()?.text.text())
+    }
+
+    /// The rendered rows a comment being typed is on (drawn as selected,
+    /// the box's anchor): the rows its source lines are drawn on now, so
+    /// they follow a reflow on resize.
+    pub fn comment_rows(&self) -> Option<(usize, usize)> {
         let d = self.comment.as_ref()?;
-        let label = comment_label(d);
-        let lw = unicode_width::UnicodeWidthStr::width(label.as_str());
-        let (range, col) = d.text.line_view(width.saturating_sub(lw));
-        Some((format!("{label}{}", &d.text.text()[range]), lw + col))
+        let (a, b) = d.lines;
+        let rows = self.rows_for_lines((a as usize, b as usize));
+        match (rows.first(), rows.last()) {
+            (Some(&lo), Some(&hi)) => Some((lo, hi)),
+            _ => Some((self.cursor.row, self.cursor.row)),
+        }
+    }
+
+    /// The content pane's width (gutter and text), from the terminal size.
+    fn comment_pane_width(&self) -> u16 {
+        self.size.0.saturating_sub(self.sidebar_cols())
+    }
+
+    /// The comment box in the content pane `pane` (gutter and text):
+    /// [`BOX_MARGIN`] in from its sides, as tall as the wrapped text up to
+    /// [`BOX_ROWS`] rows (then it scrolls to the cursor), placed by
+    /// [`place`] next to the rows.
+    pub fn comment_box(&self, pane: Rect) -> Option<CommentBox> {
+        let d = self.comment.as_ref()?;
+        let (r0, r1) = self.comment_rows()?;
+        if pane.width < 3 || pane.height < 3 {
+            return None;
+        }
+        let w = box_width(pane.width);
+        let wrap = wrap_width(w);
+        let rows = d.text.rows(wrap);
+        let want = rows.len().min(BOX_ROWS) as u16 + 2;
+        let scroll = self.scroll() as i64;
+        let (lo, hi) = (r0 as i64 - scroll, r1 as i64 - scroll);
+        let (y, h) = place(lo, hi, want, pane.height);
+        let vis = (h as usize).saturating_sub(2).max(1);
+        let (row, col) = d.text.cursor_cell(wrap);
+        let mut s = d.scroll.get();
+        if row < s {
+            s = row;
+        } else if row >= s + vis {
+            s = row + 1 - vis;
+        }
+        s = s.min(rows.len().saturating_sub(vis));
+        d.scroll.set(s);
+        let lines = rows
+            .iter()
+            .skip(s)
+            .take(vis)
+            .map(|r| d.text.text()[r.clone()].to_string())
+            .collect();
+        let rect = Rect::new(pane.x + (pane.width - w) / 2, pane.y + y, w, h);
+        let inner_w = w.saturating_sub(2).max(1);
+        let cursor = (
+            rect.x + 1 + (col as u16).min(inner_w - 1),
+            rect.y + 1 + (row.saturating_sub(s)).min(vis - 1) as u16,
+        );
+        let tab = if self.has_comment_kinds() {
+            " · Tab kind"
+        } else {
+            ""
+        };
+        Some(CommentBox {
+            rect,
+            title: d.title(),
+            hint: format!(" Enter save · C-j newline{tab} · C-e editor · Esc cancel "),
+            lines,
+            cursor,
+        })
     }
 
     /// Tab (`forward`) / S-Tab: move the draft's kind along untyped ->
@@ -141,9 +300,14 @@ impl App {
         match a {
             CommentAction::Start(visual) => self.comment_start(visual),
             CommentAction::Edit(e) => {
+                let wrap = wrap_width(box_width(self.comment_pane_width()));
                 if let Some(d) = &mut self.comment {
-                    // One line: Up/Down have no row to go to.
-                    d.text.apply(e, 0);
+                    d.text.apply(e, wrap);
+                }
+            }
+            CommentAction::Newline => {
+                if let Some(d) = &mut self.comment {
+                    d.text.insert('\n');
                 }
             }
             CommentAction::Kind(forward) => self.comment_cycle_kind(forward),
@@ -169,10 +333,10 @@ impl App {
         }
     }
 
-    /// Pasted text (one line) typed at the cursor.
-    pub(super) fn comment_insert(&mut self, text: &str) {
+    /// Pasted text typed at the cursor, its line breaks kept.
+    pub(super) fn comment_paste(&mut self, text: &str) {
         if let Some(d) = &mut self.comment {
-            d.text.insert_line(text);
+            d.text.insert_str(&paste_text(text));
         }
     }
 
@@ -183,7 +347,7 @@ impl App {
         self.comment.take()
     }
 
-    /// Freeze the target lines and excerpt, then open the prompt.
+    /// Freeze the target lines and excerpt, then open the box.
     fn comment_start(&mut self, visual: bool) {
         let (lo, hi) = match (visual, self.visual_rows()) {
             (true, Some(rows)) => rows,
@@ -209,6 +373,7 @@ impl App {
             excerpt: excerpt.to_string(),
             text: TextBox::new(),
             kind: None,
+            scroll: Cell::new(0),
         });
         self.status.clear();
         self.mode = Mode::Comment;
@@ -250,6 +415,7 @@ impl App {
                 excerpt,
                 text: TextBox::from_text(&text),
                 kind,
+                scroll: Cell::new(0),
             }),
             Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
         }
@@ -284,5 +450,33 @@ impl App {
             Ok(Exit::Signal(n)) => Err(format!("killed by signal {n}")),
             Err(e) => Err(format!("{e:#}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{paste_text, place};
+
+    #[test]
+    fn place_below_else_above_never_over_the_rows() {
+        assert_eq!(place(5, 6, 3, 20), (7, 3), "below");
+        assert_eq!(place(17, 19, 3, 20), (14, 3), "above");
+        assert_eq!(place(4, 15, 6, 20), (16, 4), "shrunk on the roomier side");
+        assert_eq!(place(10, 18, 6, 20), (4, 6), "above");
+        assert_eq!(place(4, 17, 6, 20), (0, 4), "shrunk above");
+        assert_eq!(place(0, 19, 3, 20), (17, 3), "no room: over the bottom");
+    }
+
+    #[test]
+    fn place_pins_to_the_edge_the_rows_scrolled_off() {
+        assert_eq!(place(-9, -2, 4, 20), (0, 4), "scrolled off the top");
+        assert_eq!(place(25, 26, 4, 20), (16, 4), "off the bottom");
+        assert_eq!(place(-3, 2, 4, 20), (3, 4), "partly visible: below");
+        assert_eq!(place(1, 1, 30, 20), (2, 18), "taller than the pane");
+    }
+
+    #[test]
+    fn paste_keeps_line_breaks() {
+        assert_eq!(paste_text("a\r\nb\rc\nd\te\x07"), "a\nb\nc\nd e");
     }
 }

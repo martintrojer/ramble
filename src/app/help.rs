@@ -29,7 +29,7 @@ pub(crate) enum Ctx {
     Help,
     /// A visual selection is active.
     Visual,
-    /// The comment prompt is open.
+    /// The comment box is open.
     Comment,
 }
 
@@ -313,6 +313,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
         Ctx::Comment,
         G::Review,
         "in a comment: save",
+        App::can_comment,
+    ),
+    b(
+        "C-j",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: new line (Alt-Enter too)",
         App::can_comment,
     ),
     b(

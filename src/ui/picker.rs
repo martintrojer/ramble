@@ -99,17 +99,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
     Some(hit)
 }
 
-/// The `:` prompt (or the `comment: ` prompt, scrolled to its cursor)
-/// over the status line.
+/// The `:` prompt over the status line.
 pub(super) fn draw_cmdline(frame: &mut Frame, app: &App, area: Rect) {
-    let (prompt, x) = if let Some((p, col)) = app.comment_prompt_view(area.width as usize) {
-        (p, area.x.saturating_add(col as u16))
-    } else if let Some(p) = app.cmdline_prompt() {
-        let x = area.x + Span::raw(p.as_str()).width() as u16;
-        (p, x)
-    } else {
+    let Some(prompt) = app.cmdline_prompt() else {
         return;
     };
+    let x = area.x + Span::raw(prompt.as_str()).width() as u16;
     frame.render_widget(
         Paragraph::new(prompt).style(Style::new().fg(palette::TEXT).bg(BG)),
         area,

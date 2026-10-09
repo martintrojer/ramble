@@ -99,6 +99,16 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let current = s.row == cursor.row && (s.col_start..s.col_end).contains(&cursor.col);
         buf.set_style(rect, if current { CURRENT_HIT } else { HIT });
     }
+    // A comment being typed keeps its rows highlighted.
+    if let Some((lo, hi)) = app.comment_rows() {
+        for row in lo.max(top)..=hi.min(bottom.saturating_sub(1)) {
+            let y = area.y + (row - top) as u16;
+            buf.set_style(
+                Rect::new(area.x, y, area.width, 1),
+                Style::new().fg(palette::TEXT).bg(SELECTION_BG),
+            );
+        }
+    }
     // The selection wins over the cursorline and search hits; the cursor
     // stays reversed on top.
     for s in app.selection_spans() {

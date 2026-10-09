@@ -58,7 +58,7 @@ use crate::render::{RenderedPage, Theme};
 pub use clue::{CLUE_DELAY, ClueRow};
 pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
-pub use comment::{COMMENT_PROMPT, CommentAction, EMPTY_COMMENT, NO_SOURCE_LINE};
+pub use comment::{CommentAction, CommentBox, EMPTY_COMMENT, NO_SOURCE_LINE};
 pub use effect::{Clipboard, Effect, osc52};
 pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
@@ -425,13 +425,16 @@ impl App {
         }
     }
 
-    /// A bracketed paste: typed into the open prompt (comment, `/` search,
-    /// `:` command, sidebar filter, picker) as one line, newlines and tabs
-    /// as spaces. Anywhere else it is dropped, never replayed as keys.
+    /// A bracketed paste: typed into the comment box with its newlines,
+    /// or into the open prompt (`/` search, `:` command, sidebar filter,
+    /// picker) as one line, newlines and tabs as spaces. Anywhere else it
+    /// is dropped, never replayed as keys.
     pub fn paste(&mut self, text: &str) {
+        if self.mode == Mode::Comment {
+            return self.comment_paste(text);
+        }
         let text = paste_line(text);
         match self.mode {
-            Mode::Comment => self.comment_insert(&text),
             Mode::Search => self.search_insert(&text),
             Mode::Command => {
                 if let Some(s) = &mut self.cmdline {

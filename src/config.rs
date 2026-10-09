@@ -240,7 +240,7 @@ pub struct Launcher {
 pub struct ReviewConfig {
     /// Comment mode (`c`, `cc`) and markers from the debrief-review batch.
     pub enabled: bool,
-    /// Kinds Tab cycles through in the comment prompt, in order; the
+    /// Kinds Tab cycles through in the comment box, in order; the
     /// export's legend defines them. Omitted: debrief-review's built-ins.
     pub kinds: Vec<Kind>,
 }
