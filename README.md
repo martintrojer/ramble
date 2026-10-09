@@ -255,8 +255,8 @@ thread so it never blocks the UI: the page renders immediately, and link
 targets and broken-link marks arrive when the index answers. A configured
 language server is reached over a small stdio JSON-RPC client the same way.
 
-The full design, including the decisions behind it and what the review panel
-changed, is in [docs/specs/2026-10-07-ramble.md](docs/specs/2026-10-07-ramble.md).
+The full design and the decisions behind it are in
+[docs/specs/2026-10-07-ramble.md](docs/specs/2026-10-07-ramble.md).
 
 ## Status
 
