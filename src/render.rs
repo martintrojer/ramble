@@ -132,6 +132,10 @@ pub struct RenderedPage {
     /// `<leader>o` and review markers). Rows with no source (blank
     /// separators) repeat the previous value.
     pub source_lines: Vec<usize>,
+    /// For each rendered row, whether it has a source anchor: drawn
+    /// source text, or a fallback byte (blank code lines, empty raw
+    /// lines). False for blank separators.
+    pub anchored: Vec<bool>,
 }
 
 /// Lay out `doc` at `width` columns, front matter left out (print mode).
@@ -198,6 +202,7 @@ pub fn render_raw(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
             segments: r.segments,
         },
         source_lines: r.source_lines,
+        anchored: r.anchored,
     }
 }
 
@@ -543,6 +548,7 @@ struct Renderer<'a> {
     lines: Vec<Line<'static>>,
     segments: Vec<Segment>,
     source_lines: Vec<usize>,
+    anchored: Vec<bool>,
 }
 
 impl<'a> Renderer<'a> {
@@ -563,6 +569,7 @@ impl<'a> Renderer<'a> {
             lines: Vec::new(),
             segments: Vec::new(),
             source_lines: Vec::new(),
+            anchored: Vec::new(),
         }
     }
 
@@ -573,6 +580,7 @@ impl<'a> Renderer<'a> {
                 segments: self.segments,
             },
             source_lines: self.source_lines,
+            anchored: self.anchored,
         }
     }
 
@@ -784,6 +792,7 @@ impl<'a> Renderer<'a> {
         let prev = self.source_lines.last().copied().unwrap_or(1);
         let line = byte.map_or(prev, |b| self.line_of(b).max(prev));
         self.source_lines.push(line);
+        self.anchored.push(byte.is_some());
     }
 
     fn blank(&mut self) {

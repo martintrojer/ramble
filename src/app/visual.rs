@@ -209,6 +209,23 @@ fn copied(text: &str) -> String {
     format!("Copied {short}")
 }
 
+/// 1-based line of byte `at` in `src`.
+fn line_of(src: &str, at: usize) -> usize {
+    src.as_bytes()[..at.min(src.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+        + 1
+}
+
+/// Bytes of the whole 1-based source lines `a..=b`, newline included.
+pub(super) fn line_bytes(src: &str, a: usize, b: usize) -> std::ops::Range<usize> {
+    let mut starts = std::iter::once(0).chain(src.match_indices('\n').map(|(i, _)| i + 1));
+    let start = starts.clone().nth(a - 1).unwrap_or(src.len());
+    let end = starts.nth(b).unwrap_or(src.len());
+    start..end
+}
+
 impl App {
     /// Keys after `y`: `yy`, `yf`, `yF`, `yu`, or a count and a motion.
     pub(super) fn op_keymap(&self, keys: &[crossterm::event::KeyEvent]) -> KeyResult {
@@ -595,33 +612,44 @@ impl App {
         range.map_or_else(String::new, |r| p.doc.source[r].to_string())
     }
 
+    /// 1-based inclusive source lines rows `lo..=hi` were drawn from: the
+    /// segments' bytes, and with `anchors` also rows with a source anchor
+    /// but no segments (blank code lines, empty raw lines). `None` when no
+    /// row has source.
+    pub(super) fn source_line_range(
+        &self,
+        lo: usize,
+        hi: usize,
+        anchors: bool,
+    ) -> Option<(usize, usize)> {
+        let p = self.page.as_ref()?;
+        let src = p.doc.source.as_str();
+        let mut range: Option<(usize, usize)> = None;
+        let mut add = |a: usize, b: usize| {
+            range = Some(range.map_or((a, b), |(x, y)| (x.min(a), y.max(b))));
+        };
+        for row in lo..=hi.min(self.last_row()) {
+            let segs = self.row_segments(row);
+            let a = segs.iter().map(|s| s.src.start).min();
+            let b = segs.iter().map(|s| s.src.end).max();
+            if let (Some(a), Some(b)) = (a, b) {
+                let last = b.saturating_sub(1).max(a);
+                add(line_of(src, a), line_of(src, last));
+            } else if anchors && p.rendered.anchored.get(row).copied().unwrap_or(false) {
+                let l = p.rendered.source_lines[row];
+                add(l, l);
+            }
+        }
+        range
+    }
+
     /// Linewise: the whole source lines rows `lo..=hi` were drawn from.
     fn lines_text(&self, lo: usize, hi: usize) -> String {
-        let Some(p) = &self.page else {
+        let (Some(p), Some((a, b))) = (&self.page, self.source_line_range(lo, hi, false)) else {
             return String::new();
         };
         let src = &p.doc.source;
-        let mut range: Option<Range<usize>> = None;
-        for row in lo..=hi.min(self.last_row()) {
-            let segs = self.row_segments(row);
-            let (Some(a), Some(b)) = (
-                segs.iter().map(|s| s.src.start).min(),
-                segs.iter().map(|s| s.src.end).max(),
-            ) else {
-                continue;
-            };
-            range = Some(match range {
-                None => a..b,
-                Some(r) => r.start.min(a)..r.end.max(b),
-            });
-        }
-        let Some(r) = range else {
-            return String::new();
-        };
-        let start = src[..r.start].rfind('\n').map_or(0, |i| i + 1);
-        let last = r.end.saturating_sub(1).max(r.start);
-        let end = src[last..].find('\n').map_or(src.len(), |i| last + i + 1);
-        let mut text = src[start..end].to_string();
+        let mut text = src[line_bytes(src, a, b)].to_string();
         if !text.ends_with('\n') {
             text.push('\n');
         }
