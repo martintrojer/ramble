@@ -706,3 +706,134 @@ fn math_range_skips_padding_spaces() {
     assert_eq!(m.len(), 1, "{m:?}");
     assert_eq!(m[0].2, "\\frac{1}{2}");
 }
+
+/// Every block under `blocks`, depth first, with the inline ranges the
+/// renderer walks (paragraphs, headings, table cells).
+fn walk<'a>(
+    blocks: &'a [Block],
+    out: &mut Vec<&'a Block>,
+    inline: &mut Vec<std::ops::Range<usize>>,
+) {
+    for b in blocks {
+        out.push(b);
+        match b {
+            Block::Heading { inline: i, .. } | Block::Paragraph { inline: i, .. } => {
+                inline.push(i.clone())
+            }
+            Block::Table { header, rows, .. } => {
+                inline.extend(header.iter().cloned());
+                inline.extend(rows.iter().flatten().cloned());
+            }
+            Block::BlockQuote { children, .. } | Block::FootnoteDefinition { children, .. } => {
+                walk(children, out, inline)
+            }
+            Block::List { items, .. } => {
+                for item in items {
+                    walk(&item.children, out, inline);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Links and headings come from mdroots, blocks and inlines from ramble's
+/// own parse: every heading is a heading block, and every link with text
+/// sits in one inline range whose segments the renderer ties to it.
+#[test]
+fn mdroots_links_and_headings_fall_on_layout_boundaries() {
+    let root = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    let mut dirs = vec![std::path::PathBuf::from(root)];
+    while let Some(dir) = dirs.pop() {
+        for e in fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "md") {
+                files.push(p);
+            }
+        }
+    }
+    assert!(files.len() >= 9, "{files:?}");
+    let (mut links, mut headings) = (0, 0);
+    for path in files {
+        let doc = from_bytes(&fs::read(&path).unwrap()).unwrap();
+        let (mut blocks, mut ranges) = (Vec::new(), Vec::new());
+        walk(&doc.blocks, &mut blocks, &mut ranges);
+        for h in &doc.headings {
+            headings += 1;
+            assert!(
+                blocks.iter().any(
+                    |b| matches!(b, Block::Heading { level, range, .. } if *level == h.level && *range == h.range)
+                ),
+                "{path:?}: heading {h:?} is no heading block"
+            );
+        }
+        for (i, l) in doc.links.iter().enumerate() {
+            links += 1;
+            let inline = ranges
+                .iter()
+                .find(|r| r.start <= l.range.start && l.range.end <= r.end)
+                .unwrap_or_else(|| panic!("{path:?}: link {l:?} in no inline range"));
+            assert!(l.range.start <= l.text_range.start && l.text_range.end <= l.range.end);
+            if l.text_range.is_empty() {
+                continue;
+            }
+            let tied = inlines(&doc, inline.clone()).iter().any(|seg| match seg {
+                Inline::Text { style, .. } => style.link == Some(i),
+                Inline::Code { link, .. } | Inline::Math { link, .. } => *link == Some(i),
+                _ => false,
+            });
+            assert!(tied, "{path:?}: no drawn segment of link {l:?}");
+        }
+    }
+    assert!(
+        links >= 14 && headings >= 15,
+        "{links} links, {headings} headings"
+    );
+}
+
+#[test]
+fn mdroots_link_edge_cases() {
+    let dests = |src: &str| -> Vec<(LinkKind, String, String)> {
+        let doc = parse(src.into());
+        doc.links
+            .iter()
+            .map(|l| (l.kind.clone(), l.dest.clone(), s(&doc, &l.text_range)))
+            .collect()
+    };
+    let w = |d: &str, t: &str| (LinkKind::Wiki, d.to_owned(), t.to_owned());
+    let m = |d: &str, t: &str| (LinkKind::Markdown, d.to_owned(), t.to_owned());
+    // Reference definitions, code, comments, HTML, bare URLs and paths,
+    // tags, footnotes, images and embeds are not links.
+    assert_eq!(
+        dests(
+            "[r]: ./ref.md\n\n[x][r] `[[c]]` <!-- [[d]] --> <a href=\"h\">h</a> \
+             https://u.v ./p.md #tag [^1] ![i](i.png) ![[e]]\n\n[^1]: f\n"
+        ),
+        vec![m("./ref.md", "x")]
+    );
+    // An org-style `[[target][text]]` is a wikilink to `target`.
+    assert_eq!(dests("[[t][d]]"), vec![w("t", "d")]);
+    // A wikilink across lines is no link.
+    assert_eq!(dests("x [[a\nb]] y"), vec![]);
+    // Links inside an unfenced `key:: value` header stay links: ramble
+    // reads it as prose.
+    assert_eq!(
+        dests("key:: [x](y)\n\nbody [[w]]\n"),
+        vec![m("y", "x"), w("w", "w")]
+    );
+    // Links in fenced front matter are not.
+    assert_eq!(
+        dests("---\nk: \"[a](b)\"\n---\n[c](d)\n"),
+        vec![m("d", "c")]
+    );
+}
+
+#[test]
+fn explicit_heading_ids_are_slugs_and_text_slugs_avoid_them() {
+    let doc = parse("# A {#a}\n# A\n# a\n## A-1\n# B {#b}\n# B\n".into());
+    let slugs: Vec<_> = doc.headings.iter().map(|h| h.slug.as_str()).collect();
+    assert_eq!(slugs, ["a", "a-1", "a-2", "a-1-1", "b", "b-1"]);
+}

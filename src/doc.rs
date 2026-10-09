@@ -11,10 +11,10 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::path::PathBuf;
 
+use mdroots::syntax::{self as md, FrontmatterFormat, ParseOptions, markdown_options, slug};
 use pulldown_cmark::{
-    BlockQuoteKind, CodeBlockKind, Event, LinkType, MetadataBlockKind, Options, Parser, Tag, TagEnd,
+    BlockQuoteKind, CodeBlockKind, Event, MetadataBlockKind, Parser, Tag, TagEnd,
 };
-use unicode_general_category::{GeneralCategory, get_general_category};
 
 use crate::frontmatter::FmKind;
 
@@ -240,8 +240,7 @@ pub fn parse(mut source: String) -> Document {
     let events = events(&masked);
     let mut i = 0;
     let blocks = parse_blocks(&source, &events, &mut i);
-    let headings = collect_headings(&events);
-    let links = collect_links(&events);
+    let (headings, links) = semantic(&source);
     let code_spans = collect_code_spans(&source, &events);
     let (front_matter, front_matter_kind) = events
         .iter()
@@ -456,7 +455,7 @@ fn with_inline_events(src: &str, f: impl FnOnce(&[InlineEvent])) {
 
 fn inline_events(src: &str) -> Vec<InlineEvent> {
     let mut max_start = 0;
-    Parser::new_ext(src, options())
+    Parser::new_ext(src, markdown_options())
         .into_offset_iter()
         .filter_map(|(event, range)| {
             let ev = match event {
@@ -496,21 +495,10 @@ fn inline_events(src: &str) -> Vec<InlineEvent> {
 
 type Events<'a> = [(Event<'a>, Range<usize>)];
 
-fn options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_GFM
-        | Options::ENABLE_WIKILINKS
-        | Options::ENABLE_HEADING_ATTRIBUTES
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
-        | Options::ENABLE_MATH
-}
-
 fn events(src: &str) -> Vec<(Event<'_>, Range<usize>)> {
-    Parser::new_ext(src, options()).into_offset_iter().collect()
+    Parser::new_ext(src, markdown_options())
+        .into_offset_iter()
+        .collect()
 }
 
 fn link_index(doc: &Document, range: &Range<usize>) -> Option<usize> {
@@ -889,60 +877,6 @@ fn task_marker(events: &Events<'_>, i: usize) -> Option<bool> {
     })
 }
 
-fn collect_links(events: &Events<'_>) -> Vec<Link> {
-    let mut links = Vec::new();
-    // (index into links, visible text span so far)
-    let mut open: Vec<(usize, Option<Range<usize>>)> = Vec::new();
-    for (event, range) in events {
-        match event {
-            Event::Start(Tag::Link {
-                link_type,
-                dest_url,
-                ..
-            }) => {
-                let kind = if matches!(link_type, LinkType::WikiLink { .. }) {
-                    LinkKind::Wiki
-                } else {
-                    LinkKind::Markdown
-                };
-                open.push((links.len(), None));
-                links.push(Link {
-                    kind,
-                    dest: dest_url.to_string(),
-                    range: range.clone(),
-                    text_range: range.start..range.start,
-                    resolved: None,
-                    line: None,
-                });
-            }
-            Event::End(TagEnd::Link) => {
-                if let Some((idx, span)) = open.pop() {
-                    let link = &mut links[idx];
-                    link.text_range = span.unwrap_or_else(|| {
-                        // `[](x)`: empty text just inside the bracket(s).
-                        let at = (link.range.start + 1).min(link.range.end);
-                        at..at
-                    });
-                }
-            }
-            Event::Text(_)
-            | Event::Code(_)
-            | Event::InlineHtml(_)
-            | Event::InlineMath(_)
-            | Event::DisplayMath(_) => {
-                for (_, span) in &mut open {
-                    *span = Some(match span.take() {
-                        None => range.clone(),
-                        Some(s) => s.start.min(range.start)..s.end.max(range.end),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-    links
-}
-
 fn collect_code_spans(src: &str, events: &Events<'_>) -> Vec<CodeSpan> {
     let mut spans = Vec::new();
     // Open links and images: code inside them is not a candidate.
@@ -962,83 +896,69 @@ fn collect_code_spans(src: &str, events: &Events<'_>) -> Vec<CodeSpan> {
     spans
 }
 
-fn collect_headings(events: &Events<'_>) -> Vec<Heading> {
-    let mut headings = Vec::new();
-    let mut used: HashSet<String> = HashSet::new();
-    let mut current: Option<(u8, Option<String>, String, Range<usize>)> = None;
-    for (event, range) in events {
-        match event {
-            Event::Start(Tag::Heading { level, id, .. }) => {
-                current = Some((
-                    *level as u8,
-                    id.as_ref().map(|s| s.to_string()),
-                    String::new(),
-                    range.clone(),
-                ));
-            }
-            Event::End(TagEnd::Heading(_)) => {
-                if let Some((level, id, text, range)) = current.take() {
-                    let slug = match id {
-                        Some(id) => id,
-                        None => unique_slug(&slugify(&text), &used),
-                    };
-                    used.insert(slug.clone());
-                    headings.push(Heading {
-                        level,
-                        text,
-                        slug,
-                        range,
-                    });
-                }
-            }
-            Event::Text(t) | Event::Code(t) | Event::InlineMath(t) => {
-                if let Some((_, _, text, _)) = &mut current {
-                    text.push_str(t);
-                }
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                if let Some((_, _, text, _)) = &mut current {
-                    text.push(' ');
-                }
-            }
-            _ => {}
-        }
+/// Headings and links of `src` from [`mdroots::syntax`], in ramble's
+/// shapes. Both parses use [`markdown_options`] over the same text, so
+/// every range lines up with the layout parse.
+fn semantic(src: &str) -> (Vec<Heading>, Vec<Link>) {
+    let opts = ParseOptions::default();
+    let mut doc = md::parse_with(src, &opts);
+    let mut shift = 0;
+    if doc
+        .frontmatter()
+        .is_some_and(|f| !matches!(f.format, FrontmatterFormat::Yaml | FrontmatterFormat::Toml))
+    {
+        // An unfenced header (Logseq `key:: v`, MultiMarkdown, JSON) is
+        // prose to ramble, but mdroots drops the links in it. A leading
+        // blank line turns its detection off and changes nothing else
+        // here: there is no fenced front matter for it to hide.
+        doc = md::parse_with(&format!("\n{src}"), &opts);
+        shift = 1;
     }
-    headings
-}
+    let at = |r: &Range<usize>| r.start - shift..r.end - shift;
 
-/// Unicode combining mark (general category Mn, Mc or Me). github-slugger
-/// keeps these, e.g. the Devanagari virama or a decomposed accent.
-fn is_mark(c: char) -> bool {
-    matches!(
-        get_general_category(c),
-        GeneralCategory::NonspacingMark
-            | GeneralCategory::SpacingMark
-            | GeneralCategory::EnclosingMark
-    )
-}
-
-/// GitHub heading slug: lowercase, keep alphanumerics, combining marks,
-/// `-` and `_`, spaces to `-`, drop everything else.
-fn slugify(text: &str) -> String {
-    text.trim()
-        .chars()
-        .flat_map(char::to_lowercase)
-        .filter_map(|c| match c {
-            ' ' => Some('-'),
-            '-' | '_' => Some(c),
-            c if c.is_alphanumeric() || is_mark(c) => Some(c),
-            _ => None,
+    let mut used = HashSet::new();
+    let headings = doc
+        .headings()
+        .map(|h| Heading {
+            level: h.level,
+            text: h.text.clone(),
+            // An explicit `{#id}` is the slug as written; text slugs are
+            // deduplicated against it.
+            slug: match &h.id {
+                Some(id) => {
+                    used.insert(id.clone());
+                    id.clone()
+                }
+                None => slug::unique(&slug::github(&h.text), &mut used),
+            },
+            range: at(&h.range),
         })
-        .collect()
-}
+        .collect();
 
-fn unique_slug(base: &str, used: &HashSet<String>) -> String {
-    if !used.contains(base) {
-        return base.to_owned();
-    }
-    (1..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|s| !used.contains(s))
-        .expect("unbounded counter")
+    // mdroots reports a reference definition `[r]: dest` as a link too.
+    let defs: HashSet<Range<usize>> = doc.link_defs().map(|d| d.range.clone()).collect();
+    let links = doc
+        .links()
+        .filter(|l| matches!(l.context, md::Context::Prose | md::Context::Heading))
+        .filter(|l| !defs.contains(&l.range))
+        .filter_map(|l| {
+            let kind = match l.kind {
+                md::LinkKind::Markdown | md::LinkKind::Autolink | md::LinkKind::Reference => {
+                    LinkKind::Markdown
+                }
+                // `[[t][d]]` is a wikilink to pulldown; mdroots splits it.
+                md::LinkKind::Wiki | md::LinkKind::Org => LinkKind::Wiki,
+                _ => return None,
+            };
+            Some(Link {
+                kind,
+                dest: l.target.raw.clone(),
+                range: at(&l.range),
+                text_range: at(&l.text_range),
+                resolved: None,
+                line: None,
+            })
+        })
+        .collect();
+    (headings, links)
 }
