@@ -977,6 +977,62 @@ fn leader_rr_keeps_the_batch_when_the_clipboard_fails() {
     assert_eq!(app.review_count(), 1);
 }
 
+#[test]
+fn leader_rr_keeps_a_comment_added_during_the_hand_back() {
+    // Another handle adds a comment after ramble's last poll, while the
+    // review is being handed back: it was not sent, so it stays.
+    struct AddsOne(PathBuf, PathBuf, Rc<RefCell<String>>);
+    impl ramble::app::Clipboard for AddsOne {
+        fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+            *self.2.borrow_mut() = text.to_string();
+            Review::open(&self.0, &self.1)?.add(Comment::on_file("doc.md", 9..=9, "x", "late"))?;
+            Ok(())
+        }
+    }
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let path = repo.write("doc.md", DOC);
+    let copied = Rc::new(RefCell::new(String::new()));
+    let clip = AddsOne(repo.cache.clone(), repo.root.clone(), copied.clone());
+    let mut app = repo
+        .app(StartTarget::File(path), send_config(&["false"]))
+        .with_clipboard(clip);
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "Review copied to clipboard (1 comments)");
+    assert!(!copied.borrow().contains("late"), "not sent");
+    let left = repo.comments();
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert_eq!(left[0].body, "late");
+    assert_eq!(app.review_count(), 1);
+}
+
+#[test]
+fn leader_rr_sends_a_comment_added_since_the_last_poll() {
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let path = repo.write("doc.md", DOC);
+    let copied = Rc::new(RefCell::new(String::new()));
+    struct Rec(Rc<RefCell<String>>);
+    impl ramble::app::Clipboard for Rec {
+        fn copy(&mut self, text: &str) -> anyhow::Result<()> {
+            *self.0.borrow_mut() = text.to_string();
+            Ok(())
+        }
+    }
+    let mut app = repo
+        .app(StartTarget::File(path), send_config(&["false"]))
+        .with_clipboard(Rec(copied.clone()));
+    repo.review()
+        .add(Comment::on_file("doc.md", 9..=9, "x", "unpolled"))
+        .unwrap();
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "Review copied to clipboard (2 comments)");
+    assert!(copied.borrow().contains("unpolled"));
+    assert!(repo.comments().is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn leader_rr_says_so_when_the_batch_cannot_be_cleared() {

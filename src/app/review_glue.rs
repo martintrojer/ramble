@@ -494,14 +494,23 @@ impl App {
         }
     }
 
-    /// The hand-back (TUI suspended): export the batch, pipe it to
-    /// `[send] command`, falling back to the clipboard, then clear the
-    /// batch. A failed hand-back keeps the batch.
+    /// The hand-back (TUI suspended): re-read and export the batch, pipe it
+    /// to `[send] command`, falling back to the clipboard, then remove the
+    /// exported comments. Comments added meanwhile stay in the batch; a
+    /// failed hand-back keeps all of it.
     pub(super) fn run_review_send(&mut self) {
-        let Some(store) = &self.review.store else {
+        let Some(store) = &mut self.review.store else {
             return;
         };
-        let n = store.comments().len();
+        if let Err(e) = store.reload() {
+            return self.set_status(format!("Review not sent: {e}"));
+        }
+        let ids: Vec<u64> = store.comments().iter().map(|c| c.id).collect();
+        if ids.is_empty() {
+            self.set_status(NOTHING_TO_SEND);
+            return self.review_refresh_markers();
+        }
+        let n = ids.len();
         let md = store.to_markdown(self.config.send.preamble.as_deref());
         let root = store.root().to_path_buf();
         let clipboard = &mut self.clipboard;
@@ -515,9 +524,9 @@ impl App {
         let Some(store) = &mut self.review.store else {
             return;
         };
-        let msg = match store.clear() {
-            Ok(()) if how == "sent" => format!("Review sent ({n} comments)"),
-            Ok(()) => format!("Review copied to clipboard ({n} comments)"),
+        let msg = match store.remove_all(&ids) {
+            Ok(_) if how == "sent" => format!("Review sent ({n} comments)"),
+            Ok(_) => format!("Review copied to clipboard ({n} comments)"),
             Err(e) => format!(
                 "Review {how}, but the batch wasn't cleared: {e} (sending again repeats it)"
             ),
