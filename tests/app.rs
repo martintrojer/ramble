@@ -1302,6 +1302,15 @@ use std::time::{Duration, Instant};
 /// `b.md`, and an app whose only server is fake-lsp running the script
 /// `script(root)` builds. Returns the log of every message fake-lsp read.
 fn lsp_app(source: &str, script: impl FnOnce(&Path) -> Value) -> (TempDir, App, PathBuf) {
+    lsp_app_with(source, script, |_, _| {})
+}
+
+/// `lsp_app`, with `tweak(root, options)` run before the app starts.
+fn lsp_app_with(
+    source: &str,
+    script: impl FnOnce(&Path) -> Value,
+    tweak: impl FnOnce(&Path, &mut StartOptions),
+) -> (TempDir, App, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     std::fs::write(root.join(".fake"), "").unwrap();
@@ -1321,6 +1330,7 @@ fn lsp_app(source: &str, script: impl FnOnce(&Path) -> Value) -> (TempDir, App, 
         root_markers: vec![".fake".into()],
         position_encoding: None,
     }];
+    tweak(&root, &mut o);
     let app = App::new(o, (COLS, ROWS)).unwrap();
     (dir, app, log)
 }
@@ -2796,4 +2806,37 @@ fn ctrl_l_on_stdin_does_not_reread() {
     let mut app = App::new(o, (COLS * 2, ROWS)).unwrap();
     app.handle_key(ctrl('l'));
     assert_eq!(app.status(), "Refreshed tree; stdin page unchanged");
+}
+
+#[test]
+fn k_on_a_comment_is_not_replaced_by_a_late_link_hover() {
+    let script = |_: &Path| {
+        json!([init_step(),
+               {"expect": "textDocument/hover", "as": "old"},
+               {"sleep_ms": 300},
+               {"respond": "old", "result": {
+                   "contents": {"kind": "markdown", "value": "OLD LINK HOVER"}}}])
+    };
+    // The notebook is also a repo whose review batch comments line 5.
+    let review = |root: &Path, o: &mut StartOptions| {
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let cache = root.join("cache");
+        let c = debrief_review::Comment::on_file("a.md", 5..=5, "beta", "COMMENT MUST WIN");
+        debrief_review::Review::open(&cache, root)
+            .unwrap()
+            .add(c)
+            .unwrap();
+        o.review_cache = Some(cache);
+    };
+    let (_dir, mut app, log) = lsp_app_with("# A\n\n[b](b.md)\n\nbeta\n", script, review);
+    running(&mut app);
+    goto_text(&mut app, "b");
+    keys(&mut app, "K");
+    wait_logged(&log, "textDocument/hover", 1);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "K");
+    let comment = Some("● line 5\nCOMMENT MUST WIN");
+    assert_eq!(app.hover_popup(), comment);
+    pump_for(&mut app, Duration::from_millis(800));
+    assert_eq!(app.hover_popup(), comment, "late link hover dropped");
 }

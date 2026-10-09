@@ -580,6 +580,8 @@ impl App {
     /// link preview.
     pub(super) fn hover(&mut self) {
         if let Some(text) = self.review_hover_text() {
+            // A late reply to an earlier link hover must not replace these.
+            self.lsp.requests.retain(|r| r.kind != ReqKind::Hover);
             self.lsp.hover = Some(text);
             return;
         }
