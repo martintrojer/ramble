@@ -575,3 +575,34 @@ fn a_lazy_root_walks_files_for_notes_and_marks_other_pickers_partial() {
     assert_eq!(title, "Backlinks (partial)");
     assert_eq!(items, [row("Beta", "d1/b.md:3")]);
 }
+
+#[test]
+fn a_plain_folder_root_walks_files_for_notes_and_marks_other_pickers_partial() {
+    // No markers: mdroots may root the page at its own folder (loose), so
+    // its lists can miss notes in sibling folders.
+    let tree = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let root = tree.path();
+    std::fs::create_dir_all(root.join("d1")).unwrap();
+    std::fs::create_dir_all(root.join("d2")).unwrap();
+    write(
+        &root.join("d1/a.md"),
+        "---\ntags: [x]\n---\n# Alpha\n\nneedle\n",
+    );
+    write(&root.join("d2/b.md"), "# Beta\n\nneedle\n");
+    let mut app = open(root, cache.path(), "d1/a.md");
+    leader(&mut app, "zf");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Notes");
+    assert_eq!(items, [row("a", "d1/a.md"), row("b", "d2/b.md")]);
+    esc(&mut app);
+    leader(&mut app, "zz");
+    loaded(&mut app);
+    assert_eq!(rows(&app).0, "Tags (partial)");
+    esc(&mut app);
+    keys(&mut app, ":Search needle");
+    enter(&mut app);
+    loaded(&mut app);
+    assert_eq!(rows(&app).0, "Search: needle (partial)");
+}

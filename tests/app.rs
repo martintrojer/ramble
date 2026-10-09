@@ -2029,9 +2029,11 @@ fn notes_without_a_server_come_from_mdroots_filter_and_open() {
     // No server selected: mdroots serves the page, so the notes picker is
     // asynchronous, labels are titles, and the order is newest first.
     // Every note exists before the app starts: an in-memory mdroots
-    // workspace does not watch for new files.
+    // workspace does not watch for new files. A `.zk` marker makes the
+    // folder a complete mdroots root (a plain folder walks files instead).
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".zk")).unwrap();
     for (f, text, secs) in [
         ("a.md", a_source(), 1_000),
         ("b.md", b_source(), 3_000),

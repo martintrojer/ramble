@@ -31,9 +31,10 @@
 //! root workspace of the page (`for_path`: the cached one, or opened then;
 //! on the one worker thread that is the open the page's request started).
 //! The worker builds the picker [`Item`]s; the picker drops an answer for
-//! another seq. A workspace that indexes a working set only (lazy roots;
-//! single-file) answers search, tags and backlinks as a partial list (the
-//! picker title says so); the notes picker walks the tree root instead.
+//! another seq. Only marker and VCS roots are complete. Any other root
+//! (loose at the page's folder, lazy working set, single file, ...) answers
+//! search, tags and backlinks as a partial list (the picker title says so);
+//! the notes picker walks the tree root instead.
 //!
 //! Limitation: the worker is one thread with no per-call cancellation, so
 //! a slow `for_path` (a big root's first index) delays every later request,
@@ -50,7 +51,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use mdroots::{
-    Cancel, DocLink, Freshness, IndexMode, LinkStatus, NoteSummary, RootMode, Workspace, Workspaces,
+    Cancel, DocLink, IndexMode, LinkStatus, NoteSummary, RootMode, Workspace, Workspaces,
 };
 
 use super::App;
@@ -392,6 +393,13 @@ fn answer_page(
 /// Most hits a search lists.
 const SEARCH_LIMIT: usize = 200;
 
+/// Whether a root of this mode indexes every note under it. Loose roots may
+/// sit at the page's folder, lazy ones index a working set, and a single
+/// file is just the page.
+fn is_complete(mode: RootMode) -> bool {
+    matches!(mode, RootMode::Marker | RootMode::Vcs)
+}
+
 /// A picker's items from the root workspace of the page (opened here if
 /// the page's own request has not opened it). Shapes match the zk
 /// adapter's (label = title, detail = path relative to the root) except
@@ -404,7 +412,7 @@ fn picker_answer(
     let path = canonical(&req.path);
     let ws = workspaces.for_path(&path).map_err(|e| e.to_string())?;
     let root = ws.root().path;
-    let partial = ws.freshness() == Freshness::Lazy;
+    let partial = !is_complete(ws.root().mode);
     let rel = |p: &Path| p.strip_prefix(&root).unwrap_or(p).display().to_string();
     let note_items = |notes: Vec<NoteSummary>| -> Vec<Item> {
         newest_first(notes)
