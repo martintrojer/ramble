@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail};
+use debrief_review::Kind;
 use serde::Deserialize;
 
 /// The commented default config written by `--init-config`.
@@ -23,6 +24,9 @@ pub struct Config {
     pub review: ReviewConfig,
     pub send: SendConfig,
     pub mouse: MouseConfig,
+    /// Problems the file had that didn't stop it loading (dropped comment
+    /// kinds); the app shows them in the status line at start.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +240,9 @@ pub struct Launcher {
 pub struct ReviewConfig {
     /// Comment mode (`c`, `cc`) and markers from the debrief-review batch.
     pub enabled: bool,
+    /// Kinds Tab cycles through in the comment prompt, in order; the
+    /// export's legend defines them. Omitted: debrief-review's built-ins.
+    pub kinds: Vec<Kind>,
 }
 
 /// How `<leader>rr` hands the review batch back (shared in meaning with
@@ -294,9 +301,13 @@ impl Default for Config {
                 &["${editor}", "+${line}", "${file}"],
                 false,
             )],
-            review: ReviewConfig { enabled: true },
+            review: ReviewConfig {
+                enabled: true,
+                kinds: debrief_review::builtin_kinds(),
+            },
             send: SendConfig::default(),
             mouse: MouseConfig { enabled: true },
+            warnings: Vec::new(),
         }
     }
 }
@@ -374,6 +385,14 @@ struct RawLauncher {
 #[serde(deny_unknown_fields)]
 struct RawReview {
     enabled: Option<bool>,
+    kinds: Option<Vec<RawKind>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawKind {
+    id: String,
+    definition: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -390,6 +409,26 @@ fn line_of(src: &str, at: usize) -> usize {
         .filter(|&&b| b == b'\n')
         .count()
         + 1
+}
+
+/// `[review] kinds` with ids trimmed and lowercased; an empty or repeated
+/// id is dropped with a warning (tuicr's rule).
+fn clean_kinds(kinds: Vec<RawKind>, warnings: &mut Vec<String>) -> Vec<Kind> {
+    let mut out: Vec<Kind> = Vec::new();
+    for k in kinds {
+        let id = k.id.trim().to_lowercase();
+        if id.is_empty() {
+            warnings.push("[review] kinds: dropped a kind with an empty id".into());
+        } else if out.iter().any(|o| o.id == id) {
+            warnings.push(format!("[review] kinds: dropped duplicate kind `{id}`"));
+        } else {
+            out.push(Kind {
+                id,
+                definition: k.definition,
+            });
+        }
+    }
+    out
 }
 
 fn set<T>(slot: &mut T, v: Option<T>) {
@@ -462,6 +501,9 @@ impl Config {
         }
         if let Some(r) = raw.review {
             set(&mut c.review.enabled, r.enabled);
+            if let Some(kinds) = r.kinds {
+                c.review.kinds = clean_kinds(kinds, &mut c.warnings);
+            }
         }
         if let Some(s) = raw.send {
             set(&mut c.send.command, s.command);

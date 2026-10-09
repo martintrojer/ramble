@@ -283,6 +283,43 @@ fn mouse_can_be_turned_off() {
     assert!(err_str("[mouse]\nwheel = 3\n").contains("unknown field"));
 }
 
+fn kind_ids(c: &Config) -> Vec<&str> {
+    c.review.kinds.iter().map(|k| k.id.as_str()).collect()
+}
+
+#[test]
+fn review_kinds_default_to_the_builtins() {
+    let c = load_str("[review]\nenabled = true\n").unwrap();
+    assert_eq!(c.review.kinds, debrief_review::builtin_kinds());
+    assert_eq!(kind_ids(&c), ["issue", "suggestion", "question", "nit"]);
+}
+
+#[test]
+fn review_kinds_replace_the_builtins_and_empty_means_untyped() {
+    let c = load_str(
+        "[review]\nkinds = [\n  { id = \" Praise \", definition = \"Keep it.\" },\n  { id = \"issue\" },\n]\n",
+    )
+    .unwrap();
+    assert_eq!(kind_ids(&c), ["praise", "issue"]);
+    assert_eq!(c.review.kinds[0].definition.as_deref(), Some("Keep it."));
+    assert_eq!(c.review.kinds[1].definition, None);
+    assert!(c.warnings.is_empty());
+    let c = load_str("[review]\nkinds = []\n").unwrap();
+    assert!(c.review.kinds.is_empty());
+}
+
+#[test]
+fn review_kinds_drop_empty_and_duplicate_ids_with_a_warning() {
+    let c = load_str("[review]\nkinds = [{ id = \"nit\" }, { id = \"  \" }, { id = \"NIT\" }]\n")
+        .unwrap();
+    assert_eq!(kind_ids(&c), ["nit"]);
+    assert_eq!(c.warnings.len(), 2, "{:?}", c.warnings);
+    assert!(c.warnings[1].contains("duplicate kind `nit`"));
+    assert!(
+        err_str("[review]\nkinds = [{ id = \"a\", color = \"red\" }]\n").contains("unknown field")
+    );
+}
+
 #[test]
 fn write_default_creates_dirs_and_refuses_overwrite() {
     let dir = tempfile::tempdir().unwrap();

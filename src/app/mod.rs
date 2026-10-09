@@ -338,8 +338,15 @@ impl App {
         app.sidebar_relayout(false);
         app.sidebar_fit();
         app.sidebar_focus_tree();
-        if !key_errors.is_empty() {
-            app.set_status(key_errors.join("; "));
+        let problems: Vec<String> = app
+            .config
+            .warnings
+            .iter()
+            .cloned()
+            .chain(key_errors)
+            .collect();
+        if !problems.is_empty() {
+            app.set_status(problems.join("; "));
         }
         Ok(app)
     }

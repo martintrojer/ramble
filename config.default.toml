@@ -63,8 +63,18 @@
 
 ## ---------------------------------------------------------------------------
 ## Comments on source lines, kept in debrief-review's batch for the repo.
+## Tab in the comment prompt cycles untyped -> kinds in order -> untyped.
+## A typed comment exports as "## Item N [ISSUE]", with a legend of the
+## kinds used and their definitions. A list replaces the built-ins below
+## (ids are lowercased); `kinds = []` leaves every comment untyped.
 # [review]
 # enabled = true  # comment mode (c, cc) and markers; comments go to debrief-review's batch
+# kinds = [
+#   { id = "issue", definition = "Something is wrong. Fix it." },
+#   { id = "suggestion", definition = "A better way to do it. Apply it, or say in your reply why not." },
+#   { id = "question", definition = "The reviewer wants an answer. Answer in your reply; change code only if the answer shows a problem." },
+#   { id = "nit", definition = "Minor or cosmetic. Fix it if it's cheap." },
+# ]
 
 ## ---------------------------------------------------------------------------
 ## <leader>rr sends the batch: the markdown goes to `command` on stdin (with
