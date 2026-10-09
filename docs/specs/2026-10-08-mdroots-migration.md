@@ -1,13 +1,14 @@
 # Plan: ramble is mdroots-first
 
-Status: plan, revised 2026-10-08 after the user's direction (Q1–Q5 below
-agreed). No code work yet. Step S1 can start now. S2 onward wait for
-`mdroots-core` and `mdroots-resolve`.
-Related: mdroots design in `~/hacking/mdroots/docs/`, especially
-`specs/library-and-editors.md`, `specs/api-and-scheduling.md` (embedder API),
-`specs/roots-and-instances.md` (root markers),
-`decisions/0007-in-process-only-single-writer.md` (no daemon), and the
-code-donation note `research/ramble-code-donation.md`.
+Status: plan, revised 2026-10-09 against **mdroots 0.2.0 on crates.io**. No
+ramble code work yet. S1 and S2 can start now; S0 has two front matter fixes
+left to port (below).
+Related: the mdroots repo (`~/hacking/mdroots`, published as `mdroots` and
+`mdroots-cli`): `docs/specs/library.md` (public API, embedder additions),
+`docs/specs/roots.md` (root discovery and markers), `docs/DECISIONS.md` D3
+(in-process, one writer per root, no daemon), `docs/ROADMAP.md` (what mdroots
+still lacks), and `docs/research/ramble.md` (code ported from ramble, what
+ramble deletes).
 
 ## Direction
 
@@ -31,23 +32,23 @@ on in config. Every decision optimises for mdroots:
 
 | # | Question | Decision | Why |
 |---|---|---|---|
-| Q1 | ramble's own `LinkSource` trait, or mdroots' types directly? | **mdroots' types directly** (`mdroots::Workspaces`, `mdroots_syntax::Link`, `Frontmatter`, …). The optional third-party LSP backend translates LSP replies into those types. | No adapter on the main path. The translation cost lands on the rarely used path. |
-| Q2 | Does mdroots own block structure too? | **No, only the semantic elements:** links, headings, tags, code spans, front matter. ramble keeps a slim pulldown-cmark layout parse (paragraphs, lists, tables, code blocks, inline styles) for the renderer. | Block layout is presentation, the srcmap depends on it, and mdroots' other users don't need it. Both use pulldown-cmark 0.13 with `mdroots_syntax::markdown_options()`, so ranges line up. A test checks this. |
-| Q3 | Start before `mdroots-core` exists? | **Yes.** A path dependency on `~/hacking/mdroots/crates/mdroots-syntax` now, a git or crates.io dependency once mdroots publishes. The syntax switch (S1) goes first. | It deletes `frontmatter.rs` and the link and heading collection in `doc.rs` immediately. |
-| Q4 | Does this build write mdroots' missing API? | **No.** mdroots designs its own API from the needs listed here. ramble adopts each call as it lands. The exception is code ramble donates (front matter fixes, code paths, `nav::resolve` rules): it is ported into mdroots by the same author, with its tests, before ramble deletes its copy. | mdroots has its own specs and review. |
-| Q5 | Cache when browsing a plain folder? | **Write the SQLite cache only for notebook or repo roots** (mdroots' root markers: `.zk`, `.git`, `.obsidian`, `.marksman.toml`, …). Elsewhere, `write_cache(false)` gives an in-memory index. | `ramble ~/Downloads` leaves nothing behind, and a notebook gets the cache's speed. |
+| Q1 | ramble's own `LinkSource` trait, or mdroots' types directly? | **mdroots' types directly** (`mdroots::{Workspaces, Workspace, DocLink, Backlink, NoteSummary, Preview, Hit}`, `mdroots::syntax::{Document, Link, Frontmatter}`). The optional third-party LSP backend translates LSP replies into those types. | No adapter on the main path. The translation cost lands on the rarely used path. |
+| Q2 | Does mdroots own block structure too? | **No, only the semantic elements:** links, headings, tags, code spans, front matter. ramble keeps a slim pulldown-cmark layout parse (paragraphs, lists, tables, code blocks, inline styles) for the renderer. | Block layout is presentation, the srcmap depends on it, and mdroots' other users don't need it. Both use pulldown-cmark 0.13 with `mdroots::syntax::markdown_options()`, so ranges line up. A test checks this. |
+| Q3 | Dependency | **`mdroots = "0.2"` from crates.io** (the facade re-exports the parser as `mdroots::syntax`). Depend only on `mdroots`, never on the internal `mdroots-*` crates: they are pinned by the facade and have no stability promise. For work on both repos at once, a local `[patch.crates-io]` pointing at `~/hacking/mdroots/crates/mdroots`, never committed. | Published, so the old "path dependency, unpushed" rule no longer applies. |
+| Q4 | Does this build write mdroots' missing API? | **No.** mdroots designs its own API from the needs listed here (they are in its `ROADMAP.md`). ramble adopts each call as it lands. The exception is code ramble donates (front matter fixes, code-path search dirs): it is ported into mdroots by the same author, with its tests, before ramble deletes its copy. | mdroots has its own specs and review. |
+| Q5 | Cache when browsing a plain folder? | **mdroots decides; ramble passes no policy.** `Workspace::open_for` writes the per-root cache only for a discovered root (marker, VCS or accepted loose root) and never for single-file or `open_at` workspaces. For `ramble ~/Downloads` and other denied locations (home, `~/Downloads`, `/tmp`, ...) mdroots runs single-file in memory. A ramble flag can force `IndexMode::Memory`. | mdroots already has the root rules and the denylist; duplicating them in ramble would drift. |
 
 ## What ramble deletes, and what replaces it
 
-| ramble today (main `e24c3b88`) | After | Lines |
+| ramble today (main `cf0dcb8`) | After | Lines |
 |---|---|---|
-| `src/frontmatter.rs` (YAML/TOML display parsing) | `mdroots_syntax::Frontmatter` / `Value`. ramble keeps only the fold UI (marker row, `za`, table layout) | −1053 |
-| `src/doc.rs` link, heading, slug, code-span and front-matter collection, `from_bytes` | `mdroots_syntax::parse_bytes` → `Document::{links, headings, tags, frontmatter}`. ramble's `doc.rs` keeps only blocks and inlines for layout | about −500 of 1044 |
-| `src/nav.rs::resolve` (anchors, schemes, `file:`, percent-decoding, extensionless `.md`) | mdroots resolution: `DocLink.target`, `anchor`, `line`. ramble keeps only the dispatch (open page, jump to heading, open browser, open editor) | about −120 of 175 |
-| `src/app/codepath.rs` (inline code naming a file, `:LINE`) | mdroots code-mention links. ramble passes its search dirs (page dir, VCS root, tree root) per call | about −150 of 181 |
+| `src/frontmatter.rs` (YAML/TOML display parsing) | `mdroots::syntax::Frontmatter` / `Value` (and `Workspace::frontmatter_range` for the region). ramble keeps only the fold UI (marker row, `za`, table layout) | −1053 |
+| `src/doc.rs` link, heading, slug, code-span and front-matter collection, `from_bytes` | `mdroots::syntax::parse_bytes` → `Document::{links, headings, tags, frontmatter}`. ramble's `doc.rs` keeps only blocks and inlines for layout | about −500 of 1044 |
+| `src/nav.rs::resolve` (anchors, schemes, `file:`, percent-decoding, extensionless `.md`) | `Workspace::document_links` (`DocLink.target`, `anchor`, `line`, `status`) and `Workspace::goto(path, offset)` (target plus heading range). ramble keeps only the dispatch (open page, jump to heading, open browser, open editor) | about −120 of 175 |
+| `src/app/codepath.rs` (inline code naming a file, `:LINE`) | mdroots code-mention links (`LinkKind::CodeMention`, `DocLink.line`). Gap: extra search dirs (page dir, VCS root, tree root) in `Options`; until then mdroots resolves code mentions against the root only | about −150 of 181 |
 | `src/lsp/` (JSON-RPC client, framing, positions, URIs) | moves behind the optional backend (S4); not on the main path | 810 moved; later reduced |
 | `src/app/lsp_glue.rs` (spawn, handshake, `zk.index`, didOpen, documentLink, diagnostics) | `mdroots_glue.rs` (~150 lines): one `Workspaces`, one worker thread, the existing event channel. The LSP glue shrinks into the optional backend | −702, +150 |
-| `src/notebook.rs` (zk.list / zk.tag.list adapters, notes walk fallback, backlink labels) | thin calls: `notes`, `full_text`, `tags`, `notes_with_tag`, `backlinks` | about −220 of 276 |
+| `src/notebook.rs` (zk.list / zk.tag.list adapters, notes walk fallback, backlink labels) | thin calls: `notes`, `full_text`, `tags`, `backlinks`; notes by tag filtered from `notes()` until `notes_with_tag` exists | about −220 of 276 |
 | `[[lsp.server]]` config default list | default: mdroots, no config. `[[lsp.server]]` remains only to turn on a third-party backend | about −40 |
 | `fake-lsp` test binary, `tests/lsp.rs`, `lsp_zk_e2e.rs`, `marksman_e2e.rs` | kept only as tests of the optional backend (S4) | moved |
 
@@ -56,8 +57,8 @@ with no runtime dependency on zk or marksman. The optional backend keeps
 roughly 1,000 lines of LSP code until there is a reason to shrink or drop it.
 
 Kept unchanged: `render.rs`, sidebar, pickers' UI, motions, visual, mouse,
-clue, help, launchers, review (tuicr), watch (it also calls
-`touched(path)`), marks, config for everything else.
+clue, help, launchers, review (tuicr), watch (see live reload below),
+marks, config for everything else.
 
 ## Target design
 
@@ -66,81 +67,99 @@ ramble UI loop ── mpsc ──▶ worker thread ── mdroots::Workspaces (i
                                          └─ optional: third-party LSP backend, translating replies into mdroots types
 ```
 
-- **In-process** (mdroots ADR 0007). ramble is a read-only peer. When it is
-  the only mdroots process on a root it holds the flock and writes the cache.
-  Nothing in ramble depends on which role it has.
+- **In-process** (mdroots D3). When ramble is the only mdroots process on a
+  root it holds the root's flock and writes the cache (`Workspace::role()` is
+  `Reconciler`); otherwise it is a peer that never writes. Nothing in ramble
+  depends on which role it has.
 - **The worker thread** owns `Workspaces`. It runs blocking calls and sends
   results back on the existing event channel. Stale replies are dropped by
-  `(page_id<<32)|version`, and a `Cancel` token stops abandoned work. Pushed
-  events (`LinksChanged`, `Freshness`, `Progress`) come from `subscribe()`.
+  `(page_id<<32)|version`, and a `Cancel` token stops abandoned work.
+- **Open without blocking.** For the first page of a root, the worker serves
+  `Workspace::open_single(page)` at once (no discovery, no cache) and calls
+  `Workspaces::for_path(page)` in the background, then swaps; this is what
+  `mdroots lsp` does. `Workspaces::get(page)` checks for a ready workspace
+  without opening one.
+- **Live reload.** ramble keeps its own watcher (`src/app/watch.rs`, for
+  re-rendering). On a change it calls `Workspace::refresh_paths(&[path])` so
+  links and backlinks follow. Alternatively, `Options::watch(true)` lets
+  mdroots watch the root itself and `Workspace::subscribe()` delivers the
+  changed paths; pick one, not both. (`subscribe` sends paths only; typed
+  events are an mdroots gap.)
 - **Byte offsets everywhere.** No position encodings on the main path. The
   zk utf-32 quirk is the optional backend's problem.
 - **Status line:** the footer names the backend in the same slot and format
   as today's `zk ●` / `marksman ●` label (`App::lsp_label`,
-  `src/app/lsp_glue.rs:677`):
-  - `mdroots ●` when the index for the page's root is ready;
-  - `mdroots ○` while it is opening or catching up (`Event::Progress` or
-    `Freshness` not current);
+  `src/app/lsp_glue.rs`):
+  - `mdroots ●` when the page is served by its root's workspace (the
+    background open finished; `Workspace::freshness()` then says `Fresh`, or
+    `Lazy` for a lazy root);
+  - `mdroots ○` while the background open runs (the page is served by its
+    `open_single` workspace);
   - the same spinner after a slow request as today;
   - `—` only when no backend serves the page.
 
   With a third-party backend configured, its own name shows (`zk ●`,
-  `marksman ●`) exactly as now. The label never names both.
-  The root mode (walk, git-index, lazy, memory) is not in the footer. It
-  goes in `g?` help or a later `:Status` command, so the footer stays as
-  short as today. A test asserts the footer shows `mdroots ●` for a page in
-  `tests/fixtures/zk` with no `[[lsp.server]]` configured.
-- **Read-only.** Neither ramble nor mdroots writes user files. The cache is
-  written per Q5.
-- **No tokio, ever** (ramble spec Q22). mdroots' core is synchronous.
+  `marksman ●`) exactly as now. The label never names both. The root mode
+  (`Workspace::root()`: mode, reason) goes in `g?` help or a later
+  `:Status` command, so the footer stays as short as today. A test asserts
+  the footer shows `mdroots ●` for a page in `tests/fixtures/zk` with no
+  `[[lsp.server]]` configured.
+- **Read-only.** Neither ramble nor mdroots writes user files. Only the
+  mdroots cache dir is written (Q5); tests set `Options::cache_dir` to a
+  temp dir or use `IndexMode::Memory`, never the real cache.
+- **No tokio, ever** (ramble spec Q22). mdroots is synchronous.
 
 ## API ramble needs from mdroots
 
-ramble states its needs; mdroots designs the calls (Q4). *gap* means not in
-the mdroots library spec yet.
+ramble states its needs; mdroots designs the calls (Q4). Status at mdroots
+0.2.0.
 
-| ramble feature | Needed from mdroots | Status |
+| ramble feature | mdroots 0.2.0 | Status |
 |---|---|---|
-| render-time links, headings, tags, front matter | `mdroots_syntax::parse_bytes(bytes, opts) -> Document` with `links()`, `headings()`, `tags()`, `frontmatter()`; `markdown_options()` | **exists** in `mdroots-syntax`; front matter needs ramble's last fixes first (S0) |
-| link targets and broken-link dimming for the page | `document_links(path, text?) -> Vec<DocLink{range, text_range, kind, context, target, anchor, line, status}>` | gap (the spec has single-link `resolve`) |
-| `gd` / `Enter` | `DocLink.target` + `anchor` + `line` | gap (same call) |
-| `K` preview | `preview(target, max_lines) -> {title, summary, frontmatter, excerpt}` | gap |
-| backlinks picker | `backlinks(path) -> Vec<{from, from_title, range, line, in_code}>` | partial (title, line and `in_code` missing) |
-| notes picker | `notes(root) -> Vec<{path, title, tags, modified}>`, unranked (ramble filters with nucleo) | gap (the spec has ranked `search_notes`) |
-| full-text search | `full_text(root, q, n) -> Vec<{path, line, snippet}>` | partial (snippet and line missing) |
-| tags, notes by tag | `tags(root)`, `notes_with_tag(root, tag)` | partial (`notes_with_tag` missing) |
-| code-path links | code-mention links with `:LINE[:COL]` and caller-supplied search dirs | gap; ramble donates the code (S0) |
-| live reload | `touched(path)`; `Event::LinksChanged{path}` | gap |
-| status label | `backend()`, `Event::Freshness`, `Event::BackendLost` | gap |
-| cache policy (Q5) | root-marker detection exposed (`is_project_root(path)` or the root mode), `write_cache(bool)` per root | partial |
+| render-time links, headings, tags, front matter | `mdroots::syntax::parse_bytes(bytes, opts) -> Option<Document>` with `links()`, `headings()`, `tags()`, `frontmatter()`; `markdown_options()` | **exists**; two front matter fixes still to port (S0) |
+| link targets and broken-link dimming for the page | `Workspace::document_links(path) -> Vec<DocLink { range, text_range, kind, context, target, anchor, line, status }>`; current text set with `set_overlay` | **exists** |
+| `gd` / `Enter` | `Workspace::goto(path, offset) -> Option<Goto { targets, heading, line }>` | **exists** |
+| `K` preview | `Workspace::preview(target, max_lines) -> Preview { title, frontmatter, excerpt }` | **exists**; `summary` is an mdroots gap (ramble can show the excerpt) |
+| backlinks picker | `Workspace::backlinks(path) -> Vec<Backlink { from, from_title, range, line, in_code }>` | **exists** |
+| notes picker | `Workspace::notes() -> Vec<NoteSummary { path, title, tags }>`, unranked (ramble filters with nucleo); `search_notes` if ranked is wanted | **exists**; `modified` is an mdroots gap (ramble can `stat`) |
+| full-text search | `Workspace::full_text(q, limit, cancel) -> Vec<Hit { path, line, snippet }>` (the index for a cache writer, a scan otherwise) | **exists** |
+| tags, notes by tag | `Workspace::tags() -> Vec<(tag, count)>`; filter `notes()` by `NoteSummary.tags` | **exists**; `notes_with_tag` is an mdroots gap (convenience only) |
+| code-path links | `DocLink { kind: CodeMention, target, line }` | **partial**: caller-supplied search dirs (page dir, VCS root, tree root) are an mdroots gap; ramble donates `code_path_dirs` |
+| live reload | `Workspace::refresh_paths(paths, cancel)`, or `Options::watch(true)` + `subscribe()` | **exists** (paths only; typed events are a gap) |
+| status label | `Workspace::freshness()`, `role()`, `root()`; `Workspaces::get` | **exists** (derive the label as in Target design) |
+| cache policy (Q5) | built into `open_for`; `IndexMode::Memory` to force no cache | **exists** |
+| open a page fast in a big root | `Workspace::open_single` + background `Workspaces::for_path` | **exists** |
 
 ## Steps
 
 Each step ships on its own and keeps every test green. Rendering snapshots
 (`tests/snapshots`) must not change in any step; a diff means ranges moved.
 
-**S0. Donate first (mdroots side, same author).** Bring mdroots up to the
-code ramble will delete:
+**S0. Donate first (mdroots side, same author).** Mostly done in mdroots
+0.1–0.2 (`docs/research/ramble.md` in mdroots lists what was ported, with
+ramble commits). Left:
 
-- Front matter: port ramble main's `src/frontmatter.rs` fixes newer than the
-  `donated/ramble-frontmatter/` snapshot (taken at `5f6e7ed2`). These are
-  block scalars (`|`/`>`) whose lines look like keys or items; linear-time
-  parsing for large blocks; nested list items taken from the parser; and
-  `- |` block-scalar list items. Bring their tests with them. Refresh the
-  snapshot to `01e1ef6d`.
-- The empty-block and BOM handling from ramble `doc.rs`, if not already
-  covered.
-- Code paths (`codepath::resolve`, `strip_position`, `locate`, `clean`) and
-  the `nav::resolve` rules (extensionless `.md`, `file:` forms,
-  percent-decoding) into `mdroots-resolve` once it exists.
+- Front matter: two of ramble's fixes since the snapshot mdroots ported
+  (`5f6e7ed2`) are not in mdroots 0.2.0, checked against the 0.2.0 parser:
+  - nested list items should take the parser's items
+    (`l:\n  - a\n  - - b\n    - c` gives `["a", "b, c"]` in ramble,
+    `["a", "- b", "c"]` in mdroots; ramble `065bdf7`);
+  - a block-scalar list item is its text (`- |` followed by indented lines
+    gives the text in ramble, the literal `|` in mdroots; ramble `01e1ef6`).
+  Port them with their tests (`nested_list_items_take_the_parser_items`,
+  `block_scalar_list_items_are_their_text`). The block-scalar-as-text fix
+  (`04f915b`) and linear parsing (`d5ff6fb`, 20k keys in about 0.6 s) already
+  hold in mdroots.
+- Code-path search dirs (`code_path_dirs`) as an `Options` field in mdroots.
 
 **S1. Syntax from mdroots (can start now).**
 
-- Add a path dependency on `mdroots-syntax`.
+- Add `mdroots = "0.2"`.
 - `doc.rs` keeps blocks and inlines. Links, headings (with slugs), tags, code
-  spans and front matter come from `mdroots_syntax::parse_bytes`. Both
+  spans and front matter come from `mdroots::syntax::parse_bytes`. Both
   parses use `markdown_options()`.
-- Delete `src/frontmatter.rs`. The fold UI reads `mdroots_syntax::Frontmatter`.
+- Delete `src/frontmatter.rs` once S0's two fixes are in a released mdroots.
+  The fold UI reads `mdroots::syntax::Frontmatter`.
 - Tests:
   - every mdroots link and heading range falls on a ramble inline or block
     boundary;
@@ -149,21 +168,22 @@ code ramble will delete:
     integration tests;
   - snapshots unchanged.
 
-**S2. mdroots as the backend (needs `mdroots-core`, `mdroots-resolve`).**
+**S2. mdroots as the backend (can start now).**
 
 - Add `mdroots_glue.rs` with the worker thread. Links and broken-link
-  dimming come from `document_links`. `gd` uses mdroots' target. `K` uses
-  `preview`. The pickers use `notes`, `full_text`, `tags`, `backlinks`. Live
-  reload calls `touched`. The status line shows `mdroots ●` / `mdroots ○`
+  dimming come from `document_links`. `gd` uses `goto`. `K` uses `preview`.
+  The pickers use `notes`, `full_text`, `tags`, `backlinks`. Live reload
+  calls `refresh_paths`. The status line shows `mdroots ●` / `mdroots ○`
   (see Target design).
-- Apply the Q5 cache policy.
-- Delete `nav::resolve` (keep the dispatch), `codepath.rs` (keep the search
-  dir policy), and the notebook adapters.
+- Delete `nav::resolve` (keep the dispatch) and the notebook adapters.
+  `codepath.rs` goes once mdroots takes caller search dirs; until then keep
+  `code_path_dirs` and the fallback.
 - Tests: the `tests/fixtures/zk` notebook gives the expected targets,
   backlinks and broken links from mdroots. Expected values are written in
   the test, not taken from zk. A new test asserts that a session never
   writes inside the browsed tree (tree mtimes before and after), and that a
-  plain folder leaves no cache file.
+  plain folder leaves no cache file (with `Options::cache_dir` pointed at a
+  temp dir).
 
 **S3. Default without config.** With no `[[lsp.server]]` configured, ramble
 uses mdroots. Starting ramble no longer looks for zk or marksman.
@@ -178,19 +198,16 @@ tests of this backend. It is kept indefinitely (settled, below).
 
 | Risk | Mitigation |
 |---|---|
-| mdroots API not ready, or shaped differently | S1 needs only `mdroots-syntax`, which exists. ramble adopts each call as it lands; until then the current LSP glue keeps working for the index features. |
-| ramble regresses where its code had fixes mdroots lacks | S0 ports the fixes with their tests before ramble deletes anything. Snapshot and integration tests catch range drift. |
+| mdroots API shaped differently from ramble's needs | Every need above exists in 0.2.0 except the listed gaps, each with a workaround. mdroots is 0.x: pin `mdroots = "0.2"` and read its CHANGELOG on upgrades. |
+| ramble regresses where its code had fixes mdroots lacks | S0 ports the two missing front matter fixes with their tests before ramble deletes `frontmatter.rs`. Snapshot and integration tests catch range drift. |
 | Two parses per page (ramble layout + mdroots semantics) | Both run at ~1 GB/s; a 50 KB page costs <0.1 ms each. mdroots could expose `parse_with(events)` later to share one event stream. |
-| Path dependency on a sibling checkout | Local only. mdroots is published first and ramble switches to that dependency before any push that includes S1 (settled, below). |
-| Binary size and build time (bundled SQLite, S2) | Accepted; SQLite adds ~1.5 MB and one C compile. |
+| Binary size and build time (bundled SQLite) | Accepted; SQLite adds ~1.5 MB and one C compile. |
+| ramble's tests writing the real mdroots cache | Tests pass `Options::cache_dir(tempdir)` or `IndexMode::Memory`; a test asserts the user cache dir is untouched. |
 
 ## Settled after review
 
-1. **Push ordering (user: yes).** mdroots is published (git or crates.io)
-   before ramble pushes anything that includes S1. ramble then switches the
-   path dependency to the published one. No vendoring. S1 can be built and
-   reviewed locally on the path dependency, but stays unpushed until then.
-   Pushing mdroots is still the user's call.
+1. **Publishing (done).** mdroots is on crates.io (0.1.0, 0.2.0); ramble
+   depends on the published crate. No vendoring.
 2. **The third-party LSP backend (user: keep it).** S4's backend stays
    supported with no planned removal. Its e2e tests remain part of the gate.
 
