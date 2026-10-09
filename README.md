@@ -140,10 +140,14 @@ server your editor already uses, point it at zk or marksman in the config.
 **Comments**
 - `cc` comments on the cursor line; visual `c` on the selected lines. Works
   in the raw view too.
-- Type the comment at the `comment: ` prompt; Enter saves, Esc cancels,
-  `C-e` moves it into `$EDITOR`. A paste lands as one line (newlines become
-  spaces), here and in every other prompt; outside a prompt it does nothing.
-- Tab / S-Tab give the comment a kind (`comment [ISSUE]: `): untyped, then
+- A comment box opens directly below the commented lines (above them when
+  there's no room), so they stay in view and stay highlighted. Its title
+  shows the kind and the lines (`comment [ISSUE] L12-18`); it grows with the
+  text up to 8 rows, then scrolls. Enter saves, `C-j` or `Alt-Enter` adds a
+  new line, Esc cancels, `C-e` moves it into `$EDITOR`; readline keys and
+  Up/Down edit it. A paste keeps its newlines in the box and lands as one
+  line in every other prompt; outside a prompt it does nothing.
+- Tab / S-Tab give the comment a kind (`comment [ISSUE] L5`): untyped, then
   issue, suggestion, question, nit, then untyped again. The list is
   `[review] kinds`. The kind shows as `[ISSUE]` in the status line, `K` and
   `<leader>rl`, and the export labels the item and explains the kind.
@@ -222,7 +226,7 @@ clue = true                  # after a pause mid-sequence, show the next keys
 enabled = true               # false leaves the mouse to the terminal / tmux
 
 [review]
-kinds = [                    # Tab in the comment prompt; [] = untyped only
+kinds = [                    # Tab in the comment box; [] = untyped only
   { id = "issue", definition = "Something is wrong. Fix it." },
   { id = "question", definition = "Answer in your reply." },
 ]

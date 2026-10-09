@@ -63,7 +63,7 @@
 
 ## ---------------------------------------------------------------------------
 ## Comments on source lines, kept in debrief-review's batch for the repo.
-## Tab in the comment prompt cycles untyped -> kinds in order -> untyped.
+## Tab in the comment box cycles untyped -> kinds in order -> untyped.
 ## A typed comment exports as "## Item N [ISSUE]", with a legend of the
 ## kinds used and their definitions. A list replaces the built-ins below
 ## (ids are lowercased); `kinds = []` leaves every comment untyped.
