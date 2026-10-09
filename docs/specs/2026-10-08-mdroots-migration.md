@@ -175,7 +175,13 @@ ramble commits). Left:
   The pickers use `notes`, `full_text`, `tags`, `backlinks`. Live reload
   calls `refresh_paths`. The status line shows `mdroots ●` / `mdroots ○`
   (see Target design).
-- Delete `nav::resolve` (keep the dispatch) and the notebook adapters.
+- `K` asks the worker for `preview(target, 12)` on the target's root
+  workspace (its own request kind and seq; dropped only on page change,
+  like the LSP hover). `gd` already prefers mdroots' targets; `nav::resolve`
+  stays the gate for URLs and same-page anchors.
+- Delete `nav::resolve` (keep the dispatch) and the notebook adapters
+  (deferred: S3/S4 own deleting `nav::resolve` and `codepath.rs`'s pure
+  half; the zk adapters stay for the LSP backend).
   `codepath.rs` goes once mdroots takes caller search dirs; until then keep
   `code_path_dirs` and the fallback.
 - Tests: the `tests/fixtures/zk` notebook gives the expected targets,

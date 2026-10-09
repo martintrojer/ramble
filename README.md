@@ -114,7 +114,8 @@ can follow it.
   anywhere, with or without a language server.
 - Without a language server, [mdroots](https://github.com/martintrojer/mdroots)
   also gives full-text search (`<leader>zs`, Enter lands on the hit), tags
-  (`<leader>zz`) and backlinks (`<leader>zb` or `grr`).
+  (`<leader>zz`) and backlinks (`<leader>zb` or `grr`). `K` on a link to
+  a note previews it from mdroots (title, front matter, first lines).
 
 **With a language server** (zk first-class, marksman supported)
 - Wikilinks resolved by your notebook, not by filename guessing.

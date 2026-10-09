@@ -580,8 +580,12 @@ impl App {
             && self.lsp_link_request("textDocument/definition", i, ReqKind::Definition(i))
     }
 
-    /// `K` can ask for a hover: the running server offers hover.
+    /// `K` can ask for a hover: the running server offers hover, or
+    /// mdroots serves the page and has a note to preview at the cursor.
     pub(crate) fn can_hover(&self) -> bool {
+        if self.mdroots_active() {
+            return self.mdroots_can_hover();
+        }
         self.lsp.client().is_some_and(|c| {
             c.capabilities()
                 .hover_provider
@@ -596,6 +600,7 @@ impl App {
         if let Some(text) = self.review_hover_text() {
             // A late reply to an earlier link hover must not replace these.
             self.lsp.requests.retain(|r| r.kind != ReqKind::Hover);
+            self.mdroots_hover_cancel();
             self.lsp.hover = Some(text);
             return;
         }
@@ -603,6 +608,10 @@ impl App {
             self.set_status("No link under cursor");
             return;
         };
+        if self.mdroots_active() {
+            self.mdroots_hover();
+            return;
+        }
         if !self.can_hover() || !self.lsp_link_request("textDocument/hover", i, ReqKind::Hover) {
             self.set_status("No hover (no language server)");
         }
@@ -646,6 +655,11 @@ impl App {
     /// Close the hover popup.
     pub(super) fn hover_close(&mut self) {
         self.lsp.hover = None;
+    }
+
+    /// Open the hover popup with `text` (the mdroots preview).
+    pub(super) fn set_hover_popup(&mut self, text: String) {
+        self.lsp.hover = Some(text);
     }
 
     /// Text of the open hover popup.

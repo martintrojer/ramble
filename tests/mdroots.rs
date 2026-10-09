@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ramble::app::{App, AppEvent, MdrootsOptions, StartOptions, StartTarget};
+use ramble::app::{App, AppEvent, HelpLine, MdrootsOptions, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
 use tempfile::TempDir;
 
@@ -605,4 +605,136 @@ fn a_plain_folder_root_walks_files_for_notes_and_marks_other_pickers_partial() {
     enter(&mut app);
     loaded(&mut app);
     assert_eq!(rows(&app).0, "Search: needle (partial)");
+}
+
+// `K`: the link target's preview from mdroots.
+
+/// Pump until the hover popup opens.
+fn hovered(app: &mut App) -> String {
+    pump_until(app, "the hover popup", |a| a.hover_popup().is_some());
+    app.hover_popup().unwrap().to_string()
+}
+
+/// Whether help lists a `K` row now.
+fn help_has_k(app: &App) -> bool {
+    app.help_lines()
+        .iter()
+        .any(|l| matches!(l, HelpLine::Item { keys, .. } if keys == "K"))
+}
+
+#[test]
+fn k_previews_the_link_target_note() {
+    let (tree, cache) = notebook();
+    let mut app = open(tree.path(), cache.path(), "a.md");
+    to_link(&mut app, 0);
+    // Before the page's links arrive there is nothing to preview yet.
+    assert!(!help_has_k(&app));
+    keys(&mut app, "K");
+    assert_eq!(app.status(), "No hover information");
+    assert_eq!(app.hover_popup(), None);
+    ready(&mut app);
+    assert!(help_has_k(&app), "K row once the link has a note target");
+    keys(&mut app, "K");
+    // The excerpt starts with the H1: no second title line.
+    assert_eq!(hovered(&mut app), "# Note B\n\nBack to [Note A](a).");
+}
+
+#[test]
+fn k_shows_front_matter_but_not_its_title() {
+    let (tree, cache) = notebook();
+    write(
+        &tree.path().join("fm.md"),
+        "---\ntitle: FM Title\ntags: [project, x]\n---\nline1\nline2\n",
+    );
+    write(
+        &tree.path().join("p.md"),
+        "# P\n\n[[fm]] and [t](tagged.md)\n",
+    );
+    let mut app = open(tree.path(), cache.path(), "p.md");
+    ready(&mut app);
+    to_link(&mut app, 0);
+    keys(&mut app, "K");
+    assert_eq!(
+        hovered(&mut app),
+        "# FM Title\n\ntags: project, x\n\nline1\nline2"
+    );
+    esc(&mut app);
+    assert_eq!(app.hover_popup(), None);
+    to_link(&mut app, 1);
+    keys(&mut app, "K");
+    assert_eq!(
+        hovered(&mut app),
+        "tags: project\n\n# Tagged\n\nLinks to [Note A](a)."
+    );
+}
+
+#[test]
+fn k_on_a_link_with_no_note_is_a_status() {
+    let (tree, cache) = notebook();
+    write(&tree.path().join("t.txt"), "plain\n");
+    write(
+        &tree.path().join("p.md"),
+        "# P\n\n[gone](missing) [u](https://example.org) [h](#p) [t](t.txt) [self](p.md)\n",
+    );
+    let mut app = open(tree.path(), cache.path(), "p.md");
+    ready(&mut app);
+    // mdroots gives the same-page anchor and t.txt a target.
+    pump_until(&mut app, "the t.txt target", |a| a.link_target(3).is_some());
+    for i in 0..5 {
+        to_link(&mut app, i);
+        assert!(!help_has_k(&app), "link {i}: no K row");
+        app.set_status("");
+        keys(&mut app, "K");
+        assert_eq!(app.status(), "No hover information", "link {i}");
+        app.pump_mdroots(Duration::from_millis(100));
+        assert_eq!(app.hover_popup(), None, "link {i}");
+    }
+}
+
+#[test]
+fn a_preview_reply_is_dropped_only_when_the_page_changed() {
+    let (tree, cache) = notebook();
+    let mut app = open(tree.path(), cache.path(), "wiki.md");
+    ready(&mut app);
+    // The cursor moved before the reply: kept (parity with the LSP hover).
+    to_link(&mut app, 0);
+    keys(&mut app, "K");
+    keys(&mut app, "gg");
+    assert_eq!(hovered(&mut app), "# Note B\n\nBack to [Note A](a).");
+    esc(&mut app);
+    // The page changed before the reply: dropped.
+    to_link(&mut app, 1);
+    keys(&mut app, "K");
+    app.open_file(&tree.path().join("b.md")).unwrap();
+    pump_until(&mut app, "b.md answered", |a| a.link_target(0).is_some());
+    app.pump_mdroots(Duration::from_millis(300));
+    assert_eq!(app.hover_popup(), None);
+    // The page reply was not made stale by the preview.
+    assert_eq!(app.lsp_label(), "mdroots ●");
+}
+
+#[test]
+fn k_on_a_comment_is_not_replaced_by_a_late_preview() {
+    let (tree, cache) = notebook();
+    let root = tree.path();
+    write(&root.join("p.md"), "# P\n\n[b](b)\n\nbeta\n");
+    std::fs::create_dir_all(root.join(".git")).unwrap();
+    let review = cache.path().join("review");
+    let c = debrief_review::Comment::on_file("p.md", 5..=5, "beta", "COMMENT MUST WIN");
+    debrief_review::Review::open(&review, root)
+        .unwrap()
+        .add(c)
+        .unwrap();
+    let mut o = opts(root, StartTarget::File(root.join("p.md")), cache.path());
+    o.review_cache = Some(review);
+    let mut app = App::new(o, (60, 20)).unwrap();
+    ready(&mut app);
+    to_link(&mut app, 0);
+    keys(&mut app, "K");
+    keys(&mut app, "G");
+    keys(&mut app, "K");
+    let comment = Some("● line 5\nCOMMENT MUST WIN");
+    assert_eq!(app.hover_popup(), comment);
+    app.pump_mdroots(Duration::from_millis(500));
+    assert_eq!(app.hover_popup(), comment, "late preview dropped");
 }

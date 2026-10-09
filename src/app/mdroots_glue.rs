@@ -2,8 +2,8 @@
 //! the in-process backend for a page no configured `[[lsp.server]]` serves
 //! (spec docs/specs/2026-10-08-mdroots-migration.md, S2). It gives the
 //! page's link targets, broken-link dimming and `gd` targets, the
-//! `mdroots ○` / `mdroots ●` status label, and the notes, search, tags and
-//! backlinks pickers' items.
+//! `mdroots ○` / `mdroots ●` status label, the notes, search, tags and
+//! backlinks pickers' items, and the `K` preview of a link's target note.
 //!
 //! One worker thread owns [`mdroots::Workspaces`] (built on the worker, on
 //! the first request: its constructor opens the cache registry) and answers
@@ -36,11 +36,19 @@
 //! search, tags and backlinks as a partial list (the picker title says so);
 //! the notes picker walks the tree root instead.
 //!
+//! A preview request (`K`) carries its own seq, never the page tag, so it
+//! cannot make the page's reply stale. It is answered from the root
+//! workspace of the TARGET (`for_path(target)`: a note in another root,
+//! or a lone file, gets its own workspace); the page's `open_single`
+//! workspace indexes the page only. Like the LSP hover, its reply is
+//! dropped only when the page changed (or a newer `K` replaced it), not
+//! when the cursor moved.
+//!
 //! Limitation: the worker is one thread with no per-call cancellation, so
 //! a slow `for_path` (a big root's first index) delays every later request,
 //! even for pages in other roots (a picker shows loading meanwhile).
-//! Queued page requests are coalesced to the latest; picker requests are
-//! answered in order, never dropped. Dropping the app cancels the shared
+//! Queued page requests are coalesced to the latest; picker and preview
+//! requests are answered in order, never dropped. Dropping the app cancels the shared
 //! [`mdroots::Cancel`] so a running open or search stops; the worker is
 //! never joined.
 
@@ -56,6 +64,7 @@ use mdroots::{
 
 use super::App;
 use crate::doc::LinkKind;
+use crate::nav;
 use crate::notebook::{self, Item};
 
 /// How the mdroots backend stores its index; converted to
@@ -109,10 +118,18 @@ impl MdrootsOptions {
 }
 
 /// A request to the worker. Page requests are coalesced to the latest;
-/// picker requests are answered in order, each exactly once.
+/// picker and preview requests are answered in order, each exactly once.
 enum Request {
     Page(PageRequest),
     Picker(PickerRequest),
+    Preview(PreviewRequest),
+}
+
+/// The `K` preview of a link's target note.
+struct PreviewRequest {
+    /// Matched against [`MdrootsState::preview`] by the reply.
+    seq: u64,
+    target: PathBuf,
 }
 
 /// A page to answer for.
@@ -168,6 +185,11 @@ pub(super) enum Reply {
         seq: u64,
         result: Result<PickerAnswer, String>,
     },
+    /// The popup text for preview `seq`.
+    Preview {
+        seq: u64,
+        result: Result<String, String>,
+    },
 }
 
 /// One answer for a page.
@@ -199,6 +221,10 @@ pub(super) struct MdrootsState {
     rx: Receiver<Reply>,
     /// Bumped per request; with the page id it makes the tag.
     version: u32,
+    /// Bumped per preview request.
+    preview_seq: u64,
+    /// The preview in flight: the page id it was asked on and its seq.
+    preview: Option<(u64, u64)>,
     // Per page, reset by `mdroots_reset`.
     /// The current page is served by mdroots (no LSP server selected).
     active: bool,
@@ -221,6 +247,8 @@ impl MdrootsState {
             reply_tx,
             rx,
             version: 0,
+            preview_seq: 0,
+            preview: None,
             active: false,
             tag: None,
             serving: None,
@@ -289,9 +317,9 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
             }
         };
         // Coalesce pages: only the latest matters, but keep every refresh.
-        // Picker requests are kept in order.
+        // Picker and preview requests are kept in order.
         let mut page: Option<PageRequest> = None;
-        let mut pickers = Vec::new();
+        let mut others = Vec::new();
         for req in std::iter::once(first).chain(std::iter::from_fn(|| rx.try_recv().ok())) {
             match req {
                 Request::Page(mut next) => {
@@ -302,7 +330,7 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
                     }
                     page = Some(next);
                 }
-                Request::Picker(p) => pickers.push(p),
+                other => others.push(other),
             }
         }
         if cancel.is_cancelled() {
@@ -315,9 +343,19 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
             }
             last = Some(req);
         }
-        for p in pickers {
-            let result = picker_answer(&workspaces, &cancel, &p);
-            if out.send(Reply::Picker { seq: p.seq, result }).is_err() {
+        for req in others {
+            let reply = match req {
+                Request::Picker(p) => Reply::Picker {
+                    seq: p.seq,
+                    result: picker_answer(&workspaces, &cancel, &p),
+                },
+                Request::Preview(p) => Reply::Preview {
+                    seq: p.seq,
+                    result: preview_answer(&workspaces, &p.target),
+                },
+                Request::Page(_) => unreachable!("pages are coalesced above"),
+            };
+            if out.send(reply).is_err() {
                 return;
             }
         }
@@ -486,6 +524,62 @@ fn picker_answer(
     })
 }
 
+/// Lines of a target note's excerpt the `K` popup shows (raw lines, blank
+/// ones included). The popup is as tall as its wrapped text plus the
+/// border, clamped to the content area (`ui/hover.rs`), so 12 lines plus a
+/// title and a few front matter lines fit a normal terminal.
+const PREVIEW_LINES: usize = 12;
+
+/// The popup text for `target`, from the root workspace of the target.
+fn preview_answer(workspaces: &Workspaces, target: &Path) -> Result<String, String> {
+    let target = canonical(target);
+    let ws = workspaces.for_path(&target).map_err(|e| e.to_string())?;
+    let p = ws
+        .preview(&target, PREVIEW_LINES)
+        .map_err(|e| e.to_string())?;
+    Ok(preview_text(&p.title, &p.frontmatter, &p.excerpt))
+}
+
+/// The `K` popup text for a note: `# <title>` unless the excerpt already
+/// starts with a heading line (mdroots' excerpt usually starts with the
+/// note's H1), then the front matter as `key: value` lines (the `title`
+/// key left out: it is the title), then the excerpt. Empty sections are
+/// skipped.
+fn preview_text(title: &str, frontmatter: &[(String, String)], excerpt: &str) -> String {
+    let excerpt = excerpt.trim();
+    let mut parts = Vec::new();
+    if !excerpt.lines().next().is_some_and(is_heading_line) {
+        parts.push(format!("# {title}"));
+    }
+    let fm: Vec<String> = frontmatter
+        .iter()
+        .filter(|(k, _)| k != "title")
+        .map(|(k, v)| format!("{k}: {v}").trim_end().to_string())
+        .collect();
+    if !fm.is_empty() {
+        parts.push(fm.join("\n"));
+    }
+    if !excerpt.is_empty() {
+        parts.push(excerpt.to_string());
+    }
+    parts.join("\n\n")
+}
+
+/// An ATX heading line: up to three spaces, one to six `#`, then a space
+/// or the end of the line.
+fn is_heading_line(line: &str) -> bool {
+    let t = line.trim_start_matches(' ');
+    if line.len() - t.len() > 3 {
+        return false;
+    }
+    let hashes = t.len() - t.trim_start_matches('#').len();
+    (1..=6).contains(&hashes)
+        && t[hashes..]
+            .chars()
+            .next()
+            .is_none_or(|c| c == ' ' || c == '\t')
+}
+
 /// `notes` by modification time, newest first (zk's `sort: [modified]`);
 /// unknown times last, then by path.
 fn newest_first(mut notes: Vec<NoteSummary>) -> Vec<NoteSummary> {
@@ -563,6 +657,7 @@ impl App {
         let m = &mut self.mdroots;
         m.active = false;
         m.tag = None;
+        m.preview = None;
         m.serving = None;
         m.sent_at = None;
         m.watching = false;
@@ -632,6 +727,70 @@ impl App {
         match r {
             Reply::Page(r) => self.mdroots_reply(r),
             Reply::Picker { seq, result } => self.mdroots_picker_reply(seq, result),
+            Reply::Preview { seq, result } => self.mdroots_preview_reply(seq, result),
+        }
+    }
+
+    /// The note `K` would preview on an mdroots page: the target mdroots
+    /// gave the link under the cursor, when it is a markdown file other
+    /// than the page. The same links `gd` follows through mdroots (not
+    /// code paths, anchors on this page or URLs).
+    fn mdroots_preview_target(&self) -> Option<PathBuf> {
+        if !self.mdroots.active {
+            return None;
+        }
+        let i = self.link_under_cursor()?;
+        let page = self.page.as_ref()?;
+        let link = page.doc.links.get(i)?;
+        if link.kind == LinkKind::CodePath
+            || !matches!(
+                nav::resolve(&link.dest, &link.kind, &self.link_dir()),
+                nav::Target::File { .. }
+            )
+        {
+            return None;
+        }
+        let target = self.link_target(i)?;
+        let here = page.path.as_deref().map(canonical);
+        (nav::is_markdown(target) && here.as_deref() != Some(target)).then(|| target.to_path_buf())
+    }
+
+    /// `K` can preview the link under the cursor through mdroots.
+    pub(super) fn mdroots_can_hover(&self) -> bool {
+        self.mdroots_preview_target().is_some()
+    }
+
+    /// `K` on an mdroots page: ask the worker for the link target's
+    /// preview, replacing any preview in flight. Before the page's links
+    /// arrive, or for a link with no note to preview, the status says
+    /// "No hover information".
+    pub(super) fn mdroots_hover(&mut self) {
+        let Some(target) = self.mdroots_preview_target() else {
+            self.mdroots.preview = None;
+            self.set_status("No hover information");
+            return;
+        };
+        let page_id = self.page_id();
+        let m = &mut self.mdroots;
+        m.preview_seq += 1;
+        let seq = m.preview_seq;
+        m.preview = Some((page_id, seq));
+        m.send(Request::Preview(PreviewRequest { seq, target }));
+    }
+
+    /// Forget the preview in flight (`K` showed review comments instead).
+    pub(super) fn mdroots_hover_cancel(&mut self) {
+        self.mdroots.preview = None;
+    }
+
+    fn mdroots_preview_reply(&mut self, seq: u64, result: Result<String, String>) {
+        if self.mdroots.preview != Some((self.page_id(), seq)) {
+            return; // Another page, a newer `K`, or cancelled: drop.
+        }
+        self.mdroots.preview = None;
+        match result {
+            Ok(text) if !text.trim().is_empty() => self.set_hover_popup(text),
+            _ => self.set_status("No hover information"),
         }
     }
 
@@ -822,6 +981,33 @@ mod tests {
         let a = result.unwrap();
         assert_eq!(a.root, dir.path().canonicalize().unwrap());
         assert!(a.items.is_empty(), "no tags");
+    }
+
+    #[test]
+    fn preview_text_shows_the_title_once_and_skips_empty_sections() {
+        let fm = |kv: &[(&str, &str)]| -> Vec<(String, String)> {
+            kv.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        // The excerpt starts with the H1: no title line.
+        assert_eq!(
+            preview_text("Note B", &[], "# Note B\n\nBack."),
+            "# Note B\n\nBack."
+        );
+        // No heading: the title first; the `title` key left out.
+        assert_eq!(
+            preview_text("T", &fm(&[("title", "T"), ("tags", "a, b")]), "body\n"),
+            "# T\n\ntags: a, b\n\nbody"
+        );
+        // An empty note: the title alone.
+        assert_eq!(preview_text("T", &[], ""), "# T");
+        assert!(is_heading_line("## x") && is_heading_line("#") && is_heading_line("   # x"));
+        assert!(
+            !is_heading_line("#tag")
+                && !is_heading_line("    # x")
+                && !is_heading_line("####### x")
+        );
     }
 
     #[test]
