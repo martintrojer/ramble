@@ -145,6 +145,15 @@ impl TextBox {
         self.goal_col = None;
     }
 
+    /// After an edit, put the cursor at `at` moved forward to a grapheme
+    /// boundary of the new text: graphemes can join across the edit point
+    /// (a combining mark, ZWJ, regional indicators, Hangul jamo), and the
+    /// text before the cursor stays before it.
+    fn edited(&mut self, at: usize) {
+        self.cursor = ceil_boundary(&self.text, at);
+        self.goal_col = None;
+    }
+
     pub fn insert(&mut self, c: char) {
         let mut b = [0; 4];
         self.insert_str(c.encode_utf8(&mut b));
@@ -154,9 +163,7 @@ impl TextBox {
     pub fn insert_str(&mut self, s: &str) {
         let s = normalize_newlines(s);
         self.text.insert_str(self.cursor, &s);
-        // A combining mark joins the grapheme before it, so round up.
-        self.cursor = ceil_boundary(&self.text, self.cursor + s.len());
-        self.goal_col = None;
+        self.edited(self.cursor + s.len());
     }
 
     /// Insert `s` as one line: newlines and tabs become spaces, other
@@ -176,32 +183,32 @@ impl TextBox {
     pub fn backspace(&mut self) {
         let prev = prev_boundary(&self.text, self.cursor);
         self.text.replace_range(prev..self.cursor, "");
-        self.set_cursor(prev);
+        self.edited(prev);
     }
 
     pub fn delete(&mut self) {
         let next = next_boundary(&self.text, self.cursor);
         self.text.replace_range(self.cursor..next, "");
-        self.goal_col = None;
+        self.edited(self.cursor);
     }
 
     /// Delete back over whitespace, then over the word before it.
     pub fn delete_word_back(&mut self) {
-        let start = floor_boundary(&self.text, word_back_start(&self.text, self.cursor));
+        let start = word_back_start(&self.text, self.cursor);
         self.text.replace_range(start..self.cursor, "");
-        self.set_cursor(start);
+        self.edited(start);
     }
 
     /// Delete back to the start of the cursor's line (not past a newline).
     pub fn delete_to_line_start(&mut self) {
         let start = line_start(&self.text, self.cursor);
         self.text.replace_range(start..self.cursor, "");
-        self.set_cursor(start);
+        self.edited(start);
     }
 
     pub fn clear(&mut self) {
         self.text.clear();
-        self.set_cursor(0);
+        self.edited(0);
     }
 
     pub fn left(&mut self) {
@@ -407,12 +414,26 @@ fn line_end(s: &str, at: usize) -> usize {
     s[at..].find('\n').map_or(s.len(), |p| at + p)
 }
 
-/// Where `C-w` deletes back to: over whitespace, then over non-whitespace.
+/// Whether grapheme `g` is whitespace: its first char is.
+fn is_space(g: &str) -> bool {
+    g.chars().next().is_some_and(char::is_whitespace)
+}
+
+/// Where `C-w` deletes back to: over whitespace graphemes, then over
+/// non-whitespace ones.
 fn word_back_start(s: &str, at: usize) -> usize {
-    let before = &s[..at];
-    let word_end = before.trim_end().len();
-    let word = before[..word_end].trim_end_matches(|c: char| !c.is_whitespace());
-    word.len()
+    let before: Vec<_> = s
+        .grapheme_indices(true)
+        .take_while(|&(i, _)| i < at)
+        .collect();
+    let mut gs = before.into_iter().rev().peekable();
+    let mut start = at;
+    for space in [true, false] {
+        while let Some((i, _)) = gs.next_if(|&(_, g)| is_space(g) == space) {
+            start = i;
+        }
+    }
+    start
 }
 
 /// The start of the word at or before `at` (over whitespace first).
@@ -422,12 +443,14 @@ fn word_left(s: &str, at: usize) -> usize {
 
 /// The start of the next word: past this word, then past whitespace.
 fn word_right(s: &str, at: usize) -> usize {
-    let rest = &s[at..];
-    let word = rest.find(char::is_whitespace).unwrap_or(rest.len());
-    let gap = rest[word..]
-        .find(|c: char| !c.is_whitespace())
-        .unwrap_or(rest.len() - word);
-    at + word + gap
+    let mut gs = s
+        .grapheme_indices(true)
+        .skip_while(|&(i, _)| i < at)
+        .peekable();
+    for space in [false, true] {
+        while gs.next_if(|&(_, g)| is_space(g) == space).is_some() {}
+    }
+    gs.peek().map_or(s.len(), |&(i, _)| i)
 }
 
 #[cfg(test)]
@@ -592,6 +615,73 @@ mod tests {
         assert_eq!(after("안녕 아가|", &[Edit::WordLeft]), "안녕 |아가");
         assert_eq!(after("|안녕 아가", &[Edit::WordRight]), "안녕 |아가");
         assert_eq!(after("a\n|b", &[Edit::WordLeft]), "|a\nb");
+    }
+
+    #[test]
+    fn edits_leave_the_cursor_on_a_boundary_of_the_new_text() {
+        // Deleting what separates two graphemes can join them.
+        assert_eq!(after("🇸|x🇪", &[Edit::Delete]), "🇸🇪|");
+        assert_eq!(after("🇸|x🇪", &[Edit::Delete, Edit::Backspace]), "|");
+        assert_eq!(after("🇸x|🇪", &[Edit::Backspace]), "🇸🇪|");
+        assert_eq!(
+            after("\u{1100}|x\u{1161}", &[Edit::Delete]),
+            "\u{1100}\u{1161}|"
+        );
+        assert_eq!(
+            after("\u{1100}|x\u{1161}", &[Edit::Delete, Edit::Insert('Z')]),
+            "\u{1100}\u{1161}Z|"
+        );
+        assert_eq!(after("a|x\u{301}", &[Edit::Delete]), "a|");
+        assert_eq!(after("a|\n\u{301}", &[Edit::Delete]), "a\u{301}|");
+        assert_eq!(
+            after("e x\n|\u{301}", &[Edit::DeleteWordBack]),
+            "e \u{301}|"
+        );
+        assert_eq!(after("e\n|\u{301}", &[Edit::Backspace]), "e\u{301}|");
+        let joined = "\u{1f469}\u{200d}\u{1f4bb}";
+        assert_eq!(
+            after("\u{1f469}\u{200d}|x\u{1f4bb}", &[Edit::Delete]),
+            format!("{joined}|")
+        );
+        // Inserting can join graphemes on either side of the cursor.
+        assert_eq!(after("a|\u{301}", &[Edit::Insert('e')]), "ae\u{301}|");
+        assert_eq!(after("|🇪", &[Edit::Insert('🇸')]), "🇸🇪|");
+        assert_eq!(
+            after("\u{1f469}|\u{1f4bb}", &[Edit::Insert('\u{200d}')]),
+            format!("{joined}|")
+        );
+        let mut t = tb("\u{1f469}|\u{1f4bb}");
+        t.insert_line("\u{200d}");
+        assert_eq!(show(&t), format!("{joined}|"));
+    }
+
+    #[test]
+    fn word_motions_step_over_graphemes() {
+        // " \u{301}" is one whitespace grapheme.
+        assert_eq!(after("|a \u{301}b", &[Edit::WordRight]), "a \u{301}|b");
+        assert_eq!(after("a| \u{301}b", &[Edit::WordRight]), "a \u{301}|b");
+        assert_eq!(
+            after("|a \u{301}b c", &[Edit::WordRight, Edit::WordRight]),
+            "a \u{301}b |c"
+        );
+        assert_eq!(after("a \u{301}b|", &[Edit::WordLeft]), "a \u{301}|b");
+        assert_eq!(after("a \u{301}|b", &[Edit::WordLeft]), "|a \u{301}b");
+        assert_eq!(after("a \u{301}b|", &[Edit::DeleteWordBack]), "a \u{301}|");
+        // Every motion makes progress until the end or the start.
+        for s in ["a \u{301}b", " \u{301}\u{301} x\u{301} 🇸🇪 y"] {
+            let mut t = TextBox::from_text(s);
+            t.home();
+            while t.cursor() < s.len() {
+                let at = t.cursor();
+                t.word_right();
+                assert!(t.cursor() > at, "{s:?}: Alt-f stuck at {at}");
+            }
+            while t.cursor() > 0 {
+                let at = t.cursor();
+                t.word_left();
+                assert!(t.cursor() < at, "{s:?}: Alt-b stuck at {at}");
+            }
+        }
     }
 
     #[test]
