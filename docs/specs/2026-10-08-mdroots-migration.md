@@ -1,8 +1,7 @@
 # ramble on mdroots
 
-Status: current design. Steps S0–S3 are in place, and so is S4's move of the
-optional language-server backend into its own module; the rest of S4 is
-optional.
+Status: current design. Steps S0–S4 are in place; using `Workspace::goto`
+for `gd` is an optional cleanup.
 
 ramble embeds [mdroots](https://github.com/martintrojer/mdroots), a markdown
 notebook index, as its built-in backend. A third-party language server
@@ -38,7 +37,7 @@ configured (the default) ramble runs no external tool.
 
 ```text
 ramble UI loop ── mpsc ──▶ worker thread ── mdroots::Workspaces (in-process; SQLite cache per root)
-              └─ optional: LSP client (src/lsp, src/app/lsp_glue.rs) for pages under a configured server's root
+              └─ optional: LSP client (src/backend/lsp, src/app/lsp_glue.rs) for pages under a configured server's root
 ```
 
 ### Syntax (`src/doc.rs`, `src/render.rs`)
@@ -131,10 +130,9 @@ tree and that a plain folder caches only in the given dir.
 | `gd` targets with heading ranges | `Workspace::goto(path, offset)` | available, not used (S4) |
 | code-path links | `LinkKind::CodeMention` with `Options::code_dirs` | available, not used (ramble resolves code paths itself) |
 
-## Remaining: S4, the LSP backend module (optional)
+## The LSP backend module (S4)
 
-- Done: the module move. The client (`src/lsp/`), the zk adapter and the
-  LSP-only picker helpers (from `src/notebook.rs`) live in
+- The client, the zk adapter and the LSP-only picker helpers live in
   `src/backend/lsp/`; `ramble::lsp` stays as a re-export. The App glue
   stays in `src/app/lsp_glue.rs`, where it reaches the app's private
   state. Its replies (documentLink, hover, references, zk commands) are
@@ -144,8 +142,9 @@ tree and that a plain folder caches only in the given dir.
   existing file; `~/` from the environment). stdin and LSP pages need them
   too, and mdroots' `CodeMention` search differs, so mdroots' code mentions
   are not used.
-- `gd`: take targets from `Workspace::goto` and keep only the dispatch in
-  `nav` (open page, jump to heading, open browser, open editor).
+- Optional cleanup: take `gd` targets from `Workspace::goto` and keep only
+  the dispatch in `nav` (open page, jump to heading, open browser, open
+  editor).
 
 ## Risks
 
