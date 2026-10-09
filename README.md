@@ -128,11 +128,18 @@ can follow it.
   folders you collapsed. `C-l` (or `:e`) re-reads the page
   and the file tree on demand.
 - Launchers: configurable keys that hand off to another program and come
-  back. `<leader>o` opens your editor at the cursor line. `<leader>rr` opens
-  the page in [tuicr](https://github.com/agavra/tuicr) for review.
-- Review markers: comments from a live tuicr session show up as `●` in the
-  file tree and in a gutter beside the lines they're on. `]r` / `[r` jump
-  between them.
+  back. `<leader>o` opens your editor at the cursor line.
+
+**Comments**
+- `cc` comments on the cursor line; visual `c` on the selected lines. Works
+  in the raw view too.
+- Type the comment at the `comment: ` prompt; Enter saves, Esc cancels,
+  `C-e` moves it into `$EDITOR`.
+- Comments go to [debrief](https://github.com/martintrojer/debrief)'s
+  review batch for the repo, in your cache dir, never into the repo.
+- Commented lines get a `●` in a gutter, files a `●` and a count in the
+  tree; `]r` / `[r` jump between them. Comments added elsewhere (another
+  ramble, debrief) show up within a second.
 - The window or tmux pane title shows the file you're reading.
 - `g?` lists every key that works right now. The list is tested against the
   real keymap, so it can't drift.
@@ -223,7 +230,7 @@ changed, is in [docs/specs/2026-10-07-ramble.md](docs/specs/2026-10-07-ramble.md
 ## Status
 
 Young and moving fast. It's built to replace a glow-plus-nvim reading setup,
-and its end-to-end tests run against real zk and tuicr when they're
+and its end-to-end tests run against real zk and marksman when they're
 installed. Expect sharp edges in the corners
 the tests don't reach yet.
 
