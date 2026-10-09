@@ -17,6 +17,15 @@
 //! [`mdroots::Workspaces::for_path`] and answers again (label `mdroots ●`).
 //! Each reply replaces the page's targets and broken links.
 //!
+//! Other notes changing on disk (e.g. a new note a `[[Title]]` link on the
+//! page names) come from mdroots' own watcher: the worker opens with
+//! [`mdroots::Options::watch`], subscribes to each root workspace it
+//! answers from, and re-answers the current page when a change lands under
+//! that root. mdroots watches only roots it reconciles in a DB on a local
+//! disk; in a lazy or single-file workspace (and in memory mode) other
+//! notes' changes show once the page is reopened or reloaded (`C-l`).
+//! ramble's own watcher still reloads the page itself, which refreshes it.
+//!
 //! Limitation: the worker is one thread with no per-call cancellation, so
 //! a slow `for_path` (a big root's first index) delays every later request,
 //! even for pages in other roots. Queued page requests are coalesced to the
@@ -70,7 +79,9 @@ impl MdrootsOptions {
     }
 
     fn to_mdroots(&self, cancel: Cancel) -> mdroots::Options {
-        let mut o = mdroots::Options::default().cancel(cancel);
+        let mut o = mdroots::Options::default()
+            .cancel(cancel)
+            .watch(!self.memory);
         if self.memory {
             o = o.index(IndexMode::Memory);
         }
@@ -98,6 +109,8 @@ pub(super) struct Reply {
     root: bool,
     /// The serving workspace is single-file (its index is the page only).
     single: bool,
+    /// The serving workspace runs mdroots' watcher.
+    watching: bool,
     links: Result<Vec<DocLink>, String>,
 }
 
@@ -126,6 +139,8 @@ pub(super) struct MdrootsState {
     serving: Option<Serving>,
     /// When the request in flight was sent; cleared by the root reply.
     sent_at: Option<Instant>,
+    /// The last applied reply's workspace runs mdroots' watcher.
+    watching: bool,
 }
 
 impl MdrootsState {
@@ -142,6 +157,7 @@ impl MdrootsState {
             tag: None,
             serving: None,
             sent_at: None,
+            watching: false,
         }
     }
 
@@ -166,10 +182,53 @@ impl Drop for MdrootsState {
     }
 }
 
-/// The worker loop: answer the latest queued page, until the app is gone.
+/// How often the worker checks its root workspaces' change subscriptions
+/// while no page request arrives.
+const POLL: Duration = Duration::from_millis(100);
+
+/// The worker loop: answer the latest queued page, and re-answer it when
+/// mdroots' watcher reports changes under its root, until the app is gone.
 fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Sender<Reply>) {
     let workspaces = Workspaces::new(opts.clone());
-    while let Ok(mut req) = rx.recv() {
+    // One change subscription per root workspace answered from, by root.
+    let mut subs: HashMap<PathBuf, Receiver<Vec<PathBuf>>> = HashMap::new();
+    // The current page's request, re-answered on changes under its root.
+    let mut last: Option<Request> = None;
+    let send = |ws: &Workspace, req: &Request, path: &Path, root: bool| {
+        let reply = Reply {
+            tag: req.tag,
+            root,
+            single: ws.root().mode == RootMode::SingleFile,
+            watching: ws.watching(),
+            links: answer(ws, path, &req.text),
+        };
+        out.send(reply).is_ok()
+    };
+    loop {
+        // Block while there is nothing to watch; otherwise poll both.
+        let next = if subs.is_empty() {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        } else {
+            rx.recv_timeout(POLL)
+        };
+        let mut req = match next {
+            Ok(req) => req,
+            Err(RecvTimeoutError::Disconnected) => return,
+            Err(RecvTimeoutError::Timeout) => {
+                let Some(req) = &last else { continue };
+                let path = canonical(&req.path);
+                let Some(ws) = workspaces.get(&path) else {
+                    continue;
+                };
+                let root = &ws.root().path;
+                // Drain every batch: each is a refresh of this root.
+                let changed = subs.get(root).is_some_and(|sub| sub.try_iter().count() > 0);
+                if changed && !send(&ws, req, &path, true) {
+                    return;
+                }
+                continue;
+            }
+        };
         // Coalesce: only the latest page matters, but keep every refresh.
         while let Ok(next) = rx.try_recv() {
             let mut refresh = std::mem::take(&mut req.refresh);
@@ -181,38 +240,36 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
             return;
         }
         let path = canonical(&req.path);
-        let refresh: Vec<PathBuf> = req.refresh.iter().map(|p| canonical(p)).collect();
-        let send = |ws: &Workspace, root: bool| {
-            let reply = Reply {
-                tag: req.tag,
-                root,
-                single: ws.root().mode == RootMode::SingleFile,
-                links: answer(ws, &path, &req.text),
-            };
-            out.send(reply).is_ok()
-        };
-        if let Some(ws) = workspaces.get(&path) {
+        let refresh: Vec<PathBuf> = std::mem::take(&mut req.refresh)
+            .iter()
+            .map(|p| canonical(p))
+            .collect();
+        let ws = if let Some(ws) = workspaces.get(&path) {
             if !refresh.is_empty() {
                 let _ = ws.refresh_paths(&refresh, &cancel);
             }
-            if !send(&ws, true) {
+            Ok(ws)
+        } else {
+            if let Ok(single) = Workspace::open_single(&path, opts.clone())
+                && !send(&single, &req, &path, false)
+            {
                 return;
             }
-            continue;
-        }
-        if let Ok(single) = Workspace::open_single(&path, opts.clone())
-            && !send(&single, false)
-        {
-            return;
-        }
-        // A freshly opened root has read every note: no refresh needed.
-        let ok = match workspaces.for_path(&path) {
-            Ok(ws) => send(&ws, true),
+            // A freshly opened root has read every note: no refresh needed.
+            workspaces.for_path(&path)
+        };
+        let ok = match ws {
+            Ok(ws) => {
+                subs.entry(ws.root().path.clone())
+                    .or_insert_with(|| ws.subscribe());
+                send(&ws, &req, &path, true)
+            }
             Err(e) => out
                 .send(Reply {
                     tag: req.tag,
                     root: true,
                     single: true,
+                    watching: false,
                     links: Err(e.to_string()),
                 })
                 .is_ok(),
@@ -220,6 +277,7 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
         if !ok {
             return;
         }
+        last = Some(req);
     }
 }
 
@@ -258,6 +316,7 @@ impl App {
         m.tag = None;
         m.serving = None;
         m.sent_at = None;
+        m.watching = false;
     }
 
     /// The current page (at `path`) has no LSP server: ask mdroots. The
@@ -266,19 +325,6 @@ impl App {
     pub(super) fn mdroots_page_changed(&mut self, path: PathBuf) {
         self.mdroots.active = true;
         self.mdroots_request(path.clone(), vec![path]);
-    }
-
-    /// The watcher reported `path` (not the current page) changed: refresh
-    /// it and re-ask the current page's links, e.g. a new note that a
-    /// `[[Title]]` link on the page names.
-    pub(super) fn mdroots_path_changed(&mut self, path: &Path) {
-        if !self.mdroots.active {
-            return;
-        }
-        let Some(page) = self.page.as_ref().and_then(|p| p.path.clone()) else {
-            return;
-        };
-        self.mdroots_request(page, vec![path.to_path_buf()]);
     }
 
     fn mdroots_request(&mut self, path: PathBuf, refresh: Vec<PathBuf>) {
@@ -328,6 +374,7 @@ impl App {
             }
             return;
         };
+        self.mdroots.watching = r.watching;
         self.mdroots.serving = Some(if r.root {
             Serving::Root
         } else {
@@ -396,6 +443,12 @@ impl App {
         })
     }
 
+    /// Whether the workspace that last answered for the page runs mdroots'
+    /// watcher (other notes' changes then update the page's links).
+    pub fn mdroots_watching(&self) -> bool {
+        self.mdroots.active && self.mdroots.watching
+    }
+
     /// How long the mdroots request in flight has waited.
     pub(super) fn mdroots_waiting(&self) -> Option<Duration> {
         let m = &self.mdroots;
@@ -455,6 +508,7 @@ mod tests {
             tag: old,
             root: true,
             single: false,
+            watching: false,
             links: Ok(links.clone()),
         });
         assert_eq!(app.link_target(0), None);
@@ -464,6 +518,7 @@ mod tests {
             tag: cur,
             root: false,
             single: true,
+            watching: false,
             links: Ok(links),
         });
         assert!(app.link_target(0).is_some());
@@ -487,6 +542,7 @@ mod tests {
             tag,
             root: false,
             single: true,
+            watching: false,
             links: Ok(single),
         });
         assert!(app.lsp_backlink().is_some(), "kept for the root reply");
@@ -502,6 +558,7 @@ mod tests {
             tag,
             root: true,
             single: false,
+            watching: false,
             links: Ok(rooted),
         });
         assert!(app.lsp_backlink().is_none());

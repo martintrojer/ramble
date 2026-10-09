@@ -225,8 +225,6 @@ impl App {
             return;
         };
         if !same_file(path, &current) {
-            // Another note changed (e.g. one a `[[Title]]` link here names).
-            self.mdroots_path_changed(path);
             return;
         }
         match ev {

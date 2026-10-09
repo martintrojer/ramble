@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ramble::app::{App, AppEvent, FsEvent, MdrootsOptions, StartOptions, StartTarget};
+use ramble::app::{App, AppEvent, MdrootsOptions, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
 use tempfile::TempDir;
 
@@ -279,18 +279,19 @@ fn a_session_never_writes_inside_the_browsed_tree() {
 }
 
 #[test]
-fn a_new_note_resolves_a_broken_title_link_after_the_watcher_reports_it() {
+fn a_new_note_resolves_a_broken_title_link_through_the_mdroots_watcher() {
     let (tree, cache) = notebook();
     let root = canon(tree.path());
     write(&root.join("p.md"), "# P\n\nSee [[Later Title]].\n");
     let mut app = open(tree.path(), cache.path(), "p.md");
     ready(&mut app);
+    assert!(app.mdroots_watching(), "mdroots must watch the root here");
     assert_eq!(target(&app, 0), None);
     assert_eq!(broken(&app), [0]);
 
+    // No ramble event: mdroots' watcher notices the new note on its own.
     let later = root.join("later.md");
     write(&later, "# Later Title\n");
-    app.event(AppEvent::FsWatch(later.clone(), FsEvent::Changed));
     pump_until(&mut app, "[[Later Title]] resolved", |a| {
         a.link_target(0).is_some()
     });
