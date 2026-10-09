@@ -37,6 +37,7 @@ mod scroll;
 mod search;
 pub mod sidebar;
 pub(crate) mod sidebar_width;
+pub mod textbox;
 mod visual;
 mod watch;
 
