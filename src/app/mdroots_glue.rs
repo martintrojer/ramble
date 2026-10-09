@@ -1,6 +1,6 @@
 //! Connects [mdroots](https://github.com/martintrojer/mdroots) to the app:
 //! the in-process backend for a page no configured `[[lsp.server]]` serves
-//! (spec docs/specs/2026-10-08-mdroots-migration.md, S2). It gives the
+//! (design: docs/specs/2026-10-08-mdroots-migration.md). It gives the
 //! page's link targets, broken-link dimming and `gd` targets, the
 //! `mdroots ○` / `mdroots ●` status label, the notes, search, tags and
 //! backlinks pickers' items, and the `K` preview of a link's target note.

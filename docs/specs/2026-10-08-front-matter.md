@@ -1,13 +1,12 @@
 # Front matter in the normal view
 
-Status: approved design (user answered Q1–Q6 "agreed to all", plus: parse
-as generously as possible; other tools can police the format).
+Status: current design.
 
 ## Problem
 
-Normal view drops front matter entirely (`src/doc.rs:235` records
-`Document::front_matter`; nothing draws it). Only raw view (`gR`) shows it,
-so a reader can't tell a page has metadata, let alone what it says.
+A reader should see that a page has metadata, and what it says, without
+switching to raw view (`gR`). Front matter is never drawn as markdown: it
+is metadata, not headings or rules.
 
 ## Behaviour
 
@@ -15,8 +14,7 @@ so a reader can't tell a page has metadata, let alone what it says.
   rendered row is a dim marker:
   `▸ front matter · 5 keys` (or `· 1 key`).
 - **Toggle.** `za` (vim fold toggle), or `Enter` with the cursor on the
-  marker row, expands or folds it. Once mouse support is on main, a
-  double-click on the marker toggles it too. The state is per page, kept
+  marker row, expands or folds it. The state is per page, kept
   across reloads of the same page, and not remembered between sessions.
   Folded is the default for every newly opened page.
 - **Expanded.** The marker becomes `▾ front matter`, followed by one row
@@ -32,22 +30,24 @@ so a reader can't tell a page has metadata, let alone what it says.
 - **Raw view** (`gR`) is unchanged: the source, front matter included.
 - **Print mode** (`--print`) is unchanged: front matter is left out.
 - **TOML front matter** (`+++` … `+++`) is supported as well as YAML
-  (`---` … `---`). Turn on pulldown-cmark's
-  `ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS`. Parse it with the existing
-  `toml` crate.
+  (`---` … `---`). `mdroots::syntax::markdown_options()` turns on
+  pulldown-cmark's metadata blocks for both.
 - **No special keys.** `title`, `tags` and the rest are all shown the
   same way.
 
 ## Parsing: generous, best effort
 
 The goal is to show whatever data can be extracted. ramble is not a
-linter. Every step falls back to the next one rather than failing.
+linter. Every step falls back to the next one rather than failing. The
+parsing is done by
+[mdroots](https://github.com/martintrojer/mdroots)' `mdroots::syntax`;
+these are the rules it follows for YAML and TOML blocks.
 
-1. **Real parser.** YAML uses a YAML library (see Dependencies) and TOML
-   uses `toml`. If the result is a mapping, use its top-level entries.
-   For the displayed text, take each value's source text where it can be
-   recovered (step 2's line scan gives it). Use the parser's value only
-   for its shape: list, map or scalar.
+1. **Real parser.** YAML uses a YAML parser and TOML a TOML parser. If
+   the result is a mapping, use its top-level entries. For the displayed
+   text, take each value's source text where it can be recovered (step
+   2's line scan gives it). Use the parser's value only for its shape:
+   list, map or scalar.
 2. **Line scan, used when the parser fails or returns something other
    than a mapping.** Walk the block line by line:
    - A line `key: value` or `key = value` at the smallest indentation in
@@ -69,11 +69,11 @@ The page body always renders, whatever the front matter contains.
 
 ## Implementation
 
-- Parsing lives in the `mdroots` crate (`mdroots::syntax`), not in
-  ramble. Its `Frontmatter` gives the block's range and format (`Yaml` or
-  `Toml`), `fields()` (key, `FieldValue`, the entry's source lines),
-  `parsed()` and `inner()` (the bytes between the fences);
-  `FieldValue::display` is the value as drawn.
+- Parsing lives in mdroots (`mdroots::syntax`), not in ramble. Its
+  `Frontmatter` gives the block's range and format (`Yaml` or `Toml`),
+  `fields()` (key, `FieldValue`, the entry's source lines), `parsed()`
+  and `inner()` (the bytes between the fences); `FieldValue::display` is
+  the value as drawn.
 - `src/doc.rs`: one `mdroots::syntax::parse_with` per page, with
   `unfenced_frontmatter` off (an unfenced header is prose to ramble).
   `Document` keeps the block's range, its kind (`FmKind::Yaml` or `Toml`)
@@ -87,17 +87,16 @@ The page body always renders, whatever the front matter contains.
   `expanded: bool` input.
 - `src/app`: a per-page `fm_expanded: bool`, the `za` binding
   (`z` is already a prefix, for `zz`/`zt`/`zb`), and `Enter` on the
-  marker row (checked before link-follow). Toggling re-renders through
-  the existing layout path. Add a help `BINDINGS` row for `za`; the clue
-  box picks it up automatically.
+  marker row (checked before link-follow), in `src/app/fold.rs`.
+  Toggling re-renders through the layout path. A help `BINDINGS` row
+  lists `za`; the clue box picks it up.
 - Dependencies: none of ramble's own; YAML and TOML parsing come with
-  `mdroots`.
-- README: one line under Reading. Spec `2026-10-07-ramble.md`: note that
-  front matter now has a folded marker.
+  mdroots.
 
 ## Testing
 
-- Parser tests live in `mdroots` (`mdroots-syntax`, `frontmatter.rs`):
+- Parser tests live in mdroots (the `mdroots-syntax` crate,
+  `tests/frontmatter.rs`):
   - valid YAML: scalars, lists (block and inline), a nested map, quoted
     values, a date;
   - broken YAML (bad indentation, a tab, an unclosed quote, a duplicate
@@ -105,7 +104,8 @@ The page body always renders, whatever the front matter contains.
   - TOML, including broken TOML falling back to `key = value` lines;
   - an empty block;
   - only comments or stray text gives `parsed = false` and no entries.
-- Render (TestBackend or rendered rows):
+- ramble's `tests/frontmatter.rs` keeps the UI tests. Render (rendered
+  rows):
   - The folded marker appears with the key count.
   - Expanded shows rows in source order, with keys padded and values
     clipped.

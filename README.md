@@ -29,10 +29,10 @@ looking at (`$VISUAL`, then `$EDITOR`), and ramble reloads the page when you com
 
 Other readers resolve links with their own guesses. ramble resolves them
 with mdroots, a markdown notebook index that understands the link styles of
-zk, Obsidian, marksman and plain relative paths across the whole notebook. If you'd rather it asked the
-language server your editor already uses, point it at
-[zk](https://github.com/zk-org/zk) or
-[marksman](https://github.com/artempyanykh/marksman) in the config.
+[zk](https://github.com/zk-org/zk), Obsidian,
+[marksman](https://github.com/artempyanykh/marksman) and plain relative
+paths across the whole notebook. If you'd rather it asked the language
+server your editor already uses, point it at zk or marksman in the config.
 
 ## What you get
 
