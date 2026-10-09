@@ -23,6 +23,10 @@ pub enum Effect {
         excerpt: String,
         initial: String,
     },
+    /// `C-e` in the review picker: edit comment `id`'s body.
+    EditReviewComment { id: u64, initial: String },
+    /// `<leader>rr`: export the batch and run the hand-back command.
+    SendReview,
 }
 
 impl App {
@@ -47,6 +51,10 @@ impl App {
                 excerpt,
                 initial,
             }) => self.run_comment_editor(path, lines, excerpt, initial),
+            Some(Effect::EditReviewComment { id, initial }) => {
+                self.run_review_comment_editor(id, &initial)
+            }
+            Some(Effect::SendReview) => self.run_review_send(),
             None => {}
         }
     }

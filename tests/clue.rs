@@ -183,12 +183,16 @@ fn leader_lists_groups_built_ins_and_launchers() {
     assert_eq!((z.desc.as_str(), z.group), ("+pickers", true));
     assert!(find("e").is_some_and(|r| !r.group), "e row (any text)");
     assert_eq!(find("o").unwrap().desc, "edit");
-    let r = find("r").expect("launcher prefix r");
-    assert_eq!((r.desc.as_str(), r.group), ("+launchers", true));
+    // `r` mixes the launchers with the built-in `<leader>rl`.
+    let r = find("r").expect("prefix r");
+    assert_eq!((r.desc.as_str(), r.group), ("+3 keys", true));
     assert_eq!(app.clue_title(), "Space");
     keys(&mut app, "r");
     assert_eq!(app.clue_title(), "Space r");
-    assert!(row_keys(&app).contains(&"r".to_string()));
+    assert_eq!(row_keys(&app), ["l", "r", "w"]);
+    // The launcher on `<leader>rr` replaces the built-in send.
+    assert_eq!(desc(&app, "r").unwrap(), "one");
+    assert_eq!(desc(&app, "l").unwrap(), "list the review comments");
 }
 
 #[test]

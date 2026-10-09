@@ -760,3 +760,254 @@ fn k_on_a_commented_line_shows_its_comments() {
     assert_eq!(app.hover_popup(), None);
     assert_eq!(app.status(), "No link under cursor");
 }
+
+fn leader(app: &mut App, s: &str) {
+    keys(app, &format!(" {s}"));
+}
+
+fn picker_labels(app: &App) -> Vec<String> {
+    let p = app.picker().expect("picker open");
+    p.items
+        .iter()
+        .map(|i| format!("{}  {}", i.label, i.detail))
+        .collect()
+}
+
+fn diff_comment(path: &str, commit: &str, body: &str) -> Comment {
+    let rev = Rev {
+        commit: commit.into(),
+        change: None,
+        summary: None,
+    };
+    Comment::on_diff(path, rev, Side::New, 2..=3, "x", body)
+}
+
+#[test]
+fn leader_rl_lists_the_batch_sorted_and_enter_jumps() {
+    let repo = Repo::new();
+    repo.write("b.md", DOC);
+    let mut r = repo.review();
+    r.add(Comment::on_file("doc.md", 9..=9, "delta", "on delta"))
+        .unwrap();
+    r.add(Comment::on_file("b.md", 5..=7, "beta", "in b\nmore"))
+        .unwrap();
+    r.add(Comment::on_file("doc.md", 3..=3, "alpha", "on alpha"))
+        .unwrap();
+    r.add(diff_comment("doc.md", "0123456789abcdef", "on a diff"))
+        .unwrap();
+    let mut app = repo.open("doc.md", DOC);
+    leader(&mut app, "rl");
+    assert_eq!(app.mode(), Mode::Picker);
+    assert_eq!(app.picker().unwrap().title, "Review comments");
+    assert_eq!(
+        picker_labels(&app),
+        [
+            "b.md:5-7  in b",
+            "doc.md:2-3 @01234567  on a diff",
+            "doc.md:3  on alpha",
+            "doc.md:9  on delta",
+        ]
+    );
+    assert!(
+        screen(&app)
+            .iter()
+            .any(|l| l.contains("C-d remove  C-e edit")),
+        "footer drawn"
+    );
+    // Enter on doc.md:9 (same page): the cursor lands on delta's row.
+    for _ in 0..3 {
+        send(&mut app, ctrl('n'));
+    }
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.mode(), Mode::Normal);
+    assert_eq!(app.cursor().row, row_of(&app, "delta"));
+    // A diff comment only says where it lives.
+    leader(&mut app, "rl");
+    send(&mut app, ctrl('n'));
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.status(), "Comment on 01234567 — open it in debrief");
+    assert!(
+        app.page()
+            .unwrap()
+            .path
+            .as_ref()
+            .unwrap()
+            .ends_with("doc.md")
+    );
+    // Another file: opened, cursor on the first row of line 5.
+    leader(&mut app, "rl");
+    send(&mut app, key(KeyCode::Enter));
+    assert!(app.page().unwrap().path.as_ref().unwrap().ends_with("b.md"));
+    assert_eq!(app.cursor().row, row_of(&app, "beta"));
+    assert_eq!(app.history_depth(), 1, "opened like a followed link");
+}
+
+#[test]
+fn the_list_filters_on_typed_text_and_c_d_removes() {
+    let repo = Repo::new();
+    let mut r = repo.review();
+    r.add(Comment::on_file("doc.md", 3..=3, "alpha", "first"))
+        .unwrap();
+    r.add(Comment::on_file("doc.md", 5..=5, "beta", "second"))
+        .unwrap();
+    let mut app = repo.open("doc.md", DOC);
+    assert_eq!(app.review_count(), 2);
+    leader(&mut app, "rl");
+    // `d` and `e` are typed text, not commands.
+    keys(&mut app, "sec");
+    assert_eq!(picker_labels(&app), ["doc.md:5  second"]);
+    send(&mut app, ctrl('d'));
+    assert_eq!(app.status(), "Comment removed (1 in batch)");
+    assert_eq!(app.mode(), Mode::Picker, "stays open");
+    assert!(picker_labels(&app).is_empty());
+    for _ in 0..3 {
+        send(&mut app, key(KeyCode::Backspace));
+    }
+    assert_eq!(picker_labels(&app), ["doc.md:3  first"]);
+    assert_eq!(repo.comments().len(), 1);
+    assert_eq!(repo.comments()[0].body, "first");
+    assert_eq!(app.review_count(), 1, "markers follow");
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.mode(), Mode::Normal);
+}
+
+#[test]
+fn c_e_in_the_list_edits_the_body_in_the_editor() {
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let app = repo.open("doc.md", DOC);
+    let (mut app, calls) = with_fake_editor(app, Fake::Write("better\n"));
+    leader(&mut app, "rl");
+    send(&mut app, ctrl('e'));
+    assert_eq!(
+        app.pending_effect(),
+        Some(&Effect::EditReviewComment {
+            id: repo.comments()[0].id,
+            initial: "note".into(),
+        })
+    );
+    app.run_pending_effect();
+    assert_eq!(calls.borrow()[0].argv[..2], ["myed", "-w"]);
+    assert_eq!(repo.comments()[0].body, "better");
+    assert_eq!(app.status(), "Comment edited");
+    assert_eq!(picker_labels(&app), ["doc.md:5  better"]);
+
+    let (mut app, _) = with_fake_editor(app, Fake::Fail);
+    send(&mut app, ctrl('e'));
+    app.run_pending_effect();
+    assert_eq!(
+        app.status(),
+        "editor: exited with status 3; comment not changed"
+    );
+    assert_eq!(repo.comments()[0].body, "better");
+}
+
+#[test]
+fn leader_rr_with_an_empty_batch_says_so() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    leader(&mut app, "rr");
+    assert_eq!(app.status(), "No comments to send");
+    assert!(app.pending_effect().is_none());
+}
+
+fn send_config(command: &[&str]) -> Config {
+    let mut c = config(None);
+    c.send.command = command.iter().map(|s| s.to_string()).collect();
+    c
+}
+
+#[test]
+fn leader_rr_pipes_the_markdown_to_the_command_and_clears() {
+    let repo = Repo::new();
+    let out = repo.root.parent().unwrap().join("out.md");
+    repo.add("doc.md", 5, 5);
+    repo.add("doc.md", 9, 9);
+    let path = repo.write("doc.md", DOC);
+    let script = format!("cat > '{}'", out.display());
+    let mut config = send_config(&["sh", "-c", &script]);
+    config.send.preamble = Some("Fix these.".into());
+    let mut app = repo.app(StartTarget::File(path), config);
+    leader(&mut app, "rr");
+    assert_eq!(app.pending_effect(), Some(&Effect::SendReview));
+    app.run_pending_effect();
+    assert_eq!(app.status(), "Review sent (2 comments)");
+    let md = std::fs::read_to_string(&out).unwrap();
+    assert!(md.starts_with("# Review feedback\n\nFix these.\n"), "{md}");
+    assert!(md.contains("## Item 1"), "{md}");
+    assert!(md.contains("## Item 2"), "{md}");
+    assert!(md.contains("note"), "{md}");
+    assert!(repo.comments().is_empty(), "batch cleared");
+    assert_eq!(app.review_count(), 0);
+    assert!(app.take_terminal_output().is_empty(), "no clipboard");
+}
+
+#[test]
+fn leader_rr_falls_back_to_the_clipboard_when_the_command_fails() {
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let path = repo.write("doc.md", DOC);
+    let mut app = repo.app(StartTarget::File(path), send_config(&["false"]));
+    let md = repo.review().to_markdown(None);
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "Review copied to clipboard (1 comments)");
+    assert_eq!(
+        app.take_terminal_output(),
+        ramble::app::osc52(&md).into_bytes()
+    );
+    assert!(repo.comments().is_empty(), "batch cleared");
+}
+
+#[test]
+fn leader_rr_keeps_the_batch_when_the_clipboard_fails() {
+    struct Broken;
+    impl ramble::app::Clipboard for Broken {
+        fn copy(&mut self, _: &str) -> anyhow::Result<()> {
+            anyhow::bail!("no terminal")
+        }
+    }
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let mut app = repo.open("doc.md", DOC).with_clipboard(Broken);
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "Review not sent: no terminal");
+    assert_eq!(repo.comments().len(), 1, "batch kept");
+    assert_eq!(app.review_count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn leader_rr_says_so_when_the_batch_cannot_be_cleared() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new();
+    repo.add("doc.md", 5, 5);
+    let mut app = repo.open("doc.md", DOC);
+    let reviews = repo.cache.join("reviews");
+    let perm = |mode| std::fs::set_permissions(&reviews, std::fs::Permissions::from_mode(mode));
+    perm(0o555).unwrap();
+    leader(&mut app, "rr");
+    app.run_pending_effect();
+    perm(0o755).unwrap();
+    let status = app.status().to_string();
+    assert!(
+        status.starts_with("Review copied, but the batch wasn't cleared: ")
+            && status.ends_with(" (sending again repeats it)"),
+        "{status}"
+    );
+    assert_eq!(repo.comments().len(), 1, "batch kept");
+}
+
+#[test]
+fn review_keys_are_unbound_with_review_disabled() {
+    let repo = Repo::new();
+    let path = repo.write("doc.md", DOC);
+    let mut c = config(None);
+    c.review.enabled = false;
+    let mut app = repo.app(StartTarget::File(path), c);
+    leader(&mut app, "r");
+    assert_eq!(app.status(), "No mapping", "<leader>r is no prefix");
+    leader(&mut app, "rl");
+    assert!(app.picker().is_none());
+}

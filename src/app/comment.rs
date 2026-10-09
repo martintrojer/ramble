@@ -163,8 +163,8 @@ impl App {
         self.review_refresh_markers();
     }
 
-    /// `C-e` (TUI suspended): write the text to a temp file, run the
-    /// editor on it through the launcher runner, save what it leaves.
+    /// `C-e` (TUI suspended): edit the text in the editor, save what it
+    /// leaves.
     pub(super) fn run_comment_editor(
         &mut self,
         path: String,
@@ -172,14 +172,27 @@ impl App {
         excerpt: String,
         initial: String,
     ) {
+        match self.edit_in_editor(&initial) {
+            Ok(text) => self.comment_save(Draft {
+                path,
+                lines,
+                excerpt,
+                text,
+            }),
+            Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
+        }
+    }
+
+    /// Write `initial` to a temp file, run the editor on it through the
+    /// launcher runner (TUI suspended), and return what it leaves. `Err`
+    /// says why nothing came back.
+    pub(super) fn edit_in_editor(&mut self, initial: &str) -> Result<String, String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
         let file =
             std::env::temp_dir().join(format!("ramble-comment-{}-{nanos}.md", std::process::id()));
-        if let Err(e) = std::fs::write(&file, &initial) {
-            return self.set_status(format!("editor: {e}"));
-        }
+        std::fs::write(&file, initial).map_err(|e| e.to_string())?;
         let mut argv = editor_words(self.env.as_ref());
         argv.push(file.display().to_string());
         let cwd = self
@@ -193,23 +206,11 @@ impl App {
         let result = (self.runner)(&cmd);
         let text = std::fs::read_to_string(&file);
         let _ = std::fs::remove_file(&file);
-        let err = match result {
-            Ok(Exit::Code(0)) => None,
-            Ok(Exit::Code(n)) => Some(format!("exited with status {n}")),
-            Ok(Exit::Signal(n)) => Some(format!("killed by signal {n}")),
-            Err(e) => Some(format!("{e:#}")),
-        };
-        if let Some(e) = err {
-            return self.set_status(format!("editor: {e}; comment not saved"));
-        }
-        match text {
-            Ok(text) => self.comment_save(Draft {
-                path,
-                lines,
-                excerpt,
-                text,
-            }),
-            Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
+        match result {
+            Ok(Exit::Code(0)) => text.map_err(|e| e.to_string()),
+            Ok(Exit::Code(n)) => Err(format!("exited with status {n}")),
+            Ok(Exit::Signal(n)) => Err(format!("killed by signal {n}")),
+            Err(e) => Err(format!("{e:#}")),
         }
     }
 }

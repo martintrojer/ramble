@@ -34,6 +34,10 @@ pub enum PickerAction {
     Prev,
     Accept,
     Close,
+    /// `C-d`: remove the selected review comment.
+    Remove,
+    /// `C-e`: edit the selected review comment in `$EDITOR`.
+    Edit,
 }
 
 /// How a reply becomes items, and what Enter does.
@@ -47,7 +51,13 @@ enum Content {
     Locations,
     /// Links of the current page (Enter follows).
     Links,
+    /// The review batch (Enter jumps to the comment; `C-d` removes, `C-e`
+    /// edits).
+    Review,
 }
+
+/// The review picker's footer.
+pub const REVIEW_PICKER_FOOTER: &str = "C-d remove  C-e edit";
 
 #[derive(Debug, Clone)]
 struct Picker {
@@ -68,6 +78,8 @@ struct Picker {
     /// Backlinks: the canonical path of the page the picker was opened
     /// from; Enter lands on the first link back to it.
     from: Option<PathBuf>,
+    /// Review picker: the comment id of each item, parallel to `items`.
+    ids: Vec<u64>,
 }
 
 impl Picker {
@@ -84,6 +96,7 @@ impl Picker {
             seq: 0,
             root,
             from: None,
+            ids: Vec::new(),
         }
     }
 
@@ -130,6 +143,8 @@ pub struct PickerView<'a> {
     /// Matching items, best first.
     pub items: Vec<&'a Item>,
     pub selected: usize,
+    /// Keys shown under the list (the review picker's).
+    pub footer: Option<&'static str>,
 }
 
 /// Picker state owned by [`App`].
@@ -149,6 +164,8 @@ pub(super) fn picker_keymap(keys: &[KeyEvent]) -> KeyResult {
     let a = match key.code {
         KeyCode::Char('n') if ctrl => P::Next,
         KeyCode::Char('p') if ctrl => P::Prev,
+        KeyCode::Char('d') if ctrl => P::Remove,
+        KeyCode::Char('e') if ctrl => P::Edit,
         KeyCode::Down => P::Next,
         KeyCode::Up => P::Prev,
         KeyCode::Enter => P::Accept,
@@ -171,6 +188,7 @@ impl App {
             loading: p.loading,
             items: p.filtered.iter().map(|&i| &p.items[i]).collect(),
             selected: p.selected,
+            footer: (p.content == Content::Review).then_some(REVIEW_PICKER_FOOTER),
         })
     }
 
@@ -347,7 +365,7 @@ impl App {
             Content::Notes => zk::note_items(&v, &p.root),
             Content::Tags => zk::tag_items(&v),
             Content::Locations => notebook::location_items(&v, &p.root),
-            Content::Links => Vec::new(),
+            Content::Links | Content::Review => Vec::new(),
         };
         p.set_items(items);
     }
@@ -379,6 +397,8 @@ impl App {
             PickerAction::Next | PickerAction::Prev => {}
             PickerAction::Close => self.close_picker(),
             PickerAction::Accept => self.picker_accept(),
+            PickerAction::Remove => self.review_picker_remove(),
+            PickerAction::Edit => self.review_picker_edit(),
         }
     }
 
@@ -407,6 +427,7 @@ impl App {
             return;
         };
         let (content, root, from) = (p.content, p.root.clone(), p.from.clone());
+        let id = p.ids.get(p.filtered[p.selected]).copied();
         self.close_picker();
         match content {
             Content::Tags => {
@@ -429,6 +450,88 @@ impl App {
                     self.open_backlink(path, item.line, from.as_deref());
                 }
             }
+            Content::Review => {
+                if let Some(id) = id {
+                    self.review_goto(id);
+                }
+            }
+        }
+    }
+
+    /// `<leader>rl`: the picker over every comment in the batch, sorted by
+    /// file and line.
+    pub(super) fn open_review_picker(&mut self) {
+        let Some(store) = self.review_batch() else {
+            return self.set_status(NO_BATCH);
+        };
+        let mut p = Picker::new(
+            "Review comments",
+            Content::Review,
+            store.root().to_path_buf(),
+        );
+        let (items, ids) = review_items(store);
+        p.ids = ids;
+        p.set_items(items);
+        self.show_picker(p);
+    }
+
+    /// Rebuild the open review picker's items after the batch changed,
+    /// keeping the filter and, as near as it can, the selection.
+    pub(super) fn review_picker_refresh(&mut self) {
+        let Some((items, ids)) = self.review_batch().map(review_items) else {
+            return;
+        };
+        let open = self.picker.open.as_mut();
+        let Some(p) = open.filter(|p| p.content == Content::Review) else {
+            return;
+        };
+        let selected = p.selected;
+        p.ids = ids;
+        p.set_items(items);
+        p.selected = selected.min(p.filtered.len().saturating_sub(1));
+    }
+
+    /// The comment id of the review picker's selected item.
+    fn review_picker_selected(&self) -> Option<u64> {
+        let p = self
+            .picker
+            .open
+            .as_ref()
+            .filter(|p| p.content == Content::Review)?;
+        p.filtered
+            .get(p.selected)
+            .and_then(|&i| p.ids.get(i))
+            .copied()
+    }
+
+    /// `C-d` in the review picker.
+    fn review_picker_remove(&mut self) {
+        let Some(id) = self.review_picker_selected() else {
+            return;
+        };
+        let Some(store) = self.review_store() else {
+            return;
+        };
+        let msg = match store.remove(id) {
+            Ok(_) => format!("Comment removed ({} in batch)", store.comments().len()),
+            Err(e) => format!("comment not removed: {e}"),
+        };
+        self.set_status(msg);
+        self.review_refresh_markers();
+        self.review_picker_refresh();
+    }
+
+    /// `C-e` in the review picker: edit the body through the effect path.
+    fn review_picker_edit(&mut self) {
+        let Some(id) = self.review_picker_selected() else {
+            return;
+        };
+        let body = self
+            .review_batch()
+            .and_then(|s| s.comments().iter().find(|c| c.id == id))
+            .map(|c| c.body.clone());
+        if let Some(body) = body {
+            self.pending_effect = Some(super::Effect::EditReviewComment { id, initial: body });
         }
     }
 
@@ -529,8 +632,47 @@ impl App {
     }
 }
 
-/// `<leader>z` (pending) and `<leader>z{f,s,z,b,l}`.
-pub(super) fn leader_op(typed: &[char]) -> Option<KeyResult> {
+/// Status when there is no batch to list or send (no file, review off).
+pub const NO_BATCH: &str = "No review batch here (open a file)";
+
+/// Picker items for every comment in `store`, sorted by file and line,
+/// with their ids. Working-copy comments open their file at the first
+/// line; diff comments name their short commit.
+fn review_items(store: &debrief_review::Review) -> (Vec<Item>, Vec<u64>) {
+    let mut cs: Vec<&debrief_review::Comment> = store.comments().iter().collect();
+    cs.sort_by(|a, b| (&a.path, a.lines, a.id).cmp(&(&b.path, b.lines, b.id)));
+    cs.into_iter()
+        .map(|c| {
+            let (a, b) = c.lines;
+            let lines = if a == b {
+                a.to_string()
+            } else {
+                format!("{a}-{b}")
+            };
+            let rev = c.rev.as_ref().map_or(String::new(), |r| {
+                format!(" @{}", super::review_glue::short_commit(&r.commit))
+            });
+            let item = Item {
+                label: format!("{}:{lines}{rev}", c.path),
+                detail: c.body.lines().next().unwrap_or("").to_string(),
+                path: c.rev.is_none().then(|| store.root().join(&c.path)),
+                line: Some(a as usize),
+                link: None,
+            };
+            (item, c.id)
+        })
+        .unzip()
+}
+
+/// `<leader>z` (pending), `<leader>z{f,s,z,b,l}`, and with comment mode
+/// on `<leader>r` (pending), `<leader>rl` and `<leader>rr`.
+pub(super) fn leader_op(typed: &[char], review: bool) -> Option<KeyResult> {
+    match typed {
+        ['r'] if review => return Some(KeyResult::Pending),
+        ['r', 'l'] if review => return Some(KeyResult::Action(Action::ReviewList)),
+        ['r', 'r'] if review => return Some(KeyResult::Action(Action::ReviewSend)),
+        _ => {}
+    }
     let op = match typed {
         ['z'] => return Some(KeyResult::Pending),
         ['z', 'f'] => Op::Notes,

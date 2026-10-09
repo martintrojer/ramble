@@ -1,4 +1,5 @@
-//! The picker overlay (centered list with a query line) and the `:`
+//! The picker overlay (centered list with a query line, and a key
+//! footer for the review picker) and the `:`
 //! command prompt on the status row.
 
 use ratatui::Frame;
@@ -35,7 +36,16 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
         .style(base);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
-    let [query, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+    let footer_h = u16::from(p.footer.is_some());
+    let [query, list, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(footer_h),
+    ])
+    .areas(inner);
+    if let Some(f) = p.footer {
+        frame.render_widget(Paragraph::new(f).style(base.fg(palette::OVERLAY)), footer);
+    }
     let prefix = if p.prompting { "query: " } else { "> " };
     let q = format!("{prefix}{}", p.input);
     let x = query.x + Span::raw(q.as_str()).width() as u16;

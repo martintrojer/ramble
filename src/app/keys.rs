@@ -109,6 +109,10 @@ pub enum Action {
     // Review comments.
     /// `]r` (true) / `[r`.
     ReviewJump(bool),
+    /// `<leader>rl`: the picker over the batch.
+    ReviewList,
+    /// `<leader>rr`: export the batch and hand it back.
+    ReviewSend,
     /// `cc`, visual `c` and the comment prompt.
     Comment(super::CommentAction),
     /// `gR`: toggle the raw source view.
@@ -220,9 +224,8 @@ impl App {
             LeaderMatch::NoMapping if typed == ['E'] => {
                 KeyResult::Action(Action::Sidebar(SidebarAction::Cycle))
             }
-            LeaderMatch::NoMapping => {
-                super::picker::leader_op(&typed).unwrap_or(KeyResult::Action(Action::NoMapping))
-            }
+            LeaderMatch::NoMapping => super::picker::leader_op(&typed, self.review_enabled())
+                .unwrap_or(KeyResult::Action(Action::NoMapping)),
         })
     }
 
@@ -406,6 +409,8 @@ impl App {
             A::Picker(a) => self.picker_action(a),
             A::Cmd(a) => self.cmd_action(a),
             A::ReviewJump(fwd) => self.review_jump(fwd),
+            A::ReviewList => self.open_review_picker(),
+            A::ReviewSend => self.review_send(),
             A::Comment(a) => self.comment_action(a),
             A::ToggleRaw => self.toggle_raw(),
             A::Help(a) => self.help_action(a),

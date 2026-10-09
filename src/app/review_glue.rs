@@ -17,6 +17,9 @@ pub const NO_REVIEW: &str = "No review comments";
 pub const NO_MORE_REVIEW: &str = "No more review comments";
 /// The marker drawn in the gutter and the file tree.
 pub const MARKER: char = '●';
+/// Status when `<leader>rr` finds an empty batch.
+pub const NOTHING_TO_SEND: &str = "No comments to send";
+
 /// How often the batch file is re-read.
 pub const REVIEW_POLL: Duration = Duration::from_secs(1);
 
@@ -71,6 +74,11 @@ pub fn canonical(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()))
 }
 
+/// The first 8 characters of a commit id, as the export shows it.
+pub(super) fn short_commit(commit: &str) -> String {
+    commit.chars().take(8).collect()
+}
+
 #[derive(Debug, Default)]
 pub(super) struct ReviewState {
     /// Cache dir override (tests); else `debrief_review::cache_dir()`.
@@ -104,6 +112,16 @@ impl App {
     /// calls [`App::review_refresh_markers`]).
     pub(crate) fn review_store(&mut self) -> Option<&mut Review> {
         self.review.store.as_mut()
+    }
+
+    /// There is a batch to list or send (`<leader>rl`, `<leader>rr`).
+    pub(crate) fn has_review_batch(&self) -> bool {
+        self.review.store.is_some()
+    }
+
+    /// The open batch, read-only.
+    pub(super) fn review_batch(&self) -> Option<&Review> {
+        self.review.store.as_ref()
     }
 
     /// The repo root of the open batch.
@@ -433,5 +451,102 @@ impl App {
             Some(&r) => self.goto_row(r),
             None => self.set_status(NO_MORE_REVIEW),
         }
+    }
+
+    /// Enter in the review picker: open a working-copy comment's file (if
+    /// it isn't the current page) and put the cursor on the first row of
+    /// its lines; a diff comment only says where it lives.
+    pub(super) fn review_goto(&mut self, id: u64) {
+        let Some(store) = &self.review.store else {
+            return;
+        };
+        let Some(c) = store.comments().iter().find(|c| c.id == id) else {
+            return self.set_status("Comment is gone");
+        };
+        if let Some(rev) = &c.rev {
+            let msg = format!(
+                "Comment on {} — open it in debrief",
+                short_commit(&rev.commit)
+            );
+            return self.set_status(msg);
+        }
+        let path = store.root().join(&c.path);
+        let lines = (c.lines.0 as usize, c.lines.1 as usize);
+        let here = self.page.as_ref().and_then(|p| p.path.as_deref());
+        if here.is_none_or(|h| canonical(h) != canonical(&path)) {
+            let before = self.page_id();
+            self.open_path_at(&path, None);
+            if self.page_id() == before {
+                return; // Not opened; open_path_at set the status.
+            }
+        }
+        if let Some(&row) = self.rows_for_lines(lines).first() {
+            self.jump_to_row(row);
+        }
+    }
+
+    /// `<leader>rr`: queue the hand-back unless there is nothing to send.
+    pub(super) fn review_send(&mut self) {
+        match &self.review.store {
+            None => self.set_status(super::picker::NO_BATCH),
+            Some(s) if s.comments().is_empty() => self.set_status(NOTHING_TO_SEND),
+            Some(_) => self.pending_effect = Some(super::Effect::SendReview),
+        }
+    }
+
+    /// The hand-back (TUI suspended): export the batch, pipe it to
+    /// `[send] command`, falling back to the clipboard, then clear the
+    /// batch. A failed hand-back keeps the batch.
+    pub(super) fn run_review_send(&mut self) {
+        let Some(store) = &self.review.store else {
+            return;
+        };
+        let n = store.comments().len();
+        let md = store.to_markdown(self.config.send.preamble.as_deref());
+        let root = store.root().to_path_buf();
+        let clipboard = &mut self.clipboard;
+        let mut copy = |text: &str| clipboard.copy(text).map_err(std::io::Error::other);
+        let sent = debrief_review::handback::send(&self.config.send.command, &md, &root, &mut copy);
+        let how = match sent {
+            Ok(debrief_review::handback::Sent::Command) => "sent",
+            Ok(debrief_review::handback::Sent::Clipboard) => "copied",
+            Err(e) => return self.set_status(format!("Review not sent: {e}")),
+        };
+        let Some(store) = &mut self.review.store else {
+            return;
+        };
+        let msg = match store.clear() {
+            Ok(()) if how == "sent" => format!("Review sent ({n} comments)"),
+            Ok(()) => format!("Review copied to clipboard ({n} comments)"),
+            Err(e) => format!(
+                "Review {how}, but the batch wasn't cleared: {e} (sending again repeats it)"
+            ),
+        };
+        self.set_status(msg);
+        self.review_refresh_markers();
+    }
+
+    /// `C-e` in the review picker (TUI suspended): edit comment `id`'s body
+    /// in the editor. An emptied body or a failing editor changes nothing.
+    pub(super) fn run_review_comment_editor(&mut self, id: u64, initial: &str) {
+        let text = match self.edit_in_editor(initial) {
+            Ok(t) => t,
+            Err(e) => return self.set_status(format!("editor: {e}; comment not changed")),
+        };
+        let body = text.trim();
+        if body.is_empty() {
+            return self.set_status("Empty comment not saved (C-d removes it)");
+        }
+        let Some(store) = &mut self.review.store else {
+            return;
+        };
+        let msg = match store.edit(id, body) {
+            Ok(true) => "Comment edited".to_string(),
+            Ok(false) => "Comment is gone".to_string(),
+            Err(e) => format!("comment not changed: {e}"),
+        };
+        self.set_status(msg);
+        self.review_refresh_markers();
+        self.review_picker_refresh();
     }
 }

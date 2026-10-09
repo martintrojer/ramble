@@ -350,6 +350,34 @@ pub(crate) static BINDINGS: &[Binding] = &[
         "previous review comment",
         App::can_review_jump,
     ),
+    b(
+        "<leader>rl",
+        Any,
+        G::Review,
+        "list the review comments",
+        App::has_review_batch,
+    ),
+    b(
+        "<leader>rr",
+        Any,
+        G::Review,
+        "send the review (command, else clipboard)",
+        App::has_review_batch,
+    ),
+    b(
+        "C-d",
+        P,
+        G::Review,
+        "in the review list: remove the comment",
+        App::has_review_batch,
+    ),
+    b(
+        "C-e",
+        P,
+        G::Review,
+        "in the review list: edit it in $EDITOR",
+        App::has_review_batch,
+    ),
     // Sidebar.
     // One row per `show` kind (D11): `desc` is static.
     b(
