@@ -1455,3 +1455,81 @@ fn the_box_follows_a_resize_and_a_reflow() {
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(only(&repo).2, "note ".repeat(15).trim());
 }
+
+/// `n` source lines `line1`..`linen`, viewed raw (a row per line).
+fn raw_lines(repo: &Repo, n: usize, w: u16, h: u16) -> App {
+    let body: String = (1..=n).map(|i| format!("line{i}\n")).collect();
+    let mut app = repo.open("doc.md", &body);
+    app.event(AppEvent::Resize(w, h));
+    keys(&mut app, "gR");
+    assert_eq!(row_text(&app, 0).trim_end(), "line1");
+    app
+}
+
+/// The box covers none of rows `lo..=hi` that are on screen.
+fn off_the_rows(app: &App, bx: &CommentBox, lo: usize, hi: usize) -> bool {
+    let s = app.scroll();
+    (lo.max(s)..=hi).all(|r| {
+        let y = (r - s) as u16;
+        y < bx.rect.y || y >= bx.rect.bottom()
+    })
+}
+
+#[test]
+fn a_selection_taller_than_the_screen_shows_its_last_rows_above_the_box() {
+    let repo = Repo::new();
+    let mut app = raw_lines(&repo, 60, 60, 12);
+    keys(&mut app, "ggVGc");
+    assert_eq!(app.mode(), Mode::Comment, "{}", app.status());
+    assert_eq!(app.comment_rows(), Some((0, 59)));
+    let (lines, bx, _) = draw_box(&app, 60, 12);
+    let bx = bx.unwrap();
+    assert!(off_the_rows(&app, &bx, 0, 59), "{:?}", bx.rect);
+    let y = (59 - app.scroll()) as u16;
+    assert_eq!(bx.rect.y, y + 1, "the last row just above the box");
+    assert!(
+        lines[y as usize].contains("line60"),
+        "{}",
+        lines[y as usize]
+    );
+    // The box grows; the rows move up out of its way.
+    for _ in 0..3 {
+        send(&mut app, ctrl('j'));
+    }
+    let (lines, bx, _) = draw_box(&app, 60, 12);
+    let bx = bx.unwrap();
+    assert_eq!(bx.rect.height, 6);
+    assert!(off_the_rows(&app, &bx, 0, 59), "{:?}", bx.rect);
+    assert!(lines[bx.rect.y as usize - 1].contains("line60"));
+}
+
+#[test]
+fn a_one_row_comment_at_heights_6_and_8_never_covers_its_row() {
+    let repo = Repo::new();
+    for (w, h) in [(40, 6), (100, 6), (40, 8), (100, 8)] {
+        let mut app = raw_lines(&repo, 40, w, h);
+        for r in 0..12 {
+            for (anchor, body) in [("zt", 1), ("zz", 1), ("zb", 1), ("zz", 3), ("zb", 3)] {
+                goto(&mut app, r);
+                keys(&mut app, anchor);
+                keys(&mut app, "cc");
+                assert_eq!(app.mode(), Mode::Comment, "{}", app.status());
+                // A three-line body: a 5-row box.
+                for _ in 1..body {
+                    send(&mut app, ctrl('j'));
+                }
+                let (lines, bx, _) = draw_box(&app, w, h);
+                let bx = bx.unwrap();
+                assert!(
+                    off_the_rows(&app, &bx, r, r),
+                    "{w}x{h} row {r} {anchor} body {body}: {:?} scroll {}",
+                    bx.rect,
+                    app.scroll()
+                );
+                let y = r - app.scroll();
+                assert!(lines[y].contains(&format!("line{}", r + 1)));
+                send(&mut app, key(KeyCode::Esc));
+            }
+        }
+    }
+}

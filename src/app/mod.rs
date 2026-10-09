@@ -593,6 +593,6 @@ impl App {
     }
 
     fn max_scroll(&self) -> usize {
-        self.total_rows().saturating_sub(self.viewport_height())
+        (self.total_rows() + self.comment_overscroll()).saturating_sub(self.viewport_height())
     }
 }

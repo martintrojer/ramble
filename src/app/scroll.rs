@@ -106,5 +106,6 @@ impl App {
         } else if self.cursor.row >= self.scroll + vh {
             self.scroll = self.cursor.row + 1 - vh;
         }
+        self.comment_fit();
     }
 }

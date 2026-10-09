@@ -61,6 +61,9 @@ pub(super) struct Draft {
     kind: Option<String>,
     /// The first text row the box shows.
     scroll: Cell<usize>,
+    /// The view's scroll when the box last fitted it (tells which way the
+    /// user scrolls).
+    view: usize,
 }
 
 /// The comment box as drawn: where, its border titles, the visible text
@@ -85,6 +88,13 @@ fn box_width(pane_w: u16) -> u16 {
     }
 }
 
+/// The box's height for `d`'s text in a pane `pane_w` wide: the wrapped
+/// rows up to [`BOX_ROWS`], and the border.
+fn box_height(d: &Draft, pane_w: u16) -> u16 {
+    let rows = d.text.rows(wrap_width(box_width(pane_w))).len();
+    rows.min(BOX_ROWS) as u16 + 2
+}
+
 /// The wrap width of a box `w` wide: inside the border, with a spare cell
 /// for the cursor at the end of a full row.
 fn wrap_width(w: u16) -> usize {
@@ -94,8 +104,10 @@ fn wrap_width(w: u16) -> usize {
 /// The box's top row and height, `h` rows wanted, for selected rows at
 /// screen rows `lo..=hi` (relative to the pane's top, may lie outside it)
 /// in a pane `ph` rows high: below the rows, else above them, else on the
-/// roomier side, shrunk to fit (at least one text row), else over the
-/// bottom. Rows scrolled off pin the box to that edge.
+/// roomier side, shrunk to fit (at least one text row), else at the
+/// bottom ([`fit_scroll`] scrolls the view so this only happens in a pane
+/// too short for the box and a row). Rows scrolled off pin the box to that
+/// edge.
 pub(super) fn place(lo: i64, hi: i64, h: u16, ph: u16) -> (u16, u16) {
     let (h, ph64) = (h.min(ph), i64::from(ph));
     let hh = i64::from(h);
@@ -119,6 +131,54 @@ pub(super) fn place(lo: i64, hi: i64, h: u16, ph: u16) -> (u16, u16) {
         return (y as u16, room as u16);
     }
     (ph - h, h)
+}
+
+/// Whether the box [`place`] puts in a pane `ph` high, the selected rows
+/// at screen rows `lo..=hi`, gets its full height (`h`, at most `ph - 1`)
+/// and covers none of them.
+fn fits(lo: i64, hi: i64, h: u16, ph: u16) -> bool {
+    let (y, got) = place(lo, hi, h, ph);
+    let (y, end) = (i64::from(y), i64::from(y) + i64::from(got));
+    let covers = lo.max(0) < end && y <= hi.min(i64::from(ph) - 1);
+    got >= h.min(ph.saturating_sub(1)) && !covers
+}
+
+/// The scroll (at most `max`) for a box `h` rows high and the selected
+/// rows `lo..=hi` in a pane `ph` high: `s` when the box fits there
+/// ([`fits`]; rows scrolled off fit); after a scroll by the user, the
+/// next scroll that way (`dir` above 0 down, below 0 up) where it does
+/// with the last selected row on screen; else the nearest such. A selection
+/// taller than the pane so ends up with its last rows just above the box.
+/// No scroll fitting (a pane too short for the box and one row), the one
+/// putting the last selected row above the box at the bottom. The view
+/// may scroll the box's height past the last row (see
+/// [`App::comment_overscroll`]).
+pub(super) fn fit_scroll(
+    lo: usize,
+    hi: usize,
+    h: u16,
+    ph: u16,
+    s: usize,
+    max: usize,
+    dir: i8,
+) -> usize {
+    let ok = |s: usize| fits(lo as i64 - s as i64, hi as i64 - s as i64, h, ph);
+    if ok(s) {
+        return s;
+    }
+    // Moving, keep the last selected row on screen.
+    let shown = |t: usize| t <= hi && hi < t + usize::from(ph);
+    let down = (s + 1..=max).find(|&t| shown(t) && ok(t));
+    let up = (0..s).rev().find(|&t| shown(t) && ok(t));
+    let pick = match (dir, down, up) {
+        (1.., Some(t), _) | (..=-1, _, Some(t)) => Some(t),
+        (_, Some(d), Some(u)) => Some(if d - s <= s - u { d } else { u }),
+        (_, d, u) => d.or(u),
+    };
+    pick.unwrap_or_else(|| {
+        let bh = usize::from(h.min(ph.saturating_sub(1)));
+        (hi + 1 + bh).saturating_sub(usize::from(ph)).min(max)
+    })
 }
 
 /// Pasted text for the box: CRLF and CR as LF, a tab as a space, other
@@ -227,7 +287,7 @@ impl App {
         let w = box_width(pane.width);
         let wrap = wrap_width(w);
         let rows = d.text.rows(wrap);
-        let want = rows.len().min(BOX_ROWS) as u16 + 2;
+        let want = box_height(d, pane.width);
         let scroll = self.scroll() as i64;
         let (lo, hi) = (r0 as i64 - scroll, r1 as i64 - scroll);
         let (y, h) = place(lo, hi, want, pane.height);
@@ -265,6 +325,39 @@ impl App {
             lines,
             cursor,
         })
+    }
+
+    /// Rows the page may scroll past its last row while the box is open:
+    /// the box's height, so the last rows can sit above it.
+    pub(super) fn comment_overscroll(&self) -> usize {
+        let (w, h) = (self.comment_pane_width(), self.viewport_height() as u16);
+        match &self.comment {
+            Some(d) if w >= 3 && h >= 3 => usize::from(box_height(d, w).min(h - 1)),
+            _ => 0,
+        }
+    }
+
+    /// Scroll the page so the box covers none of the commented rows on
+    /// screen ([`fit_scroll`]), keeping the cursor in the view.
+    pub(super) fn comment_fit(&mut self) {
+        let (w, ph) = (self.comment_pane_width(), self.viewport_height() as u16);
+        let Some((lo, hi)) = self.comment_rows() else {
+            return;
+        };
+        let max = self.max_scroll();
+        let Some(d) = &mut self.comment else { return };
+        if w < 3 || ph < 3 {
+            return;
+        }
+        let h = box_height(d, w);
+        let dir = self.scroll.cmp(&d.view) as i8;
+        let s = fit_scroll(lo, hi, h, ph, self.scroll, max, dir);
+        d.view = s;
+        if s != self.scroll {
+            self.scroll = s;
+            let row = self.cursor.row.clamp(s, s + usize::from(ph) - 1);
+            self.move_to_row(row);
+        }
     }
 
     /// Tab (`forward`) / S-Tab: move the draft's kind along untyped ->
@@ -374,6 +467,7 @@ impl App {
             text: TextBox::new(),
             kind: None,
             scroll: Cell::new(0),
+            view: self.scroll,
         });
         self.status.clear();
         self.mode = Mode::Comment;
@@ -416,6 +510,7 @@ impl App {
                 text: TextBox::from_text(&text),
                 kind,
                 scroll: Cell::new(0),
+                view: 0,
             }),
             Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
         }
@@ -455,7 +550,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{paste_text, place};
+    use super::{fit_scroll, paste_text, place};
 
     #[test]
     fn place_below_else_above_never_over_the_rows() {
@@ -473,6 +568,26 @@ mod tests {
         assert_eq!(place(25, 26, 4, 20), (16, 4), "off the bottom");
         assert_eq!(place(-3, 2, 4, 20), (3, 4), "partly visible: below");
         assert_eq!(place(1, 1, 30, 20), (2, 18), "taller than the pane");
+    }
+
+    #[test]
+    fn fit_scroll_moves_the_rows_out_of_the_box() {
+        // Rows 10..=12 at scroll 10 in a 7-row pane, a 3-row box: fits.
+        assert_eq!(fit_scroll(10, 12, 3, 7, 10, 90, 0), 10);
+        // Rows 0..=49 (taller than the pane): the last row above the box.
+        assert_eq!(fit_scroll(0, 49, 3, 11, 0, 90, 0), 42);
+        // One row at the top of a 4-row pane, a 3-row box: below it.
+        assert_eq!(fit_scroll(5, 5, 3, 4, 5, 90, 0), 5);
+        // One row in the middle of a 5-row pane: the nearest scroll, the
+        // row then one off the edge with the box beside it.
+        assert_eq!(fit_scroll(7, 7, 3, 5, 5, 90, 0), 6);
+        // The user scrolled: on that way, never back.
+        assert_eq!(fit_scroll(7, 7, 3, 5, 5, 90, 1), 6);
+        assert_eq!(fit_scroll(7, 7, 3, 5, 5, 90, -1), 4);
+        // A 3-row pane: no scroll fits; the row above a box at the bottom.
+        assert_eq!(fit_scroll(7, 7, 3, 3, 6, 90, 0), 7);
+        // Scrolled off: the box pins to the edge, the view stays.
+        assert_eq!(fit_scroll(7, 7, 3, 5, 9, 90, 1), 9);
     }
 
     #[test]

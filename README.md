@@ -141,7 +141,9 @@ server your editor already uses, point it at zk or marksman in the config.
 - `cc` comments on the cursor line; visual `c` on the selected lines. Works
   in the raw view too.
 - A comment box opens directly below the commented lines (above them when
-  there's no room), so they stay in view and stay highlighted. Its title
+  there's no room), so they stay in view and stay highlighted; it never
+  covers them (with no room either side the page scrolls until the last
+  commented line sits just above it). Its title
   shows the kind and the lines (`comment [ISSUE] L12-18`); it grows with the
   text up to 8 rows, then scrolls. Enter saves, `C-j` or `Alt-Enter` adds a
   new line, Esc cancels, `C-e` moves it into `$EDITOR`; readline keys and
