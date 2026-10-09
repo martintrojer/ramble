@@ -330,6 +330,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
         App::can_comment,
     ),
     b(
+        "Tab, S-Tab",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: next / previous kind ([ISSUE], …)",
+        App::has_comment_kinds,
+    ),
+    b(
         "K",
         N,
         G::Review,
@@ -511,10 +518,11 @@ pub(crate) static BINDINGS: &[Binding] = &[
 ];
 
 /// Named keys of the `keys` notation, as whole alternatives.
-pub(super) const NAMED: [(&str, KeyCode); 11] = [
+pub(super) const NAMED: [(&str, KeyCode); 12] = [
     ("Enter", KeyCode::Enter),
     ("Esc", KeyCode::Esc),
     ("Tab", KeyCode::Tab),
+    ("S-Tab", KeyCode::BackTab),
     ("Down", KeyCode::Down),
     ("Up", KeyCode::Up),
     ("Left", KeyCode::Left),
@@ -1213,7 +1221,7 @@ mod tests {
             assert!(has(k, &[Ctx::Visual]), "no visual row for {k}");
         }
         assert!(has("cc", &[Ctx::Normal]), "no row for cc");
-        for k in ["Enter", "Esc", "C-e"] {
+        for k in ["Enter", "Esc", "C-e", "Tab", "S-Tab"] {
             assert!(has(k, &[Ctx::Comment]), "no comment row for {k}");
         }
         for k in ["C-n", "C-p", "Enter", "Esc"] {

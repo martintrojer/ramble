@@ -16,12 +16,13 @@ pub enum Effect {
     /// Run a launcher, then reload the page.
     Launch(LaunchCommand),
     /// `C-e` in the comment prompt: edit `initial` in the editor, then
-    /// save it as a comment on `lines` of `path` (batch-relative).
+    /// save it as a comment of `kind` on `lines` of `path` (batch-relative).
     EditComment {
         path: String,
         lines: (u32, u32),
         excerpt: String,
         initial: String,
+        kind: Option<String>,
     },
     /// `C-e` in the review picker: edit comment `id`'s body.
     EditReviewComment { id: u64, initial: String },
@@ -50,7 +51,8 @@ impl App {
                 lines,
                 excerpt,
                 initial,
-            }) => self.run_comment_editor(path, lines, excerpt, initial),
+                kind,
+            }) => self.run_comment_editor(path, lines, excerpt, initial, kind),
             Some(Effect::EditReviewComment { id, initial }) => {
                 self.run_review_comment_editor(id, &initial)
             }

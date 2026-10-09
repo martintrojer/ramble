@@ -2,10 +2,11 @@
 //! visual `c` on the selection's source lines. Lines and excerpt are
 //! frozen from the displayed document when `c` is pressed; a one-line
 //! prompt takes the body (Enter saves, Esc cancels, `C-e` moves it into
-//! the editor). Comments go to the debrief-review batch for the page's
-//! repo root.
+//! the editor, Tab / S-Tab pick the kind from `[review] kinds`). Comments
+//! go to the debrief-review batch for the page's repo root.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use debrief_review::Kind;
 
 use super::effect::Effect;
 use super::keys::{Action, KeyResult};
@@ -32,6 +33,8 @@ pub enum CommentAction {
     Cancel,
     /// `C-e`: edit the body in `$VISUAL` / `$EDITOR`.
     Editor,
+    /// Tab (true) / S-Tab: the next / previous kind, through untyped.
+    Kind(bool),
 }
 
 /// A comment being typed: where it goes, frozen at `c`.
@@ -43,6 +46,8 @@ pub(super) struct Draft {
     lines: (u32, u32),
     excerpt: String,
     text: String,
+    /// The kind id; new comments start untyped.
+    kind: Option<String>,
 }
 
 /// Keys while typing a comment.
@@ -56,6 +61,8 @@ pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
         KeyCode::Enter => CommentAction::Save,
         KeyCode::Esc => CommentAction::Cancel,
         KeyCode::Backspace => CommentAction::Backspace,
+        KeyCode::Tab | KeyCode::Char('\t') => CommentAction::Kind(true),
+        KeyCode::BackTab => CommentAction::Kind(false),
         KeyCode::Char(c) if !ctrl => CommentAction::Input(c),
         _ => return KeyResult::None,
     };
@@ -68,10 +75,48 @@ impl App {
         self.review_enabled() && self.page.as_ref().is_some_and(|p| p.path.is_some())
     }
 
-    /// The typed comment as the prompt shows it.
+    /// Comment mode is on and `[review] kinds` lists some (Tab cycles).
+    pub(crate) fn has_comment_kinds(&self) -> bool {
+        self.can_comment() && !self.config.review.kinds.is_empty()
+    }
+
+    /// The typed comment as the prompt shows it, its kind in the label
+    /// (`comment [ISSUE]: `).
     pub fn comment_prompt(&self) -> Option<String> {
         let d = self.comment.as_ref()?;
-        Some(format!("{COMMENT_PROMPT}{}", d.text))
+        Some(match &d.kind {
+            Some(k) => format!("comment [{}]: {}", Kind::label(k), d.text),
+            None => format!("{COMMENT_PROMPT}{}", d.text),
+        })
+    }
+
+    /// Tab (`forward`) / S-Tab: move the draft's kind along untyped ->
+    /// `[review] kinds` in order -> untyped. No kinds: nothing happens.
+    fn comment_cycle_kind(&mut self, forward: bool) {
+        let ids: Vec<&str> = self
+            .config
+            .review
+            .kinds
+            .iter()
+            .map(|k| k.id.as_str())
+            .collect();
+        let Some(d) = &mut self.comment else { return };
+        if ids.is_empty() {
+            return;
+        }
+        // Positions 0..n are the kinds, n is untyped.
+        let n = ids.len();
+        let at = d
+            .kind
+            .as_deref()
+            .and_then(|k| ids.iter().position(|i| *i == k))
+            .unwrap_or(n);
+        let next = if forward {
+            (at + 1) % (n + 1)
+        } else {
+            (at + n) % (n + 1)
+        };
+        d.kind = ids.get(next).map(|s| s.to_string());
     }
 
     pub(super) fn comment_action(&mut self, a: CommentAction) {
@@ -87,6 +132,7 @@ impl App {
                     d.text.pop();
                 }
             }
+            CommentAction::Kind(forward) => self.comment_cycle_kind(forward),
             CommentAction::Cancel => {
                 self.comment_end();
             }
@@ -102,6 +148,7 @@ impl App {
                         lines: d.lines,
                         excerpt: d.excerpt,
                         initial: d.text,
+                        kind: d.kind,
                     });
                 }
             }
@@ -147,6 +194,7 @@ impl App {
             lines: (a as u32, b as u32),
             excerpt: excerpt.to_string(),
             text: String::new(),
+            kind: None,
         });
         self.status.clear();
         self.mode = Mode::Comment;
@@ -161,7 +209,8 @@ impl App {
         let Some(store) = self.review_store() else {
             return self.set_status("Can't comment: no review batch");
         };
-        let c = debrief_review::Comment::on_file(d.path, d.lines.0..=d.lines.1, d.excerpt, body);
+        let c = debrief_review::Comment::on_file(d.path, d.lines.0..=d.lines.1, d.excerpt, body)
+            .with_kind(d.kind);
         let msg = match store.add(c) {
             Ok(_) => format!("Comment added ({} in batch)", store.comments().len()),
             Err(e) => format!("comment not saved: {e}"),
@@ -178,6 +227,7 @@ impl App {
         lines: (u32, u32),
         excerpt: String,
         initial: String,
+        kind: Option<String>,
     ) {
         match self.edit_in_editor(&initial) {
             Ok(text) => self.comment_save(Draft {
@@ -185,6 +235,7 @@ impl App {
                 lines,
                 excerpt,
                 text,
+                kind,
             }),
             Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
         }

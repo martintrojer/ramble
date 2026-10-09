@@ -655,6 +655,105 @@ fn ctrl_e_seeds_the_file_with_the_typed_text() {
 }
 
 #[test]
+fn tab_cycles_the_kind_through_untyped_and_saves_it() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "ccwhy");
+    assert_eq!(
+        app.comment_prompt().unwrap(),
+        "comment: why",
+        "starts untyped"
+    );
+    let tab = key(KeyCode::Tab);
+    let back = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+    let mut labels = Vec::new();
+    for _ in 0..5 {
+        send(&mut app, tab);
+        labels.push(app.comment_prompt().unwrap());
+    }
+    assert_eq!(
+        labels,
+        [
+            "comment [ISSUE]: why",
+            "comment [SUGGESTION]: why",
+            "comment [QUESTION]: why",
+            "comment [NIT]: why",
+            "comment: why",
+        ]
+    );
+    send(&mut app, back);
+    assert_eq!(app.comment_prompt().unwrap(), "comment [NIT]: why");
+    send(&mut app, back);
+    send(&mut app, key(KeyCode::Char('\t')));
+    assert_eq!(app.comment_prompt().unwrap(), "comment [NIT]: why");
+    send(&mut app, back);
+    assert_eq!(
+        screen(&app)[ROWS as usize - 1].trim_end(),
+        "comment [QUESTION]: why"
+    );
+    send(&mut app, key(KeyCode::Enter));
+    let cs = repo.comments();
+    assert_eq!(cs[0].kind.as_deref(), Some("question"));
+    assert_eq!(cs[0].body, "why");
+    keys(&mut app, "ccplain");
+    assert_eq!(
+        app.comment_prompt().unwrap(),
+        "comment: plain",
+        "next one untyped"
+    );
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(repo.comments()[1].kind, None);
+}
+
+#[test]
+fn configured_kinds_replace_the_builtins_and_none_leaves_tab_inert() {
+    let repo = Repo::new();
+    let path = repo.write("doc.md", DOC);
+    let mut c = config(None);
+    c.review.kinds = vec![debrief_review::Kind {
+        id: "praise".into(),
+        definition: None,
+    }];
+    let mut app = repo.app(StartTarget::File(path.clone()), c);
+    keys(&mut app, "ccx");
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(app.comment_prompt().unwrap(), "comment [PRAISE]: x");
+    send(&mut app, key(KeyCode::Tab));
+    assert_eq!(app.comment_prompt().unwrap(), "comment: x");
+    send(&mut app, key(KeyCode::Esc));
+    let mut c = config(None);
+    c.review.kinds = vec![];
+    let mut app = repo.app(StartTarget::File(path), c);
+    keys(&mut app, "ccx");
+    send(&mut app, key(KeyCode::Tab));
+    send(
+        &mut app,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
+    assert_eq!(app.comment_prompt().unwrap(), "comment: x");
+    assert_eq!(app.mode(), Mode::Comment);
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(repo.comments()[0].kind, None);
+}
+
+#[test]
+fn ctrl_e_keeps_the_kind_picked_in_the_prompt() {
+    let repo = Repo::new();
+    let app = repo.open("doc.md", DOC);
+    let (mut app, _calls) = with_fake_editor(app, Fake::Write("edited\n"));
+    keys(&mut app, "ccx");
+    send(&mut app, key(KeyCode::Tab));
+    send(&mut app, ctrl('e'));
+    app.run_pending_effect();
+    let cs = repo.comments();
+    assert_eq!(
+        (cs[0].body.as_str(), cs[0].kind.as_deref()),
+        ("edited", Some("issue"))
+    );
+}
+
+#[test]
 fn ctrl_e_with_an_emptied_file_saves_nothing() {
     let repo = Repo::new();
     let app = repo.open("doc.md", DOC);
