@@ -19,9 +19,10 @@ use serde_json::Value;
 use super::keys::{Action, KeyResult};
 use super::mdroots_glue::{PickerAnswer, PickerQuery};
 use super::{App, Mode};
+use crate::backend::lsp::notebook::{self as lsp_notebook, zk};
 use crate::lsp::Kind;
 use crate::nav::{self, Target};
-use crate::notebook::{self, Item, Op, Sources, zk};
+use crate::notebook::{self, Item, Op, Sources};
 
 fn canonical(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
@@ -316,11 +317,11 @@ impl App {
         let Some(path) = page.path.clone() else {
             return;
         };
-        let Some(pos) = notebook::backlinks_position(kind, &page.doc, client.encoding()) else {
+        let Some(pos) = lsp_notebook::backlinks_position(kind, &page.doc, client.encoding()) else {
             self.set_status("Backlinks need mdroots or a language server");
             return;
         };
-        let params = notebook::references_params(&path, pos);
+        let params = lsp_notebook::references_params(&path, pos);
         let sent = self.picker_request(
             "Backlinks",
             Content::Locations,
@@ -435,7 +436,7 @@ impl App {
         let items = match p.content {
             Content::Notes => zk::note_items(&v, &p.root),
             Content::Tags => zk::tag_items(&v),
-            Content::Locations => notebook::location_items(&v, &p.root),
+            Content::Locations => lsp_notebook::location_items(&v, &p.root),
             Content::Links | Content::Review => Vec::new(),
         };
         p.set_items(items);

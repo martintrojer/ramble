@@ -269,9 +269,9 @@ fn zk_end_to_end() {
         &client,
         &rx,
         "textDocument/references",
-        ramble::notebook::references_params(&a, lsp_types::Position::new(0, 0)),
+        ramble::lsp::notebook::references_params(&a, lsp_types::Position::new(0, 0)),
     );
-    let items = ramble::notebook::location_items(&refs, &root);
+    let items = ramble::lsp::notebook::location_items(&refs, &root);
     let mut details: Vec<&str> = items.iter().map(|i| i.detail.as_str()).collect();
     details.sort();
     // zk 0.15.6 reports the line of the first substring hit of the target
@@ -282,7 +282,7 @@ fn zk_end_to_end() {
     assert!(items.iter().any(|i| i.label == "Tagged"), "{items:?}");
 
     // Each zk adapter function, through the shared parsers.
-    use ramble::notebook::zk;
+    use ramble::lsp::notebook::zk;
     let exec = |params: Value| request(&client, &rx, zk::EXECUTE, params);
     let titles = |items: Vec<ramble::notebook::Item>| {
         let mut t: Vec<String> = items.into_iter().map(|i| i.label).collect();

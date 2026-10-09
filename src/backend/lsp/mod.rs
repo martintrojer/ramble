@@ -13,6 +13,7 @@
 //! so the reader sees end of output and reports [`LspEvent::Exited`].
 
 mod framing;
+pub mod notebook;
 mod position;
 mod uri;
 

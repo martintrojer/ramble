@@ -1,8 +1,8 @@
 # ramble on mdroots
 
-Status: current design. Steps S0–S3 are in place; S4 (moving the optional
-language-server backend into its own module) is the remaining, optional
-step.
+Status: current design. Steps S0–S3 are in place, and so is S4's move of the
+optional language-server backend into its own module; the rest of S4 is
+optional.
 
 ramble embeds [mdroots](https://github.com/martintrojer/mdroots), a markdown
 notebook index, as its built-in backend. A third-party language server
@@ -133,10 +133,12 @@ tree and that a plain folder caches only in the given dir.
 
 ## Remaining: S4, the LSP backend module (optional)
 
-- Move `src/lsp/` and the LSP half of `src/app/lsp_glue.rs` into
-  `src/backend/lsp/`, translating documentLink, hover, references and the
-  zk commands into mdroots' types. The zk adapter in `src/notebook.rs`
-  moves with it.
+- Done: the module move. The client (`src/lsp/`), the zk adapter and the
+  LSP-only picker helpers (from `src/notebook.rs`) live in
+  `src/backend/lsp/`; `ramble::lsp` stays as a re-export. The App glue
+  stays in `src/app/lsp_glue.rs`, where it reaches the app's private
+  state. Its replies (documentLink, hover, references, zk commands) are
+  not translated into mdroots' types.
 - Code-path links: resolve them from mdroots' `CodeMention` links with
   `Options::code_dirs` (the page's dir, its VCS root, the tree root) and
   delete the resolver in `src/app/codepath.rs`.

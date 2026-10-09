@@ -8,8 +8,8 @@ use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+use ramble::lsp::notebook;
 use ramble::lsp::{Client, Kind, LspEvent, ServerSpec, canonical_uri, uri_to_path};
-use ramble::notebook;
 use serde_json::{Value, json};
 
 fn marksman_on_path() -> bool {

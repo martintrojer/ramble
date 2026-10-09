@@ -3,11 +3,15 @@
 //! Module layout follows `docs/specs/2026-10-07-ramble.md` § Architecture.
 
 pub mod app;
+pub mod backend;
 pub mod cli;
 pub mod config;
 pub mod doc;
-pub mod lsp;
 pub mod nav;
 pub mod notebook;
 pub mod render;
 pub mod ui;
+
+// The optional LSP backend, also at the crate root so `ramble::lsp::…` paths
+// (tests, the fake-lsp binary) keep working.
+pub use backend::lsp;

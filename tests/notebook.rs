@@ -5,8 +5,9 @@ use std::path::Path;
 
 use ramble::app::picker_filter;
 use ramble::doc;
+use ramble::lsp::notebook::{self as lsp_notebook, zk};
 use ramble::lsp::{Encoding, Kind};
-use ramble::notebook::{self, Item, Op, Sources, zk};
+use ramble::notebook::{self, Item, Op, Sources};
 use serde_json::json;
 
 #[test]
@@ -55,19 +56,19 @@ fn zk_results_become_items() {
 fn backlinks_positions_per_server() {
     let d = doc::parse("Intro 😀\n\n## Topic\n".into());
     assert_eq!(
-        notebook::backlinks_position(Kind::Zk, &d, Encoding::Utf32),
+        lsp_notebook::backlinks_position(Kind::Zk, &d, Encoding::Utf32),
         Some(lsp_types::Position::new(0, 0))
     );
     assert_eq!(
-        notebook::backlinks_position(Kind::Marksman, &d, Encoding::Utf16),
+        lsp_notebook::backlinks_position(Kind::Marksman, &d, Encoding::Utf16),
         Some(lsp_types::Position::new(2, 0))
     );
     let none = doc::parse("no heading\n".into());
     assert_eq!(
-        notebook::backlinks_position(Kind::Marksman, &none, Encoding::Utf16),
+        lsp_notebook::backlinks_position(Kind::Marksman, &none, Encoding::Utf16),
         None
     );
-    let p = notebook::references_params(Path::new("/x/a.md"), lsp_types::Position::new(2, 0));
+    let p = lsp_notebook::references_params(Path::new("/x/a.md"), lsp_types::Position::new(2, 0));
     assert_eq!(p["context"]["includeDeclaration"], json!(false));
     assert_eq!(p["position"], json!({"line": 2, "character": 0}));
 }
@@ -83,7 +84,7 @@ fn locations_label_with_first_heading_and_line() {
             .as_str()
             .to_string()
     };
-    let items = notebook::location_items(
+    let items = lsp_notebook::location_items(
         &json!([{"uri": uri("b.md"), "range": {"start": {"line": 3, "character": 0},
                                                "end": {"line": 3, "character": 0}}},
                 {"uri": uri("plain.md"), "range": {"start": {"line": 0, "character": 0},
@@ -223,7 +224,7 @@ fn front_matter_is_not_a_heading_for_labels() {
     let uri = ramble::lsp::canonical_uri(&root.join("t.md"))
         .as_str()
         .to_string();
-    let items = notebook::location_items(
+    let items = lsp_notebook::location_items(
         &json!([{"uri": uri, "range": {"start": {"line": 0, "character": 0},
                                        "end": {"line": 0, "character": 0}}}]),
         &root,
@@ -238,7 +239,7 @@ fn marksman_backlinks_position_skips_front_matter() {
     let src = std::fs::read_to_string("tests/fixtures/zk/tagged.md").unwrap();
     assert!(src.starts_with("---\n"), "fixture must have front matter");
     let doc = ramble::doc::parse(src.clone());
-    let pos = ramble::notebook::backlinks_position(
+    let pos = lsp_notebook::backlinks_position(
         ramble::lsp::Kind::Marksman,
         &doc,
         ramble::lsp::Encoding::Utf16,
