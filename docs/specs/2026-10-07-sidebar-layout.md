@@ -1,6 +1,6 @@
 # Sidebar: visibility, modes, sizing, clipping
 
-Status: approved design (user answers Q1–Q6, plus the directory-start rule).
+Status: approved design (user answers Q1–Q6, plus the directory-start rule; D8–D11 added later on request).
 
 ## Problem
 
@@ -35,13 +35,13 @@ sidebar, so the key always has a visible effect.
 
 `:Sidebar files|outline|split` sets the mode and shows the sidebar.
 `:Sidebar toggle`, `:Sidebar show` and `:Sidebar hide` control visibility.
-`:Sidebar off` is kept as an alias of `hide`.
+There is no `:Sidebar off`; use `:Sidebar hide` (no aliases, D11).
 
 ### D2. Config
 
 ```toml
 [sidebar]
-show = true          # shown at start (see D3 and D6 for the exceptions)
+show = "always"      # always | never | auto (D11)
 default = "auto"     # auto | files | outline | split
 reading = "outline"  # what auto shows while a page is loaded
 width = "auto"       # "auto", or a number of columns
@@ -52,12 +52,10 @@ split_ratio = 0.5
 show_all = false
 ```
 
-Older configs keep working without a warning. `default = "off"` means
-`show = false` with `default = "auto"`, and a numeric `width` keeps its old
-meaning.
-
-`SidebarMode` loses `Off`. The parse accepts `"off"` and maps it as above.
-Code that matched on `Off` now asks whether the sidebar is shown (D3).
+`SidebarMode` has no `Off`; whether the sidebar is drawn is `show` (D11).
+No old spellings are accepted: `default = "off"`, `show = true|false` and
+`:Sidebar off` are config or command errors (superseded by D11, which drops
+the compatibility shims).
 
 ### D3. Visibility state
 
@@ -223,6 +221,66 @@ is the current page's file. The selection highlight is unchanged.
 - `.` and `-` get help `BINDINGS` rows in the sidebar context. The clue
   box needs nothing.
 
+### D11. `show = always | never | auto` (peek); no compatibility shims (user request)
+
+`sidebar.show` takes exactly one of three values. There are no aliases:
+`true`, `false` and the old `default = "off"` are config errors, reported
+by the existing `deny_unknown_fields` and enum parse error path.
+
+| `show` | Meaning |
+|---|---|
+| `always` (default) | Shown, as D3 steps 1–4 describe with the user flag starting at shown. |
+| `never` | Hidden unless toggled (`<leader>e`), as D3 with the flag starting at hidden. |
+| `auto` | Peek: shown while you're using it, hidden while you read. |
+
+Rules in `auto`:
+
+- **Shown:**
+  - no page loaded (D3 step 1, unchanged; the tree has focus);
+  - focus moves into a sidebar pane: `C-w h`/`C-w l` (whichever points at
+    the sidebar per D9), `C-w w`, `C-w W` or `C-w p` into it, or `:Sidebar
+    files|outline|split`;
+  - `<leader>E` (it shows, as D1).
+- **Hidden:**
+  - a page is opened from the tree or the outline (`Enter`, `o`,
+    double-click), because you chose and went back to reading;
+  - focus returns to the content: `C-w` back, a click in the text;
+  - `Esc` in a sidebar pane with no filter set. The first `Esc` clears the
+    filter, as now; the second hides;
+  - the first page after a directory start (focus moves to the content,
+    D3/A2).
+- **Unchanged:** following a link (`gd`), `C-o`/`Tab` history, live
+  reload, pickers and help. None of these touch the sidebar, so a peeked
+  sidebar stays as it was.
+- **`<leader>e` pins:** in `auto`, `<leader>e` on a hidden sidebar shows it
+  and pins it: it behaves as `always` until `<leader>e` hides it again,
+  which returns to peek. `:Sidebar show` pins too; `:Sidebar hide` unpins
+  and hides.
+- **Overlay instead of reflow:**
+  - When a peek opens and the terminal has spare room (the page is already
+    at `render.max_width` with columns left over, D5 step 4), draw the
+    sidebar beside the page as now.
+  - Otherwise draw it over the page's sidebar-side edge, with a border, and
+    leave the page laid out unchanged (no `resize` re-layout), so the text
+    doesn't jump.
+  - A pinned sidebar always lays out beside the page, as today.
+  - Mouse hit-testing uses the overlay rect when it is drawn (popups-first
+    order: the overlay sits above the text).
+- **Narrow terminals:** in `auto`, below `auto_hide_below` the sidebar is
+  never pinned beside the page. A peek or a pin opens it as an overlay. The
+  step-2 narrow override of D3 does not apply in `auto`.
+- **Mouse:** clicks in a peeked sidebar work as now. A click in the text
+  hides it (focus returns). There is no hot edge: nothing opens a hidden
+  sidebar by mouse.
+- **Help and clue:** the `C-w` rows read the same. The `<leader>e` row reads
+  "show or hide the sidebar (pin in auto)" when `show = auto`.
+
+Code and docs that carried the old spellings are cleaned up with this
+change: the raw `Off` enum and its mapping in `config.rs`, the
+`:Sidebar off` arm in `cmdline.rs`, tests that use `show = false` or
+`default = "off"` (they switch to `show = "never"`), `config.default.toml`,
+and the README.
+
 ## Out of scope
 
 - Resizing the sidebar with the mouse or keys (`C-w <`/`C-w >`). That can
@@ -257,13 +315,13 @@ is the current page's file. The selection highlight is unchanged.
   - A deep tree caps its indent.
   - A `●` row keeps its mark.
 - Config: `show`, `width = "auto"`, a numeric `width`, `min_width` and
-  `max_width`, `auto_hide_below`. Legacy `default = "off"` maps to
-  `show = false`.
+  `max_width`, `auto_hide_below`. `show = always|never|auto` (D11); the old
+  `show = true|false` and `default = "off"` are rejected.
 
 ## Implementation checklist
 
 1. config: `show`, `width: Auto | Fixed(u16)`, `min_width`, `max_width`,
-   `auto_hide_below`. Drop `SidebarMode::Off` and parse legacy `"off"`.
+   `auto_hide_below`. No `SidebarMode::Off` and no legacy spellings (D11).
    Update `config.default.toml` and the README config section.
 2. app/sidebar: a `shown` flag plus a narrow override, a `visible()` that
    applies the D3 order, `Toggle` and `Cycle` actions, `<leader>e` and
