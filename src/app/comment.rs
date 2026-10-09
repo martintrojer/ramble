@@ -4,8 +4,9 @@
 //! anchored below the commented rows (above when it doesn't fit) takes
 //! the body: Enter saves, `C-j` / `Alt-Enter` insert a newline, Esc
 //! cancels, `C-e` moves it into the editor, Tab / S-Tab pick the kind
-//! from `[review] kinds`, readline keys edit it (see [`super::textbox`]).
-//! The rows stay highlighted while typing. Comments go to the
+//! from `[review] kinds`, readline keys edit it (see [`super::textbox`]),
+//! PageUp / PageDown and the wheel scroll the page behind it. The rows
+//! stay highlighted while typing. Comments go to the
 //! debrief-review batch for the page's repo root.
 
 use std::cell::Cell;
@@ -195,11 +196,17 @@ fn paste_text(text: &str) -> String {
         .collect()
 }
 
-/// Keys while typing a comment.
+/// Keys while typing a comment: the box's, and PageUp / PageDown scroll
+/// the page behind it (the box follows its rows).
 pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
     let Some(key) = keys.last() else {
         return KeyResult::None;
     };
+    match key.code {
+        KeyCode::PageDown => return KeyResult::Action(Action::PageDown),
+        KeyCode::PageUp => return KeyResult::Action(Action::PageUp),
+        _ => {}
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let a = match key.code {

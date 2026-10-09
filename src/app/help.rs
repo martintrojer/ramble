@@ -337,6 +337,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
         App::can_comment,
     ),
     b(
+        "PgUp, PgDn",
+        Ctx::Comment,
+        G::Review,
+        "in a comment: scroll the page (the box follows)",
+        App::can_comment,
+    ),
+    b(
         "Tab, S-Tab",
         Ctx::Comment,
         G::Review,

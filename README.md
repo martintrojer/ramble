@@ -147,7 +147,8 @@ server your editor already uses, point it at zk or marksman in the config.
   shows the kind and the lines (`comment [ISSUE] L12-18`); it grows with the
   text up to 8 rows, then scrolls. Enter saves, `C-j` or `Alt-Enter` adds a
   new line, Esc cancels, `C-e` moves it into `$EDITOR`; readline keys and
-  Up/Down edit it. A paste keeps its newlines in the box and lands as one
+  Up/Down edit it. PageUp / PageDown and the wheel scroll the page behind
+  it; it follows its lines and pins to the edge they scroll off. A paste keeps its newlines in the box and lands as one
   line in every other prompt; outside a prompt it does nothing.
 - Tab / S-Tab give the comment a kind (`comment [ISSUE] L5`): untyped, then
   issue, suggestion, question, nit, then untyped again. The list is

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use debrief_review::{Comment, Rev, Review, Side};
 use ramble::app::{
     App, AppEvent, CommentBox, EMPTY_COMMENT, Effect, Exit, LaunchCommand, Mode, NO_MORE_REVIEW,
@@ -1532,4 +1532,76 @@ fn a_one_row_comment_at_heights_6_and_8_never_covers_its_row() {
             }
         }
     }
+}
+
+/// The box right beside rendered row `r` (below or above), the row shown.
+fn beside(app: &App, bx: &CommentBox, r: usize) -> bool {
+    let y = (r - app.scroll()) as u16;
+    bx.rect.y == y + 1 || bx.rect.bottom() == y
+}
+
+#[test]
+fn page_keys_scroll_the_page_behind_the_box_which_follows_its_rows() {
+    let repo = Repo::new();
+    let mut app = raw_lines(&repo, 80, 60, 12);
+    goto(&mut app, 19);
+    keys(&mut app, "zzccdraft");
+    let (_, bx, _) = draw_box(&app, 60, 12);
+    assert!(beside(&app, &bx.unwrap(), 19));
+    // Down a page: the row scrolls off the top, the box pins there.
+    send(&mut app, key(KeyCode::PageDown));
+    assert_eq!(app.mode(), Mode::Comment);
+    assert!(app.scroll() > 19, "scrolled past the row: {}", app.scroll());
+    let (lines, bx, _) = draw_box(&app, 60, 12);
+    assert_eq!(bx.unwrap().rect.y, 0, "pinned to the top edge");
+    assert!(lines[1].contains("draft"), "{}", lines[1]);
+    // Back up: beside its row again, the text kept.
+    send(&mut app, key(KeyCode::PageUp));
+    let (_, bx, _) = draw_box(&app, 60, 12);
+    assert!(app.scroll() <= 19);
+    assert!(beside(&app, &bx.unwrap(), 19));
+    assert_eq!(app.comment_text(), Some("draft"));
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(only(&repo).2, "draft");
+}
+
+#[test]
+fn the_wheel_scrolls_the_page_behind_the_box() {
+    let repo = Repo::new();
+    let mut app = raw_lines(&repo, 80, 60, 12);
+    goto(&mut app, 19);
+    keys(&mut app, "zzccdraft");
+    // Draw once so the layout knows where the text is.
+    draw_box(&app, 60, 12);
+    let before = app.scroll();
+    let wheel = |app: &mut App, kind| {
+        let m = MouseEvent {
+            kind,
+            column: 40,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.event(AppEvent::Mouse(m, Instant::now()));
+        draw_box(app, 60, 12);
+    };
+    for _ in 0..4 {
+        wheel(&mut app, MouseEventKind::ScrollDown);
+    }
+    assert_eq!(app.mode(), Mode::Comment);
+    assert!(app.scroll() > before, "{before} -> {}", app.scroll());
+    let (_, bx, _) = draw_box(&app, 60, 12);
+    let bx = bx.unwrap();
+    let r = 19;
+    assert!(
+        r < app.scroll() && bx.rect.y == 0 || beside(&app, &bx, r),
+        "follows its row: {:?} scroll {}",
+        bx.rect,
+        app.scroll()
+    );
+    for _ in 0..4 {
+        wheel(&mut app, MouseEventKind::ScrollUp);
+    }
+    let (_, bx, _) = draw_box(&app, 60, 12);
+    assert!(beside(&app, &bx.unwrap(), r), "scroll {}", app.scroll());
+    assert_eq!(app.comment_text(), Some("draft"));
 }

@@ -276,6 +276,19 @@ impl App {
                     }
                 }
             }
+            // The wheel scrolls the page behind the comment box.
+            Mode::Comment => {
+                if matches!(hit, Hit::Text { .. } | Hit::Gutter) {
+                    for _ in 0..WHEEL_ROWS {
+                        if down {
+                            self.line_down();
+                        } else {
+                            self.line_up();
+                        }
+                    }
+                    self.keep_visible();
+                }
+            }
             Mode::Normal | Mode::Visual(_) => {
                 if let Some(f) = self.sidebar_pane_at(col, row)
                     && matches!(hit, Hit::Files { .. } | Hit::Outline(_) | Hit::None)
