@@ -13,13 +13,14 @@ pub(crate) mod sidebar;
 mod status;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::Clear;
 
 use crate::app::{App, Layout as Hits};
 use crate::config::SidebarSide;
 
-/// Draw one full screen: sidebar (when shown, on its side), content view,
-/// status line.
+/// Draw one full screen: sidebar (when shown, on its side, beside the
+/// content or over it), content view, status line.
 /// Records where everything went in the app's layout (for the mouse).
 pub fn draw(frame: &mut Frame, app: &App) {
     let [main, status] =
@@ -50,6 +51,25 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hits.banner = app.banner().is_some();
     hits.hover = hover::draw(frame, app, content);
     hints::draw(frame, app, content);
+    // A peek without room beside the page is drawn over its sidebar-side
+    // edge, above the text, gutter, hover and hints (D11).
+    if app.sidebar_overlay() {
+        let w = app.sidebar_drawn_cols().min(main.width);
+        let x = match app.sidebar_side() {
+            SidebarSide::Left => main.x,
+            SidebarSide::Right => main.right() - w,
+        };
+        let area = Rect {
+            x,
+            width: w,
+            ..main
+        };
+        if w > 0 {
+            frame.render_widget(Clear, area);
+            hits.sidebar = Some(area);
+            (hits.files, hits.outline) = sidebar::draw(frame, app, area);
+        }
+    }
     status::draw(frame, app, status);
     hits.status = Some(status);
     sidebar::draw_prompt(frame, app, status);

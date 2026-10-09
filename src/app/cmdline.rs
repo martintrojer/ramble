@@ -1,7 +1,7 @@
 //! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
-//! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`
-//! (`off` = `hide`), `:Sidebar left|right` (the screen edge), `:Raw`, and
+//! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`,
+//! `:Sidebar left|right` (the screen edge), `:Raw`, and
 //! `:e` / `:Refresh` without an argument (refresh, as `C-l`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -31,7 +31,7 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         ":Sidebar toggle|show|hide",
-        "show or hide the sidebar (off = hide)",
+        "show or hide the sidebar (show pins in auto)",
     ),
     (":Sidebar left|right", "put the sidebar on that side"),
     (":Raw", "toggle the raw source view"),
@@ -152,7 +152,7 @@ fn parse_sidebar(s: &str) -> Option<SidebarCmd> {
         "split" => C::Mode(SidebarMode::Split),
         "toggle" => C::Toggle,
         "show" => C::Show(true),
-        "hide" | "off" => C::Show(false),
+        "hide" => C::Show(false),
         "left" => C::Side(SidebarSide::Left),
         "right" => C::Side(SidebarSide::Right),
         _ => return None,

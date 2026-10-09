@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use ramble::app::{App, AppEvent, NO_MORE_REVIEW, NO_REVIEW, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode};
+use ramble::config::{Config, SidebarMode, SidebarShow};
 use ramble::review::{
     self, FileMarks, Intervals, Markers, Poller, Tuicr, canonical, discovery_dirs,
 };
@@ -369,7 +369,7 @@ fn config(review_cmd: Option<&Path>, sidebar: Option<SidebarMode>) -> Config {
             // COLS is below the default auto-hide threshold.
             c.sidebar.auto_hide_below = 0;
         }
-        None => c.sidebar.show = false,
+        None => c.sidebar.show = SidebarShow::Never,
     }
     if let Some(cmd) = review_cmd {
         c.review.command = cmd.display().to_string();
@@ -796,7 +796,7 @@ fn real_tuicr_e2e(name: &str, repo: bool) {
     let doc = nb.join("a.md");
     std::fs::write(&doc, DOC).unwrap();
     let cfg = root.join("ramble.toml");
-    std::fs::write(&cfg, "[lsp]\nserver = []\n[sidebar]\ndefault = \"off\"\n").unwrap();
+    std::fs::write(&cfg, "[lsp]\nserver = []\n[sidebar]\nshow = \"never\"\n").unwrap();
     let envs = [
         ("HOME", home.clone()),
         ("XDG_DATA_HOME", root.join("data")),

@@ -15,9 +15,13 @@
 ## ---------------------------------------------------------------------------
 ## Sidebar
 # [sidebar]
-## Show the sidebar at start (<leader>e shows or hides it). A start with no
-## page (a directory or no argument) always shows the file tree.
-# show = true
+## always | never | auto. always: shown, <leader>e hides it. never: hidden,
+## <leader>e shows it. auto (peek): shown while you use it (C-w into it,
+## <leader>E, :Sidebar files|outline|split), hidden again when you open a
+## file, jump to a heading, go back to the text or press Esc; <leader>e pins
+## it. A start with no page (a directory or no argument) always shows the
+## file tree.
+# show = "always"
 ## auto | files | outline | split (<leader>E cycles outline, files, split)
 ## auto: files while no page is loaded (a directory or no argument), then
 ## `reading` once a page is shown (a file, stdin, or a file opened later).

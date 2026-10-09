@@ -93,6 +93,11 @@ can follow it.
   `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
   split, `C-w h/l/j/k` moves between panes. It sits on the left or the
   right (`side`, `:Sidebar left|right`); `C-w h/l` follow the screen.
+- `show = "auto"` makes it a peek: hidden while you read, shown while you
+  use it (`C-w` into it, `<leader>E`), hidden again when you open a file,
+  jump to a heading, click the text or press `Esc`. When the page has no
+  room to spare it opens over the text instead of reflowing it.
+  `<leader>e` pins it.
 - In the tree, `-` moves the root up a folder (so does `h` on a top-level
   row) and `.` makes the selected folder the root. The title shows where
   you are: `Files ~/notes/sub`.
@@ -173,7 +178,7 @@ max_width = 100              # cap the reading width
 math = true                  # false shows LaTeX source as written
 
 [sidebar]
-show = true                  # shown at start; <leader>e toggles
+show = "always"              # always | never | auto (peek); <leader>e toggles
 default = "auto"             # auto | files | outline | split
 width = "auto"               # fit the rows; or a number of columns
 min_width = 16               # bounds of the auto width

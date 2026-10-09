@@ -67,7 +67,7 @@ Whether the sidebar is drawn is decided in this order:
 
 1. **No page loaded** (a directory argument, or no argument, which starts
    in the current directory): the file tree is always drawn and has focus.
-   This overrides `show = false`, auto-hide and a narrow terminal. With no
+   This overrides `show = "never"`, auto-hide and a narrow terminal. With no
    page, the tree is the only thing on screen. (User rule.)
 2. **The user pressed `<leader>e` or `:Sidebar ...` while the terminal was
    narrower than `auto_hide_below`**: their choice holds until the next
@@ -85,7 +85,7 @@ The existing guard stays as a last resort: if what's left is narrower than
 
 When opening the first page replaces the directory view, the rules move
 from step 1 to steps 2–4, so the sidebar may hide at that point
-(`show = false` or a narrow terminal). Focus moves to the content then.
+(`show = "never"` or a narrow terminal). Focus moves to the content then.
 
 ### D4. Directory start focuses the tree
 
@@ -224,8 +224,9 @@ is the current page's file. The selection highlight is unchanged.
 ### D11. `show = always | never | auto` (peek); no compatibility shims (user request)
 
 `sidebar.show` takes exactly one of three values. There are no aliases:
-`true`, `false` and the old `default = "off"` are config errors, reported
-by the existing `deny_unknown_fields` and enum parse error path.
+`true`, `false` and the old `default = "off"` are config errors. The serde
+enum parse rejects them (`show` is the `SidebarShow` enum and
+`SidebarMode` has no `Off`), with the usual line number.
 
 | `show` | Meaning |
 |---|---|
@@ -233,53 +234,76 @@ by the existing `deny_unknown_fields` and enum parse error path.
 | `never` | Hidden unless toggled (`<leader>e`), as D3 with the flag starting at hidden. |
 | `auto` | Peek: shown while you're using it, hidden while you read. |
 
+State in `auto`: a **pin** (the user flag) and a **peek** (an unpinned
+showing). Visible = no page (D3 step 1) || pinned || peeked. Narrow only
+forces an overlay; the D3 step-2 narrow override is never set. A file or
+stdin start begins hidden and unpinned.
+
 Rules in `auto`:
 
-- **Shown:**
-  - no page loaded (D3 step 1, unchanged; the tree has focus);
-  - focus moves into a sidebar pane: `C-w h`/`C-w l` (whichever points at
-    the sidebar per D9), `C-w w`, `C-w W` or `C-w p` into it, or `:Sidebar
-    files|outline|split`;
-  - `<leader>E` (it shows, as D1).
-- **Hidden:**
-  - a page is opened from the tree or the outline (`Enter`, `o`,
-    double-click), because you chose and went back to reading;
-  - focus returns to the content: `C-w` back, a click in the text;
-  - `Esc` in a sidebar pane with no filter set. The first `Esc` clears the
-    filter, as now; the second hides;
-  - the first page after a directory start (focus moves to the content,
-    D3/A2).
-- **Unchanged:** following a link (`gd`), `C-o`/`Tab` history, live
-  reload, pickers and help. None of these touch the sidebar, so a peeked
-  sidebar stays as it was.
-- **`<leader>e` pins:** in `auto`, `<leader>e` on a hidden sidebar shows it
-  and pins it: it behaves as `always` until `<leader>e` hides it again,
-  which returns to peek. `:Sidebar show` pins too; `:Sidebar hide` unpins
-  and hides.
-- **Overlay instead of reflow:**
-  - When a peek opens and the terminal has spare room (the page is already
-    at `render.max_width` with columns left over, D5 step 4), draw the
-    sidebar beside the page as now.
-  - Otherwise draw it over the page's sidebar-side edge, with a border, and
-    leave the page laid out unchanged (no `resize` re-layout), so the text
-    doesn't jump.
-  - A pinned sidebar always lays out beside the page, as today.
-  - Mouse hit-testing uses the overlay rect when it is drawn (popups-first
-    order: the overlay sits above the text).
-- **Narrow terminals:** in `auto`, below `auto_hide_below` the sidebar is
-  never pinned beside the page. A peek or a pin opens it as an overlay. The
-  step-2 narrow override of D3 does not apply in `auto`.
-- **Mouse:** clicks in a peeked sidebar work as now. A click in the text
-  hides it (focus returns). There is no hot edge: nothing opens a hidden
+- **Peek opens** (from hidden, focus then moves into the sidebar):
+  - `C-w h`/`C-w l` (whichever points at the sidebar per D9), `C-w w`,
+    `C-w W`, `C-w p` when its previous pane is a sidebar pane, and `C-w j`/
+    `C-w k` in split mode;
+  - `<leader>E` and `:Sidebar files|outline|split`: they peek (not pin)
+    and focus the mode's first pane.
+- **Peek closes** (focus goes to the content), on user focus changes only:
+  - a markdown file opened from the tree (`Enter`, `o`, double-click). The
+    peek closes before the page is laid out; if the file can't be shown
+    (binary, unreadable) the peek comes back with the tree focused;
+  - a heading jumped to from the outline (`Enter`, `o`, double-click);
+  - `C-w` back to the content (`C-w h/l`, `w`, `W`, `p` landing on it);
+  - a click in the text, even with focus already on the content;
+  - `Esc` in a sidebar pane with no filter on that pane. The first `Esc`
+    clears the filter, as now; the second closes. On a pin, or with
+    `always`/`never`, `Esc` does nothing new.
+- **The peek stays:** `Enter` on a folder (it toggles) or on a non-markdown
+  file (the editor), mode changes that move focus off a pane that went
+  away, following a link (`gd`), `C-o`/`Tab` history, live reload, pickers
+  and help. The close is never hooked into `set_focus`, `set_page` or
+  reload.
+- **First page after a directory start:** the sidebar hides in
+  `sidebar_page_loading` (D3), before the first render, so the page is
+  laid out at its reading width. Focus moves to the content.
+- **`<leader>e`:** on a hidden sidebar it shows and pins it (it behaves as
+  `always`); on a pin it unpins and hides; on an unpinned peek it hides and
+  stays unpinned. `:Sidebar show` pins, `:Sidebar hide` unpins and hides
+  (a peek included), `:Sidebar toggle` is `<leader>e`.
+- **Overlay or beside:**
+  - A peek goes beside the page iff `w + 1 <= cols - review_gutter -
+    render.max_width` and the terminal isn't narrow, with `w` the width
+    refitted for the panes shown (refit first, then decide). Otherwise it
+    is drawn over the page's sidebar-side edge, with its border, and the
+    page is not laid out again, so the text doesn't move.
+  - The choice is made when the peek opens and again on a terminal resize,
+    not on widen-only refits. On the left, beside shifts the text right by
+    `w + 1` (accepted).
+  - A pin lays out beside the page, except below `auto_hide_below`, where
+    it is an overlay too.
+  - `sidebar_cols()` stays the layout columns and is 0 for an overlay.
+    `sidebar_drawn_cols()` is what is drawn, and focus, `sidebar_fit` and
+    the help `avail` checks use it. An overlay is `min(w, cols - 1)` plus
+    its border; `MIN_CONTENT` and the `min_width` drop don't apply.
+  - Relayout: opening or closing re-lays out the page (`resize`) only when
+    `sidebar_cols()` changed, so an overlay never does.
+  - The overlay draws after the content, gutter, hover popup and hints,
+    clearing its rect first. The cursor and hint labels under it are
+    hidden (accepted).
+- **Mouse:** hit-testing uses the recorded rects, and the overlay rect is
+  recorded as the sidebar. The sidebar is tested before the hover popup,
+  the gutter and the text, so the overlay sits on top. Clicks in a peeked
+  sidebar work as now. There is no hot edge: nothing opens a hidden
   sidebar by mouse.
-- **Help and clue:** the `C-w` rows read the same. The `<leader>e` row reads
-  "show or hide the sidebar (pin in auto)" when `show = auto`.
+- **Help and clue:** the `C-w` rows are also available in `auto` while a
+  peek could open. `<leader>e` has two rows: "show or hide the sidebar
+  (pin in auto)" when `show = auto`, "show or hide the sidebar" otherwise.
 
 Code and docs that carried the old spellings are cleaned up with this
 change: the raw `Off` enum and its mapping in `config.rs`, the
-`:Sidebar off` arm in `cmdline.rs`, tests that use `show = false` or
-`default = "off"` (they switch to `show = "never"`), `config.default.toml`,
-and the README.
+`:Sidebar off` arm in `cmdline.rs`, tests that use `show = false|true` or
+`default = "off"` (they switch to `SidebarShow::Never|Always`, or
+`show = "never"` in TOML), `config.default.toml`, the README and
+`2026-10-07-ramble.md` § Sidebar.
 
 ## Out of scope
 
@@ -297,7 +321,7 @@ and the README.
   - A wide terminal with `page_cap` 100 grows the sidebar.
   - A fixed `width` is used as given.
 - Visibility: App tests in `tests/sidebar.rs`, covering each D3 step.
-  - No page plus `show = false` plus a 60-column terminal still draws the
+  - No page plus `show = "never"` plus a 60-column terminal still draws the
     tree with focus.
   - A narrow terminal hides it; widening shows it again.
   - The user hides it, then the terminal widens: it stays hidden.

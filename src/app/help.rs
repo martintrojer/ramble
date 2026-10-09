@@ -111,11 +111,15 @@ fn side_right(a: &App) -> bool {
 }
 
 fn sidebar_on_left(a: &App) -> bool {
-    side_left(a) && a.can_focus_sidebar()
+    side_left(a) && a.can_focus_or_peek()
 }
 
 fn sidebar_on_right(a: &App) -> bool {
-    side_right(a) && a.can_focus_sidebar()
+    side_right(a) && a.can_focus_or_peek()
+}
+
+fn not_auto(a: &App) -> bool {
+    !a.show_is_auto()
 }
 
 const fn b(
@@ -303,12 +307,20 @@ pub(crate) static BINDINGS: &[Binding] = &[
         App::can_review_jump,
     ),
     // Sidebar.
+    // One row per `show` kind (D11): `desc` is static.
     b(
         "<leader>e",
         Any,
         G::Sidebar,
         "show or hide the sidebar",
-        always,
+        not_auto,
+    ),
+    b(
+        "<leader>e",
+        Any,
+        G::Sidebar,
+        "show or hide the sidebar (pin in auto)",
+        App::show_is_auto,
     ),
     b(
         "<leader>E",
@@ -327,35 +339,35 @@ pub(crate) static BINDINGS: &[Binding] = &[
         Any,
         G::Sidebar,
         "next pane",
-        App::can_focus_sidebar,
+        App::can_focus_or_peek,
     ),
     b(
         "C-w W",
         Any,
         G::Sidebar,
         "previous pane",
-        App::can_focus_sidebar,
+        App::can_focus_or_peek,
     ),
     b(
         "C-w j",
         Any,
         G::Sidebar,
         "pane below (split)",
-        App::can_focus_sidebar,
+        App::can_focus_or_peek,
     ),
     b(
         "C-w k",
         Any,
         G::Sidebar,
         "pane above (split)",
-        App::can_focus_sidebar,
+        App::can_focus_or_peek,
     ),
     b(
         "C-w p",
         Any,
         G::Sidebar,
         "last pane",
-        App::can_focus_sidebar,
+        App::can_focus_or_peek,
     ),
     b("j, Down", S, G::Sidebar, "down", always),
     b("k, Up", S, G::Sidebar, "up", always),

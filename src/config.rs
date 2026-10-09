@@ -41,8 +41,9 @@ pub struct RenderConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SidebarConfig {
-    /// Shown at start (a start with no page shows the tree regardless).
-    pub show: bool,
+    /// `always`, `never` or `auto` (peek, D11). A start with no page shows
+    /// the tree regardless.
+    pub show: SidebarShow,
     pub default: SidebarMode,
     /// Columns, not counting the border: fitted to the rows, or fixed.
     pub width: SidebarWidth,
@@ -61,6 +62,20 @@ pub struct SidebarConfig {
     pub auto_hide_below: u16,
     /// Which edge of the screen the sidebar is drawn at (D9).
     pub side: SidebarSide,
+}
+
+/// `sidebar.show` (D11): whether the sidebar is drawn while a page is
+/// shown. No other spellings are accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarShow {
+    /// Shown; `<leader>e` hides it.
+    #[default]
+    Always,
+    /// Hidden; `<leader>e` shows it.
+    Never,
+    /// Peek: shown while you use it, hidden while you read.
+    Auto,
 }
 
 /// `sidebar.side`: the screen edge the sidebar sits at (`:Sidebar
@@ -125,18 +140,6 @@ impl From<SidebarReading> for SidebarMode {
 #[serde(rename_all = "lowercase")]
 pub enum SidebarMode {
     Auto,
-    Files,
-    Outline,
-    Split,
-}
-
-/// `sidebar.default` as written: [`SidebarMode`] plus the legacy `off`,
-/// which means `show = false` with `default = "auto"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum RawSidebarMode {
-    Auto,
-    Off,
     Files,
     Outline,
     Split,
@@ -222,7 +225,7 @@ impl Default for Config {
                 math: true,
             },
             sidebar: SidebarConfig {
-                show: true,
+                show: SidebarShow::Always,
                 default: SidebarMode::Auto,
                 width: SidebarWidth::Auto,
                 min_width: 16,
@@ -319,8 +322,8 @@ struct RawRender {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSidebar {
-    show: Option<bool>,
-    default: Option<RawSidebarMode>,
+    show: Option<SidebarShow>,
+    default: Option<SidebarMode>,
     width: Option<toml::Spanned<RawSidebarWidth>>,
     min_width: Option<u16>,
     max_width: Option<u16>,
@@ -419,19 +422,7 @@ impl Config {
             set(&mut c.render.math, r.math);
         }
         if let Some(s) = raw.sidebar {
-            if let Some(d) = s.default {
-                c.sidebar.default = match d {
-                    RawSidebarMode::Off => {
-                        c.sidebar.show = false;
-                        SidebarMode::Auto
-                    }
-                    RawSidebarMode::Auto => SidebarMode::Auto,
-                    RawSidebarMode::Files => SidebarMode::Files,
-                    RawSidebarMode::Outline => SidebarMode::Outline,
-                    RawSidebarMode::Split => SidebarMode::Split,
-                };
-            }
-            // After the legacy `off`, so an explicit `show` wins.
+            set(&mut c.sidebar.default, s.default);
             set(&mut c.sidebar.show, s.show);
             if let Some(w) = s.width {
                 let at = w.span().start;

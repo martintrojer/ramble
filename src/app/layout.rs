@@ -30,7 +30,7 @@ impl ListArea {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Layout {
     /// The whole sidebar, its border included (on the side facing the
-    /// content).
+    /// content): beside the page, or the overlay rect over it (D11).
     pub sidebar: Option<Rect>,
     pub files: Option<ListArea>,
     pub outline: Option<ListArea>,
@@ -95,7 +95,8 @@ impl App {
     }
 
     /// What is under (`col`, `row`): popups first, top-most first, then
-    /// the panes.
+    /// the sidebar (an overlay sits above the hover popup and the text),
+    /// then the other panes.
     pub fn hit(&self, col: u16, row: u16) -> Hit {
         let l = self.layout.get();
         let p = Position::new(col, row);
@@ -109,12 +110,6 @@ impl App {
         }
         if inside(l.clue, p) {
             return Hit::Clue;
-        }
-        if inside(l.hover, p) {
-            return Hit::Hover;
-        }
-        if inside(l.status, p) {
-            return Hit::Status;
         }
         if let Some(f) = l.files
             && f.pane.contains(p)
@@ -131,6 +126,14 @@ impl App {
         }
         if inside(l.sidebar, p) {
             return Hit::Border;
+        }
+        // The sidebar comes before the hover popup: an overlay sidebar is
+        // drawn above it (D11), and beside the page they never overlap.
+        if inside(l.hover, p) {
+            return Hit::Hover;
+        }
+        if inside(l.status, p) {
+            return Hit::Status;
         }
         if inside(l.gutter, p) {
             return Hit::Gutter;

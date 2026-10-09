@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Clipboard, StartOptions, StartTarget};
-use ramble::config::Config;
+use ramble::config::{Config, SidebarShow};
 use ramble::doc::parse;
 use ramble::frontmatter::FmKind;
 use ramble::render::{Theme, palette, render, render_page, to_ansi};
@@ -160,7 +160,7 @@ impl Clipboard for RecClip {
 
 fn opts(dir: &Path, path: &Path) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.show = false;
+    config.sidebar.show = SidebarShow::Never;
     config.lsp.server = vec![];
     StartOptions {
         target: StartTarget::File(path.to_path_buf()),

@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Focus, HelpLine, Mode, StartOptions, StartTarget};
-use ramble::config::{Config, Launcher, SidebarMode};
+use ramble::config::{Config, Launcher, SidebarMode, SidebarShow};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -19,7 +19,7 @@ fn keys(app: &mut App, s: &str) {
 
 fn config() -> Config {
     let mut c = Config::default();
-    c.sidebar.show = false;
+    c.sidebar.show = SidebarShow::Never;
     c.lsp.server = vec![];
     c
 }
@@ -112,7 +112,7 @@ fn opening_help_drops_the_count_and_bare_question_still_searches() {
 fn g_question_works_from_the_sidebar_and_lists_its_keys() {
     let mut c = config();
     c.sidebar.default = SidebarMode::Files;
-    c.sidebar.show = true;
+    c.sidebar.show = SidebarShow::Always;
     let (_d, mut app) = app_with(c);
     app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
     keys(&mut app, "h");
@@ -333,7 +333,7 @@ fn ctrl_d_and_ctrl_u_move_by_half_the_list() {
 fn status_line_hint_is_hidden_under_the_sidebar_filter_and_command_prompts() {
     let mut c = config();
     c.sidebar.default = SidebarMode::Files;
-    c.sidebar.show = true;
+    c.sidebar.show = SidebarShow::Always;
     let (_d, mut app) = app_named("a.md", c, (100, 30));
     assert!(status_row(&app).contains("g? help"));
     app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));

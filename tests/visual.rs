@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Clipboard, Cursor, Mode, StartOptions, StartTarget, VisualKind};
-use ramble::config::Config;
+use ramble::config::{Config, SidebarShow};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -31,7 +31,7 @@ impl Clipboard for RecClip {
 
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.show = false;
+    config.sidebar.show = SidebarShow::Never;
     config.lsp.server = vec![];
     StartOptions {
         target,

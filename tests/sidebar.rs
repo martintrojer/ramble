@@ -9,7 +9,7 @@ use ramble::app::sidebar::{
     TREE_STAYS_MESSAGE, Tree, item_paths,
 };
 use ramble::app::{App, AppEvent, Effect, Focus, FsEvent, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode, SidebarReading, SidebarSide, SidebarWidth};
+use ramble::config::{Config, SidebarMode, SidebarReading, SidebarShow, SidebarSide, SidebarWidth};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -269,7 +269,7 @@ fn history_restores_entry_mode_and_manual_survives_back() {
         Some(root.join("docs/guide.md").as_path())
     );
     app.execute("Sidebar files");
-    app.execute("Sidebar off");
+    app.execute("Sidebar hide");
     assert!(!app.sidebar_visible());
     app.handle_key(ctrl('o'));
     assert_eq!(
@@ -387,7 +387,7 @@ fn ctrl_w_shift_w_reverses_and_p_returns() {
 
 fn hidden() -> Config {
     let mut c = Config::default();
-    c.sidebar.show = false;
+    c.sidebar.show = SidebarShow::Never;
     c
 }
 
@@ -460,7 +460,7 @@ fn sidebar_commands_set_mode_and_visibility() {
     assert!(!app.sidebar_visible());
     app.execute("Sidebar toggle");
     assert!(app.sidebar_visible());
-    app.execute("Sidebar off");
+    app.execute("Sidebar hide");
     assert!(!app.sidebar_visible(), "off is hide");
     assert_eq!(
         app.sidebar_mode(),
@@ -582,7 +582,7 @@ fn first_page_on_a_narrow_terminal_is_laid_out_hidden() {
     let path = write(&root, "long.md", &format!("{long}\n"));
     let mut c = Config::default();
     c.sidebar.auto_hide_below = 0;
-    c.sidebar.show = false;
+    c.sidebar.show = SidebarShow::Never;
     let full = App::new(
         StartOptions {
             target: StartTarget::File(path.clone()),

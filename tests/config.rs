@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use ramble::config::{
-    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading, SidebarSide,
-    SidebarWidth,
+    self, Config, Launcher, PositionEncoding, ServerKind, SidebarMode, SidebarReading, SidebarShow,
+    SidebarSide, SidebarWidth,
 };
 
 fn load_str(src: &str) -> anyhow::Result<Config> {
@@ -35,7 +35,7 @@ fn defaults_match_spec() {
     assert_eq!(c.render.max_width, 100);
     assert_eq!(c.render.theme, "catppuccin-mocha");
     assert!(c.render.math);
-    assert!(c.sidebar.show);
+    assert_eq!(c.sidebar.show, SidebarShow::Always);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
     assert_eq!(c.sidebar.width, SidebarWidth::Auto);
     assert_eq!(c.sidebar.min_width, 16);
@@ -217,8 +217,8 @@ fn sidebar_reading_parses() {
 
 #[test]
 fn sidebar_show_and_auto_hide_below_parse() {
-    let c = load_str("[sidebar]\nshow = false\nauto_hide_below = 0\n").unwrap();
-    assert!(!c.sidebar.show);
+    let c = load_str("[sidebar]\nshow = \"never\"\nauto_hide_below = 0\n").unwrap();
+    assert_eq!(c.sidebar.show, SidebarShow::Never);
     assert_eq!(c.sidebar.auto_hide_below, 0);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
 }
@@ -240,14 +240,31 @@ fn sidebar_width_auto_number_and_bounds_parse() {
 }
 
 #[test]
-fn legacy_default_off_means_hidden_auto() {
-    let c = load_str("[sidebar]\ndefault = \"off\"\n").unwrap();
-    assert!(!c.sidebar.show);
-    assert_eq!(c.sidebar.default, SidebarMode::Auto);
-    let c = load_str("[sidebar]\nshow = true\ndefault = \"off\"\n").unwrap();
-    assert!(c.sidebar.show, "an explicit show wins");
+fn sidebar_show_takes_always_never_auto() {
+    for (v, want) in [
+        ("always", SidebarShow::Always),
+        ("never", SidebarShow::Never),
+        ("auto", SidebarShow::Auto),
+    ] {
+        let c = load_str(&format!("[sidebar]\nshow = \"{v}\"\n")).unwrap();
+        assert_eq!(c.sidebar.show, want, "{v}");
+    }
+}
+
+#[test]
+fn legacy_sidebar_spellings_are_errors() {
+    // D11: no compatibility shims.
+    for src in [
+        "[sidebar]\nshow = true\n",
+        "[sidebar]\nshow = false\n",
+        "[sidebar]\nshow = \"off\"\n",
+        "[sidebar]\ndefault = \"off\"\n",
+    ] {
+        let e = err_str(src);
+        assert!(e.contains("line 2"), "{src}: {e}");
+    }
     let c = load_str("[sidebar]\ndefault = \"files\"\n").unwrap();
-    assert!(c.sidebar.show);
+    assert_eq!(c.sidebar.show, SidebarShow::Always);
     assert_eq!(c.sidebar.default, SidebarMode::Files);
 }
 

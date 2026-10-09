@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Cursor, StartOptions, StartTarget};
-use ramble::config::{Config, SidebarMode};
+use ramble::config::{Config, SidebarMode, SidebarShow};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -34,7 +34,7 @@ fn para_row(i: usize) -> usize {
 /// assume.
 fn opts(dir: &Path, target: StartTarget) -> StartOptions {
     let mut config = Config::default();
-    config.sidebar.show = false;
+    config.sidebar.show = SidebarShow::Never;
     config.lsp.server = vec![];
     StartOptions {
         target,

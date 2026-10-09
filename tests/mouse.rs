@@ -13,7 +13,7 @@ use ramble::app::{
     App, AppEvent, Clipboard, Effect, Focus, Hit, Layout, Mode, StartOptions, StartTarget,
     VisualKind,
 };
-use ramble::config::{Config, SidebarMode, SidebarWidth};
+use ramble::config::{Config, SidebarMode, SidebarShow, SidebarWidth};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use tempfile::TempDir;
@@ -602,7 +602,7 @@ fn a_click_outside_the_hover_popup_closes_it_and_does_nothing_else() {
     std::fs::write(&script, steps.to_string()).unwrap();
     let mut config = Config::default();
     config.review.enabled = false;
-    config.sidebar.show = false;
+    config.sidebar.show = SidebarShow::Never;
     config.lsp.server = vec![ramble::config::ServerConfig {
         kind: ramble::config::ServerKind::Generic,
         command: vec![

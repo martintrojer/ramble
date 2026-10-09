@@ -14,7 +14,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::keys::{Action, KeyResult};
 use super::sidebar_width::{self, MIN_CONTENT};
 use super::{App, Mode, StartTarget};
-use crate::config::{SidebarConfig, SidebarMode, SidebarSide, SidebarWidth};
+use crate::config::{SidebarConfig, SidebarMode, SidebarShow, SidebarSide, SidebarWidth};
 use crate::nav::is_markdown;
 
 /// Status when the sidebar is meant to show but the content would get
@@ -105,7 +105,13 @@ pub(super) struct Sidebar {
     /// which stops the `auto` switching.
     manual: bool,
     /// The user's visibility flag (D3 step 4); starts at `sidebar.show`.
+    /// With `show = "auto"` it means pinned (D11).
     shown: bool,
+    /// `show = "auto"`: an unpinned peek is open (D11).
+    peeked: bool,
+    /// Where the open peek is drawn: over the page (true) or beside it.
+    /// Decided when the peek opens and on a terminal resize (D11, P9).
+    overlay: bool,
     /// A visibility choice made while the terminal was narrower than
     /// `auto_hide_below` (D3 step 2); cleared by a terminal resize.
     narrow_override: Option<bool>,
@@ -146,7 +152,10 @@ impl Sidebar {
             reading,
             side: config.side,
             manual: false,
-            shown: config.show,
+            // `auto` starts hidden and unpinned (D11).
+            shown: config.show == SidebarShow::Always,
+            peeked: false,
+            overlay: false,
             narrow_override: None,
             loading: false,
             width: config.min_width,
@@ -688,16 +697,107 @@ impl App {
 
     /// A mode picked by the user (`<leader>E`, `:Sidebar`): stops the
     /// `auto` switching for the rest of the session, and shows the sidebar.
+    /// With `show = "auto"` it opens a peek (not a pin) and focuses the
+    /// first pane (D11, P7).
     pub(super) fn pick_sidebar_mode(&mut self, mode: SidebarMode) {
         self.sidebar.manual = true;
         self.sidebar.mode = mode;
-        self.show_sidebar(true);
+        if !self.show_is_auto() {
+            self.show_sidebar(true);
+            return;
+        }
+        if self.sidebar_visible() {
+            self.sync_tree();
+            self.sidebar_relayout(false);
+            self.sidebar_fit();
+        } else {
+            self.sidebar_peek_open();
+        }
+        if self.can_focus_sidebar() {
+            self.focus_pane(self.sidebar_panes()[0]);
+        }
+    }
+
+    /// `sidebar.show` is `auto` (peek, D11).
+    pub(crate) fn show_is_auto(&self) -> bool {
+        self.config.sidebar.show == SidebarShow::Auto
+    }
+
+    /// In `auto`, the sidebar is hidden (unpinned, no peek) while a page is
+    /// shown, so a focus move into it would open a peek.
+    pub(crate) fn peek_could_open(&self) -> bool {
+        self.show_is_auto() && !self.sidebar_visible() && !self.sidebar_panes().is_empty()
+    }
+
+    /// Focus can move into the sidebar now, or a peek would open for it:
+    /// the `avail` of the `C-w` help rows (P3).
+    pub(crate) fn can_focus_or_peek(&self) -> bool {
+        self.can_focus_sidebar() || self.peek_could_open()
+    }
+
+    /// Set the `auto` pin and peek, then lay out again: the page is
+    /// re-laid out only when the columns beside it changed (an overlay
+    /// never resizes it, P10).
+    fn set_auto_visibility(&mut self, pinned: bool, peeked: bool) {
+        let before = self.sidebar_cols();
+        let opening = peeked && !self.sidebar.peeked && !pinned;
+        self.sidebar.shown = pinned;
+        self.sidebar.peeked = peeked && !pinned;
+        self.sync_tree();
+        self.sidebar_refit(false);
+        if opening {
+            self.sidebar.overlay = !self.peek_fits_beside();
+        }
+        if self.sidebar_cols() != before {
+            let (cols, rows) = self.size;
+            self.resize(cols, rows);
+        }
+        self.sidebar_fit();
+    }
+
+    /// A peek goes beside the page when the page keeps its full
+    /// `render.max_width` next to it and the terminal isn't narrow:
+    /// `w + 1 <= cols - review gutter - max_width` (P9).
+    fn peek_fits_beside(&self) -> bool {
+        let room = self
+            .size
+            .0
+            .saturating_sub(self.review_gutter())
+            .saturating_sub(self.config.render.max_width);
+        !self.narrow() && self.sidebar_width_cols() < room
+    }
+
+    /// Open an unpinned peek (D11): `auto` only, while hidden.
+    fn sidebar_peek_open(&mut self) {
+        if self.peek_could_open() {
+            self.set_auto_visibility(false, true);
+        }
+    }
+
+    /// Close an unpinned peek (D11). Focus is left to the caller.
+    fn sidebar_peek_close(&mut self) {
+        if self.show_is_auto() && self.sidebar.peeked {
+            self.set_auto_visibility(self.sidebar.shown, false);
+        }
+    }
+
+    /// The user's focus went back to the content: close a peek (D11).
+    fn focus_returned(&mut self) {
+        if self.sidebar.focus == Focus::Content {
+            self.sidebar_peek_close();
+        }
     }
 
     /// A visibility choice by the user (`<leader>e`, `<leader>E`,
     /// `:Sidebar`). While the terminal is narrow it holds until the next
     /// resize (D3 step 2).
+    /// With `show = "auto"` showing pins and hiding unpins (D11); the
+    /// narrow override is never set there.
     pub(super) fn show_sidebar(&mut self, show: bool) {
+        if self.show_is_auto() {
+            self.set_auto_visibility(show, false);
+            return;
+        }
         self.sidebar.shown = show;
         if self.narrow() {
             self.sidebar.narrow_override = Some(show);
@@ -717,6 +817,9 @@ impl App {
         }
         self.size = (cols, rows);
         self.sidebar_refit(false);
+        if self.show_is_auto() && self.sidebar.peeked {
+            self.sidebar.overlay = !self.peek_fits_beside();
+        }
         self.resize(cols, rows);
         self.sidebar_fit();
     }
@@ -812,9 +915,14 @@ impl App {
     /// (always), a choice made while narrow, narrow auto-hide, then the
     /// user's flag. The `MIN_CONTENT` guard is applied by
     /// [`App::sidebar_cols`], not here.
+    ///
+    /// With `show = "auto"`: no page, pinned, or peeked (D11, P11).
     pub fn sidebar_visible(&self) -> bool {
         if self.no_page() {
             return true;
+        }
+        if self.show_is_auto() {
+            return self.sidebar.shown || self.sidebar.peeked;
         }
         if let Some(v) = self.sidebar.narrow_override {
             return v;
@@ -829,6 +937,10 @@ impl App {
 
     /// Called by `set_page` before the page is laid out; returns whether
     /// this is the first page (none was loaded).
+    /// With `show = "auto"` the first page hides the sidebar here, before
+    /// the first render: `loading` ends the no-page rule, and with no pin
+    /// and no peek (none can open while the tree is all there is) the page
+    /// is laid out at its reading width (D11, P6).
     pub(super) fn sidebar_page_loading(&mut self) -> bool {
         self.sidebar.loading = true;
         self.page.is_none()
@@ -879,16 +991,16 @@ impl App {
     /// that leaves less than `min_width` (or the fixed width, if smaller)
     /// the sidebar is dropped. With no page the tree is all there is to
     /// show, so it skips the guard and only clamps to the terminal.
+    ///
+    /// These are the layout columns: 0 for an overlay (D11), which is drawn
+    /// over the page; [`App::sidebar_drawn_cols`] is what is drawn.
     pub fn sidebar_cols(&self) -> u16 {
-        if !self.sidebar_visible() || self.sidebar_panes().is_empty() {
+        if !self.sidebar_visible() || self.sidebar_panes().is_empty() || self.sidebar_overlay() {
             return 0;
         }
         let cols = self.size.0;
         let c = &self.config.sidebar;
-        let w = match c.width {
-            SidebarWidth::Auto => self.sidebar.width,
-            SidebarWidth::Fixed(n) => n,
-        };
+        let w = self.sidebar_width_cols();
         if self.no_page() {
             return w.min(cols.saturating_sub(1)) + 1;
         }
@@ -900,9 +1012,41 @@ impl App {
         }
     }
 
-    /// A sidebar pane is shown, so focus can move to it.
+    /// The sidebar width before any guard: the auto width or the fixed
+    /// `sidebar.width`, not counting the border.
+    fn sidebar_width_cols(&self) -> u16 {
+        match self.config.sidebar.width {
+            SidebarWidth::Auto => self.sidebar.width,
+            SidebarWidth::Fixed(n) => n,
+        }
+    }
+
+    /// The sidebar is drawn over the page instead of beside it (D11): a
+    /// peek without spare room, or anything shown in `auto` while the
+    /// terminal is narrow. Never with no page.
+    pub fn sidebar_overlay(&self) -> bool {
+        self.show_is_auto()
+            && !self.no_page()
+            && self.sidebar_visible()
+            && (self.narrow() || (self.sidebar.peeked && self.sidebar.overlay))
+    }
+
+    /// Columns the sidebar is drawn in, border included, beside the page
+    /// or over it. An overlay is `min(width, cols - 1)` plus the border;
+    /// neither `MIN_CONTENT` nor the `min_width` drop applies (P11).
+    pub fn sidebar_drawn_cols(&self) -> u16 {
+        if !self.sidebar_overlay() || self.sidebar_panes().is_empty() {
+            return self.sidebar_cols();
+        }
+        match self.size.0 {
+            0 => 0,
+            cols => self.sidebar_width_cols().min(cols - 1) + 1,
+        }
+    }
+
+    /// A sidebar pane is drawn, so focus can move to it.
     pub(crate) fn can_focus_sidebar(&self) -> bool {
-        self.sidebar_cols() > 0
+        self.sidebar_drawn_cols() > 0
     }
 
     /// Share of the sidebar height given to files in split mode.
@@ -1022,7 +1166,10 @@ impl App {
     /// silent.
     pub(super) fn sidebar_fit(&mut self) {
         self.sidebar_fit_focus();
-        if self.sidebar_cols() == 0 && self.sidebar_visible() && !self.sidebar_panes().is_empty() {
+        if self.sidebar_drawn_cols() == 0
+            && self.sidebar_visible()
+            && !self.sidebar_panes().is_empty()
+        {
             self.set_status(NARROW_MESSAGE);
         }
     }
@@ -1030,7 +1177,7 @@ impl App {
     /// Give focus back to the content when its pane is gone or the
     /// sidebar does not fit.
     fn sidebar_fit_focus(&mut self) {
-        let shown = self.sidebar_cols() > 0;
+        let shown = self.can_focus_sidebar();
         if !shown || !self.sidebar_panes().contains(&self.sidebar.focus) {
             self.set_focus(Focus::Content);
         }
@@ -1072,8 +1219,23 @@ impl App {
         use SidebarAction as S;
         match a {
             S::Toggle if self.no_page() => self.set_status(TREE_STAYS_MESSAGE),
+            // In `auto` a visible unpinned peek hides and stays unpinned
+            // (P8); a hidden sidebar is pinned (`show_sidebar`).
             S::Toggle => self.show_sidebar(!self.sidebar_visible()),
             S::Cycle => self.pick_sidebar_mode(self.sidebar.next_mode()),
+            S::FocusSidebar
+            | S::FocusNext
+            | S::FocusPrev
+            | S::FocusBelow
+            | S::FocusAbove
+            | S::FocusLast
+                if self.peek_could_open() && self.focus_enters_sidebar(a) =>
+            {
+                self.sidebar_peek_open();
+                if self.can_focus_sidebar() {
+                    self.sidebar_action(a);
+                }
+            }
             S::FocusSidebar
             | S::FocusNext
             | S::FocusPrev
@@ -1098,13 +1260,17 @@ impl App {
                 };
                 self.focus_pane(f);
             }
-            S::FocusContent => self.focus_pane(Focus::Content),
+            S::FocusContent => {
+                self.focus_pane(Focus::Content);
+                self.focus_returned();
+            }
             S::FocusNext => {
                 let mut order = self.sidebar_panes().to_vec();
                 order.push(Focus::Content);
                 let i = order.iter().position(|&f| f == self.sidebar.focus);
                 let next = order[i.map_or(0, |i| (i + 1) % order.len())];
                 self.focus_pane(next);
+                self.focus_returned();
             }
             S::FocusPrev => {
                 let mut order = self.sidebar_panes().to_vec();
@@ -1113,6 +1279,7 @@ impl App {
                 let i = order.iter().position(|&f| f == self.sidebar.focus);
                 let prev = order[i.map_or(n - 1, |i| (i + n - 1) % n)];
                 self.focus_pane(prev);
+                self.focus_returned();
             }
             S::FocusBelow => {
                 if self.sidebar_panes().len() < 2 {
@@ -1137,6 +1304,7 @@ impl App {
                 };
                 if p != self.sidebar.focus {
                     self.focus_pane(p);
+                    self.focus_returned();
                 }
             }
             S::Down => self.pane_move(1),
@@ -1180,7 +1348,25 @@ impl App {
                 self.mode = Mode::Normal;
                 self.set_pane_filter(None);
             }
+            // The second Esc (no filter left) closes a peek (D11, P13).
+            S::FilterClear if self.pane_filter().is_none() && self.sidebar.peeked => {
+                self.focus_pane(Focus::Content);
+                self.focus_returned();
+            }
             S::FilterClear => self.set_pane_filter(None),
+        }
+    }
+
+    /// Whether focus action `a` would land in a sidebar pane, from a
+    /// hidden sidebar (focus on the content): a peek opens for it (P2).
+    fn focus_enters_sidebar(&self, a: SidebarAction) -> bool {
+        use SidebarAction as S;
+        let panes = self.sidebar_panes();
+        match a {
+            S::FocusSidebar | S::FocusNext | S::FocusPrev => true,
+            S::FocusBelow | S::FocusAbove => panes.len() >= 2,
+            S::FocusLast => panes.contains(&self.sidebar.prev_focus),
+            _ => false,
         }
     }
 
@@ -1390,6 +1576,9 @@ impl App {
             Focus::Outline => {
                 if let Some(o) = self.outline().get(self.sidebar.outline_sel) {
                     let row = o.row;
+                    // Close a peek first, so a beside peek's re-layout
+                    // doesn't move the row jumped to (D11, P4).
+                    self.sidebar_peek_close();
                     self.jump_to_row(row);
                     self.set_focus(Focus::Content);
                 }
@@ -1405,7 +1594,16 @@ impl App {
             return;
         };
         let here = self.entry();
+        // Close a peek before the page is laid out, so a beside peek
+        // doesn't lay it out twice (D11, P5); a page that can't be shown
+        // brings it back.
+        let peeked = self.sidebar.peeked;
+        self.sidebar_peek_close();
         if !self.open_bytes(path, &bytes) {
+            if peeked {
+                self.sidebar_peek_open();
+                self.focus_pane(Focus::Files);
+            }
             return;
         }
         if let Some(e) = here {
