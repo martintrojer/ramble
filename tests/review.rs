@@ -1605,3 +1605,29 @@ fn the_wheel_scrolls_the_page_behind_the_box() {
     assert!(beside(&app, &bx.unwrap(), r), "scroll {}", app.scroll());
     assert_eq!(app.comment_text(), Some("draft"));
 }
+
+#[test]
+fn an_overlay_sidebar_after_a_narrow_resize_leaves_the_box_drawn() {
+    let repo = Repo::new();
+    let path = repo.write("doc.md", DOC);
+    let mut c = config(None);
+    c.sidebar.show = SidebarShow::Auto;
+    c.sidebar.auto_hide_below = 80;
+    c.sidebar.width = ramble::config::SidebarWidth::Fixed(30);
+    let mut app = repo.app(StartTarget::File(path), c);
+    app.event(AppEvent::Resize(100, 24));
+    // Pin the sidebar open, then comment.
+    keys(&mut app, " eggccdraft");
+    assert_eq!(app.mode(), Mode::Comment, "{}", app.status());
+    assert!(app.sidebar_cols() > 0 && !app.sidebar_overlay());
+    app.event(AppEvent::Resize(60, 12));
+    assert_eq!(app.mode(), Mode::Comment);
+    assert!(app.sidebar_overlay(), "the pinned sidebar now overlays");
+    let (lines, bx, cur) = draw_box(&app, 60, 12);
+    let bx = bx.unwrap();
+    let top = &lines[bx.rect.y as usize];
+    assert!(top.contains("╭ comment L1 "), "title drawn: {top}");
+    let body = &lines[bx.rect.y as usize + 1];
+    assert!(body.contains("│draft"), "draft drawn: {body}");
+    assert_eq!(cur, (bx.rect.x + 6, bx.rect.y + 1), "cursor in the box");
+}

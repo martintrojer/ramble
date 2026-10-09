@@ -52,7 +52,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hits.banner = app.banner().is_some();
     hits.hover = hover::draw(frame, app, content);
     hints::draw(frame, app, content);
-    comment_box::draw(frame, app, content);
     // A peek without room beside the page is drawn over its sidebar-side
     // edge, above the text, gutter, hover and hints (D11).
     if app.sidebar_overlay() {
@@ -72,6 +71,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
             (hits.files, hits.outline) = sidebar::draw(frame, app, area);
         }
     }
+    // The comment box goes over an overlay sidebar: it is what you type in.
+    comment_box::draw(frame, app, content);
     status::draw(frame, app, status);
     hits.status = Some(status);
     sidebar::draw_prompt(frame, app, status);
