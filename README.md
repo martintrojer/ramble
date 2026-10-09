@@ -140,6 +140,15 @@ can follow it.
 - Commented lines get a `●` in a gutter, files a `●` and a count in the
   tree; `]r` / `[r` jump between them. Comments added elsewhere (another
   ramble, debrief) show up within a second.
+- On a commented line the status line shows the comment's first line; `K`
+  shows the whole comment (or comments) there, and the link preview
+  anywhere else.
+- `<leader>rl` lists every comment in the batch, diff comments from debrief
+  included. Typing filters, Enter jumps to the comment (opening its file),
+  `C-d` removes it and `C-e` edits it in `$EDITOR`.
+- `<leader>rr` sends the batch as markdown to `[send] command` on stdin
+  (with `DEBRIEF_ROOT` set), or copies it to the clipboard when there is no
+  command or it fails, then clears the batch.
 - The window or tmux pane title shows the file you're reading.
 - `g?` lists every key that works right now. The list is tested against the
   real keymap, so it can't drift.
@@ -200,6 +209,10 @@ clue = true                  # after a pause mid-sequence, show the next keys
 
 [mouse]
 enabled = true               # false leaves the mouse to the terminal / tmux
+
+[send]                       # <leader>rr: where the review goes
+command = ["sh", "-c", "mu agent send worker-1 \"$(cat)\""]  # [] copies it
+preamble = "Please address these comments."  # replaces the opening paragraph
 
 [[lsp.server]]               # replaces the default server list
 kind = "zk"
