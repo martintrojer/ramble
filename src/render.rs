@@ -1241,6 +1241,9 @@ impl<'a> Renderer<'a> {
                 })
                 .collect();
             let height = wrapped.iter().map(Vec::len).max().unwrap_or(0).max(1);
+            // A row whose cells draw nothing (an empty body row) still
+            // comes from its own source line: anchor it to its first cell.
+            let anchor = cells.first().map_or(range.start, |r| r.start);
             for j in 0..height {
                 let mut row = deco_cells("│", border);
                 for c in 0..ncol {
@@ -1256,7 +1259,7 @@ impl<'a> Renderer<'a> {
                     row.extend(deco_cells(&" ".repeat(slack - left + 1), base_style()));
                     row.extend(deco_cells("│", border));
                 }
-                self.emit(row, Some(range.start));
+                self.emit(row, Some(anchor));
             }
             if n == 0 {
                 self.emit(sep.clone(), Some(range.start));

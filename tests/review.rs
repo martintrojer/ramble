@@ -253,6 +253,20 @@ fn a_table_row_maps_to_its_source_line() {
 }
 
 #[test]
+fn an_empty_table_row_maps_to_its_own_source_line() {
+    let repo = Repo::new();
+    let src = "# T\n\n| a | b |\n|---|---|\n|   |   |\n| three | four |\n";
+    let mut app = repo.open("t.md", src);
+    let empty = row_of(&app, "three") - 1;
+    goto(&mut app, empty);
+    keys(&mut app, "cc");
+    type_and_save(&mut app, "empty row");
+    let (lines, excerpt, ..) = only(&repo);
+    assert_eq!(lines, (5, 5));
+    assert_eq!(excerpt, "|   |   |");
+}
+
+#[test]
 fn a_code_block_line_and_a_blank_line_inside_it() {
     let repo = Repo::new();
     let src = "# C\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n";
