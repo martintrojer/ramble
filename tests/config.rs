@@ -90,6 +90,17 @@ fn partial_override_keeps_other_defaults() {
 }
 
 #[test]
+fn send_takes_a_command_and_a_preamble() {
+    let c = Config::default();
+    assert!(c.send.command.is_empty());
+    assert_eq!(c.send.preamble, None);
+    let c = load_str("[send]\ncommand = [\"sh\", \"-c\", \"cat\"]\npreamble = \"\"\n").unwrap();
+    assert_eq!(c.send.command, ["sh", "-c", "cat"]);
+    assert_eq!(c.send.preamble.as_deref(), Some(""));
+    assert!(load_str("[send]\nrecipient = \"x\"\n").is_err());
+}
+
+#[test]
 fn lsp_servers_replace_defaults() {
     let c = load_str(
         "[[lsp.server]]\nkind = \"generic\"\ncommand = [\"my-ls\"]\nposition_encoding = \"utf-16\"\n",
@@ -304,6 +315,7 @@ fn uncommented_default_file_equals_defaults() {
         "[sidebar]",
         "[keys]",
         "[review]",
+        "[send]",
         "[mouse]",
         "[[lsp.server]]",
         "[[launch]]",

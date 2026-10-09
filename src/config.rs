@@ -1,5 +1,5 @@
 //! Config loading over built-in defaults: servers, leader key, launchers,
-//! render, sidebar, review and mouse options.
+//! render, sidebar, review, send and mouse options.
 //!
 //! A user file overrides the defaults one field at a time. `[[lsp.server]]`
 //! replaces the default server list; `[[launch]]` entries merge by name.
@@ -20,6 +20,7 @@ pub struct Config {
     pub lsp: LspConfig,
     pub launch: Vec<Launcher>,
     pub review: ReviewConfig,
+    pub send: SendConfig,
     pub mouse: MouseConfig,
 }
 
@@ -235,6 +236,17 @@ pub struct ReviewConfig {
     pub enabled: bool,
 }
 
+/// How `<leader>rr` hands the review batch back (shared in meaning with
+/// debrief's `[send]`).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SendConfig {
+    /// Command run with the markdown on stdin; empty (or a failure) copies
+    /// it to the clipboard instead.
+    pub command: Vec<String>,
+    /// Replaces the export's opening paragraph; `""` drops it.
+    pub preamble: Option<String>,
+}
+
 fn strings(xs: &[&str]) -> Vec<String> {
     xs.iter().map(|s| s.to_string()).collect()
 }
@@ -296,6 +308,7 @@ impl Default for Config {
                 false,
             )],
             review: ReviewConfig { enabled: true },
+            send: SendConfig::default(),
             mouse: MouseConfig { enabled: true },
         }
     }
@@ -312,6 +325,7 @@ struct RawConfig {
     lsp: Option<RawLsp>,
     launch: Option<Vec<toml::Spanned<RawLauncher>>>,
     review: Option<RawReview>,
+    send: Option<RawSend>,
     mouse: Option<RawMouse>,
 }
 
@@ -373,6 +387,13 @@ struct RawLauncher {
 #[serde(deny_unknown_fields)]
 struct RawReview {
     enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSend {
+    command: Option<Vec<String>>,
+    preamble: Option<String>,
 }
 
 /// 1-based line of byte offset `at` in `src`.
@@ -454,6 +475,12 @@ impl Config {
         }
         if let Some(r) = raw.review {
             set(&mut c.review.enabled, r.enabled);
+        }
+        if let Some(s) = raw.send {
+            set(&mut c.send.command, s.command);
+            if s.preamble.is_some() {
+                c.send.preamble = s.preamble;
+            }
         }
         if let Some(m) = raw.mouse {
             set(&mut c.mouse.enabled, m.enabled);

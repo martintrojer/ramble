@@ -67,6 +67,16 @@
 # enabled = true  # comment mode (c, cc) and markers; comments go to debrief-review's batch
 
 ## ---------------------------------------------------------------------------
+## <leader>rr sends the batch: the markdown goes to `command` on stdin (with
+## DEBRIEF_ROOT set). An empty command, a failure, or a 10 s timeout copies
+## it to the clipboard instead. Either way the batch is then cleared.
+##   command = ["sh", "-c", "mu agent send worker-1 \"$(cat)\""]
+## `preamble` replaces the export's opening paragraph ("" drops it):
+##   preamble = "Please address these review comments."
+# [send]
+# command = []
+
+## ---------------------------------------------------------------------------
 ## Language servers, tried in order; the first whose root marker is found
 ## above the file wins. Any [[lsp.server]] entry here replaces this whole
 ## list, so copy the ones you want to keep.
