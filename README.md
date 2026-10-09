@@ -141,7 +141,12 @@ language server your editor already uses, point it at
 - `cc` comments on the cursor line; visual `c` on the selected lines. Works
   in the raw view too.
 - Type the comment at the `comment: ` prompt; Enter saves, Esc cancels,
-  `C-e` moves it into `$EDITOR`.
+  `C-e` moves it into `$EDITOR`. A paste lands as one line (newlines become
+  spaces), here and in every other prompt; outside a prompt it does nothing.
+- Tab / S-Tab give the comment a kind (`comment [ISSUE]: `): untyped, then
+  issue, suggestion, question, nit, then untyped again. The list is
+  `[review] kinds`. The kind shows as `[ISSUE]` in the status line, `K` and
+  `<leader>rl`, and the export labels the item and explains the kind.
 - Comments go to [debrief](https://github.com/martintrojer/debrief)'s
   review batch for the repo, in your cache dir, never into the repo.
 - Commented lines get a `●` in a gutter, files a `●` and a count in the
@@ -215,6 +220,12 @@ clue = true                  # after a pause mid-sequence, show the next keys
 
 [mouse]
 enabled = true               # false leaves the mouse to the terminal / tmux
+
+[review]
+kinds = [                    # Tab in the comment prompt; [] = untyped only
+  { id = "issue", definition = "Something is wrong. Fix it." },
+  { id = "question", definition = "Answer in your reply." },
+]
 
 [send]                       # <leader>rr: where the review goes
 command = ["sh", "-c", "mu agent send worker-1 \"$(cat)\""]  # [] copies it
