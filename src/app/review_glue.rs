@@ -111,15 +111,19 @@ impl App {
         self.review.store.as_ref().map(Review::root)
     }
 
-    /// Comments with no `rev` on the current file.
+    /// Comments with no `rev` on the current file, matched by canonical
+    /// path like the markers (a comment via a symlink alias counts).
     pub fn review_comments_here(&self) -> Vec<&Comment> {
-        let (Some(store), Ok(rel)) = (&self.review.store, self.review_rel_path()) else {
+        let store = self.review.store.as_ref();
+        let path = self.page.as_ref().and_then(|p| p.path.as_deref());
+        let (Some(store), Some(path)) = (store, path) else {
             return Vec::new();
         };
+        let here = canonical(path);
         store
             .comments()
             .iter()
-            .filter(|c| c.rev.is_none() && c.path == rel)
+            .filter(|c| c.rev.is_none() && canonical(&store.root().join(&c.path)) == here)
             .collect()
     }
 

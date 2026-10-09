@@ -515,6 +515,28 @@ fn a_symlinked_directory_resolves_to_the_real_path() {
 }
 
 #[test]
+fn comments_here_match_a_symlinked_file_alias_both_ways() {
+    let repo = Repo::new();
+    let real = repo.write("real.md", DOC);
+    let alias = repo.root.join("alias.md");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    repo.add("alias.md", 5, 5);
+    let app = repo.app(StartTarget::File(real), config(None));
+    assert_eq!(app.review_count(), 1);
+    assert_eq!(app.review_comments_here().len(), 1);
+
+    let repo = Repo::new();
+    let real = repo.write("real.md", DOC);
+    let alias = repo.root.join("alias.md");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    repo.add("real.md", 5, 5);
+    repo.add("other.md", 5, 5);
+    let app = repo.app(StartTarget::File(alias), config(None));
+    assert_eq!(app.review_count(), 1);
+    assert_eq!(app.review_comments_here().len(), 1);
+}
+
+#[test]
 fn a_tmp_path_resolves_through_its_canonical_form() {
     // On macOS /tmp is a symlink to /private/tmp.
     let dir = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
