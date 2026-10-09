@@ -5,9 +5,10 @@
 ramble is a fast, read-only markdown reader for the terminal. It renders a
 page properly (reflowed prose, tables, syntax-highlighted code, callouts), lets
 you follow any link with `gd`, and comes back with `C-o`, like a browser with
-vim keys. Point it at a [zk](https://github.com/zk-org/zk) notebook and it
-talks to zk's language server, so wikilinks, backlinks, hover previews,
-full-text search and tags all work, without opening an editor.
+vim keys. Point it at a folder of notes and wikilinks, backlinks, hover
+previews, full-text search and tags all work, without opening an editor or
+installing anything else: the notebook index is built in, from
+[mdroots](https://github.com/martintrojer/mdroots).
 
 ![ramble reading its own README, with the file tree and outline in the sidebar](docs/images/ramble.png)
 
@@ -26,9 +27,12 @@ ramble is the reading half of the editor, done properly. It never writes your
 files. When you do want to edit, `<leader>o` opens `$EDITOR` at the line you're
 looking at (`$VISUAL`, then `$EDITOR`), and ramble reloads the page when you come back.
 
-Other readers resolve links with their own guesses. ramble asks the language
-server your editor already uses. If zk can resolve a wikilink in nvim, ramble
-can follow it.
+Other readers resolve links with their own guesses. ramble resolves them
+with mdroots, a markdown notebook index that understands the link styles of
+zk, Obsidian, marksman and plain relative paths across the whole notebook. If you'd rather it asked the
+language server your editor already uses, point it at
+[zk](https://github.com/zk-org/zk) or
+[marksman](https://github.com/artempyanykh/marksman) in the config.
 
 ## What you get
 
@@ -109,23 +113,22 @@ can follow it.
   terminal grows, unless you hid it. With no file open, the tree always
   shows and has focus.
 
-**Pickers**
-- Notes (`<leader>zf`) and the links on this page (`<leader>zl`) work
-  anywhere, with or without a language server.
-- Without a language server, [mdroots](https://github.com/martintrojer/mdroots)
-  also gives full-text search (`<leader>zs`, Enter lands on the hit), tags
-  (`<leader>zz`) and backlinks (`<leader>zb` or `grr`). `K` on a link to
-  a note previews it from mdroots (title, front matter, first lines).
-
-**With a language server** (zk first-class, marksman supported)
+**Notebook features, built in**
 - Wikilinks resolved by your notebook, not by filename guessing.
 - `K` previews the link target without leaving the page.
 - Broken links are dimmed as you read.
-- Backlinks to this page (`<leader>zb` or `grr`).
-- With zk: full-text search (`<leader>zs`) and tags (`<leader>zz`), straight
-  from your notebook's index.
-- No server installed? Everything that doesn't need one keeps working, and
-  ramble tells you once at startup instead of showing an error on every page.
+- Pickers: notes (`<leader>zf`), the links on this page (`<leader>zl`),
+  backlinks to this page (`<leader>zb` or `grr`), full-text search
+  (`<leader>zs`) and tags (`<leader>zz`).
+- No setup and no external tools. The index lives in your user cache dir
+  (`MDROOTS_CACHE_DIR` points it elsewhere), never in your notes.
+
+**Optional: a language server**
+- An `[[lsp.server]]` entry (zk or marksman, or any markdown server as
+  `generic`) serves the pages under its root markers instead; every other
+  page stays on the built-in index.
+- A configured server that isn't installed is reported once, the first time
+  a page needs it, instead of as an error on every page.
 
 **Around the edges**
 - Live reload when the file changes on disk, keeping your place and the
@@ -166,8 +169,7 @@ cargo install --path .
 ```
 
 This also installs a small `fake-lsp` helper used by the test suite; you can
-delete it. Optional, for notebook features: [zk](https://github.com/zk-org/zk) or
-[marksman](https://github.com/artempyanykh/marksman) on your `PATH`.
+delete it. Nothing else is needed: the notebook features are built in.
 
 ## Use
 
@@ -218,8 +220,8 @@ enabled = true               # false leaves the mouse to the terminal / tmux
 command = ["sh", "-c", "mu agent send worker-1 \"$(cat)\""]  # [] copies it
 preamble = "Please address these comments."  # replaces the opening paragraph
 
-[[lsp.server]]               # replaces the default server list
-kind = "zk"
+[[lsp.server]]               # optional: zk serves pages under a .zk root
+kind = "zk"                  # (none by default; the built-in index serves all)
 command = ["zk", "lsp"]
 root_markers = [".zk"]
 
@@ -237,9 +239,10 @@ map from every drawn cell back to the source bytes it came from. That map is
 what makes the cursor, search, link hints, review markers and "open the editor
 at this line" all line up with the file on disk.
 
-Notebook knowledge comes from the language server, over a small stdio
-JSON-RPC client that never blocks the UI: the page renders immediately, and
-link targets and broken-link marks arrive when the server answers.
+Notebook knowledge comes from mdroots, running in-process on a worker
+thread so it never blocks the UI: the page renders immediately, and link
+targets and broken-link marks arrive when the index answers. A configured
+language server is reached over a small stdio JSON-RPC client the same way.
 
 The full design, including the decisions behind it and what the review panel
 changed, is in [docs/specs/2026-10-07-ramble.md](docs/specs/2026-10-07-ramble.md).
@@ -247,8 +250,8 @@ changed, is in [docs/specs/2026-10-07-ramble.md](docs/specs/2026-10-07-ramble.md
 ## Status
 
 Young and moving fast. It's built to replace a glow-plus-nvim reading setup,
-and its end-to-end tests run against real zk and marksman when they're
-installed. Expect sharp edges in the corners
+and its end-to-end tests also run against real zk and marksman when
+they're installed. Expect sharp edges in the corners
 the tests don't reach yet.
 
 ## License
