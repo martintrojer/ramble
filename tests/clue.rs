@@ -127,9 +127,10 @@ fn screen(app: &App) -> Vec<String> {
 
 #[test]
 fn g_lists_its_keys_without_a_server() {
+    // mdroots serves the page: `gr` (backlinks) is available.
     let (_d, mut app) = app();
     keys(&mut app, "g");
-    assert_eq!(row_keys(&app), ["?", "R", "d", "g", "x"]);
+    assert_eq!(row_keys(&app), ["?", "R", "d", "g", "r", "x"]);
     assert_eq!(desc(&app, "d").unwrap(), "follow the link");
     assert_eq!(desc(&app, "g").unwrap(), "first line (or line N)");
 }
@@ -158,10 +159,10 @@ fn g_and_leader_z_with_a_zk_server() {
 }
 
 #[test]
-fn leader_z_without_a_server_hides_unavailable_pickers() {
+fn leader_z_without_a_server_lists_the_mdroots_pickers() {
     let (_d, mut app) = app();
     keys(&mut app, " z");
-    assert_eq!(row_keys(&app), ["f", "l"]);
+    assert_eq!(row_keys(&app), ["b", "f", "l", "s", "z"]);
     assert_eq!(desc(&app, "f").unwrap(), "notes");
 }
 
@@ -210,7 +211,11 @@ fn mixed_groups_show_a_key_count() {
     });
     let (_d, mut app) = app_sized(c, (100, 30));
     keys(&mut app, " ");
-    assert_eq!(desc(&app, "z").unwrap(), "+3 keys", "zf, zl, zq");
+    assert_eq!(
+        desc(&app, "z").unwrap(),
+        "+6 keys",
+        "zb, zf, zl, zq, zs, zz"
+    );
 }
 
 #[test]
@@ -311,7 +316,7 @@ fn a_growing_sequence_updates_without_a_new_delay() {
     keys(&mut app, "z");
     assert!(app.clue_visible(), "no second delay");
     assert_eq!(app.clue_title(), "Space z");
-    assert_eq!(row_keys(&app), ["f", "l"]);
+    assert_eq!(row_keys(&app), ["b", "f", "l", "s", "z"]);
 }
 
 #[test]
@@ -391,7 +396,7 @@ fn box_sits_bottom_right_above_the_status_line() {
         .iter()
         .position(|l| l.contains("┐") && l.contains(" g "))
         .unwrap();
-    assert_eq!(title_row, h as usize - 2 - 6, "5 rows + borders");
+    assert_eq!(title_row, h as usize - 2 - 7, "6 rows + borders");
     assert!(s[title_row + 1].contains("?  show this help"));
     // The status line is not covered (it may show the pending keys).
     let status = s.last().unwrap();
@@ -426,7 +431,7 @@ fn overflow_that_still_does_not_fit_ends_with_more() {
     wait(&mut app);
     let s = screen(&app);
     assert!(s.iter().any(|l| l.contains("?  show this help")));
-    assert!(s.iter().any(|l| l.contains("…  4 more")), "{s:#?}");
+    assert!(s.iter().any(|l| l.contains("…  5 more")), "{s:#?}");
     assert!(s.iter().all(|l| !l.contains("follow the link")));
 }
 

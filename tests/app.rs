@@ -2004,16 +2004,58 @@ fn executed(log: &Path, n: usize) -> Vec<Value> {
     }
 }
 
+/// Set `path`'s modification time to `secs` after the epoch.
+fn set_mtime(path: &Path, secs: u64) {
+    let t = std::time::UNIX_EPOCH + Duration::from_secs(secs);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+/// Pump mdroots replies until the open picker has its items (10 s limit).
+fn pump_picker(app: &mut App) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.picker().is_some_and(|p| p.loading) {
+        assert!(Instant::now() < deadline, "picker never loaded");
+        app.pump_mdroots(Duration::from_millis(20));
+    }
+}
+
 #[test]
-fn notes_without_a_server_walk_files_filter_and_open() {
-    let (dir, mut app, _fx) = nav_app();
+fn notes_without_a_server_come_from_mdroots_filter_and_open() {
+    // No server selected: mdroots serves the page, so the notes picker is
+    // asynchronous, labels are titles, and the order is newest first.
+    // Every note exists before the app starts: an in-memory mdroots
+    // workspace does not watch for new files.
+    let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("sub")).unwrap();
-    std::fs::write(dir.path().join("sub/deep.md"), "# Deep note\n").unwrap();
+    for (f, text, secs) in [
+        ("a.md", a_source(), 1_000),
+        ("b.md", b_source(), 3_000),
+        ("sub/deep.md", "# Deep note\n".into(), 2_000),
+    ] {
+        std::fs::write(dir.path().join(f), text).unwrap();
+        set_mtime(&dir.path().join(f), secs);
+    }
+    let start = StartTarget::File(dir.path().join("a.md"));
+    let mut app = App::new(opts(dir.path(), start), (COLS, ROWS)).unwrap();
     leader(&mut app, "zf");
     assert_eq!(app.mode(), Mode::Picker);
-    assert_eq!(picker_labels(&app), ["a", "b", "deep"]);
+    pump_picker(&mut app);
+    assert_eq!(picker_labels(&app), ["B page", "Deep note", "A"]);
+    let details: Vec<String> = app
+        .picker()
+        .unwrap()
+        .items
+        .iter()
+        .map(|i| i.detail.clone())
+        .collect();
+    assert_eq!(details, ["b.md", "sub/deep.md", "a.md"]);
     keys(&mut app, "dee");
-    assert_eq!(picker_labels(&app), ["deep"]);
+    assert_eq!(picker_labels(&app), ["Deep note"]);
     send(&mut app, key(KeyCode::Backspace));
     send(&mut app, key(KeyCode::Backspace));
     send(&mut app, key(KeyCode::Backspace));
@@ -2024,7 +2066,10 @@ fn notes_without_a_server_walk_files_filter_and_open() {
     send(&mut app, key(KeyCode::Enter));
     assert_eq!(app.mode(), Mode::Normal);
     assert!(app.picker().is_none());
-    assert_eq!(page_path(&app), dir.path().join("b.md"));
+    assert_eq!(
+        page_path(&app).canonicalize().unwrap(),
+        dir.path().join("sub/deep.md").canonicalize().unwrap()
+    );
     assert_eq!(app.history_depth(), 1, "Enter pushes history");
     keys(&mut app, ":Notes");
     send(&mut app, key(KeyCode::Enter));
@@ -2035,8 +2080,25 @@ fn notes_without_a_server_walk_files_filter_and_open() {
 }
 
 #[test]
-fn zk_ops_are_unavailable_without_a_zk_server() {
+fn every_op_is_available_when_mdroots_serves_the_page() {
+    // No server selected: mdroots answers search, tags and backlinks.
     let (_d, mut app, _fx) = nav_app();
+    use ramble::notebook::Op;
+    assert_eq!(app.available_ops(), Op::ALL);
+    keys(&mut app, "grr");
+    assert_eq!(app.picker().unwrap().title, "Backlinks");
+    assert!(app.status().is_empty(), "{}", app.status());
+}
+
+#[test]
+fn zk_ops_are_unavailable_without_a_server_on_a_stdin_page() {
+    // A stdin page has no path: mdroots does not serve it.
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = App::new(
+        opts(dir.path(), StartTarget::Stdin("# S\n".into())),
+        (COLS, ROWS),
+    )
+    .unwrap();
     leader(&mut app, "zs");
     assert_eq!(app.status(), "Search needs a zk notebook");
     leader(&mut app, "zz");

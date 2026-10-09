@@ -112,6 +112,9 @@ can follow it.
 **Pickers**
 - Notes (`<leader>zf`) and the links on this page (`<leader>zl`) work
   anywhere, with or without a language server.
+- Without a language server, [mdroots](https://github.com/martintrojer/mdroots)
+  also gives full-text search (`<leader>zs`, Enter lands on the hit), tags
+  (`<leader>zz`) and backlinks (`<leader>zb` or `grr`).
 
 **With a language server** (zk first-class, marksman supported)
 - Wikilinks resolved by your notebook, not by filename guessing.

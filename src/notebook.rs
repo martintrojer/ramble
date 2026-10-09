@@ -1,5 +1,7 @@
 //! Notebook operations (notes, search, tags, backlinks, links) over the zk
 //! adapter, standard LSP, or local fallbacks (spec § Notebook operations).
+//! A page mdroots serves gets its items from `app::mdroots_glue` instead;
+//! [`available`] knows that through [`Sources::mdroots`].
 //!
 //! Everything here is pure: it builds request parameters and turns replies
 //! or local data into picker [`Item`]s. The app sends the requests and picks
@@ -69,6 +71,9 @@ pub struct Sources {
     pub references: bool,
     /// The page has at least one heading.
     pub heading: bool,
+    /// The page is served by [mdroots](https://github.com/martintrojer/mdroots)
+    /// (it has a path and no language server was selected).
+    pub mdroots: bool,
 }
 
 /// Whether `op` has a source, else the status message to show.
@@ -77,6 +82,7 @@ pub fn available(op: Op, s: Sources) -> Result<(), &'static str> {
     match op {
         Op::Notes => Ok(()),
         Op::Links if s.page => Ok(()),
+        Op::Search | Op::Tags | Op::Backlinks if s.mdroots => Ok(()),
         Op::Links => Err("Links need an open file"),
         Op::Search if zk => Ok(()),
         Op::Search => Err("Search needs a zk notebook"),

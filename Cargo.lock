@@ -1273,9 +1273,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ee262af017489f92f6379ca0808a03284859418404690880746b60003bdfc74"
+checksum = "b81a9ae6d570f6b14a7bf2deab211c8d34f6d625d7631b394d07564d790f04cd"
 dependencies = [
  "mdroots-core",
  "mdroots-index",
@@ -1288,9 +1288,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-core"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18501c7d30d8959a3e81a88d747ae127c7d71376f4b31ef915514ea51d064dae"
+checksum = "27c0bdbca2edbfa5ef2af659828b260714cc61d8f42ee969de1f6e8e4f2d1ae5"
 dependencies = [
  "mdroots-resolve",
  "mdroots-syntax",
@@ -1298,9 +1298,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-index"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0771b09136998e1a1985f0bd8dc2b36f1bfcd598bf8a34f06e79e69b4b5a212"
+checksum = "1f75c7ee7cb255f8b88cedfdc02bafea1d20d1ce59a62654e76f9fee13c025ef"
 dependencies = [
  "mdroots-core",
  "mdroots-roots",
@@ -1310,9 +1310,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-resolve"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f51315b30bef280cc20c9a8ee3dccccd1ae3895d157222db65178730d1bdf05"
+checksum = "a0793d644269ce3e858da2a55bfb41fb036b401f0a05603322958bdf1386aec1"
 dependencies = [
  "mdroots-syntax",
  "serde_json",
@@ -1322,9 +1322,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-roots"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f01ba070358c9e3d30bdf08381699c1a8707cb8796b02bd67b62a16c026b37"
+checksum = "9df27a62babb2a666d4782d3aed9bad1737a83526636050db237d28ab4923f9f"
 dependencies = [
  "ignore",
  "mdroots-core",
@@ -1333,9 +1333,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-syntax"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8bd91b73d73080ee3c89d125f41051edbd5dc12affe025fac20779aad6d7fed"
+checksum = "8e66ad128136fa13ce0d2e68a7ba90b5b57f377334dafb989836cb44b207deaa"
 dependencies = [
  "pulldown-cmark",
  "saphyr",

@@ -142,6 +142,16 @@ fn availability_rules() {
         ..with_heading
     };
     assert!(notebook::available(Op::Backlinks, no_refs).is_err());
+    // mdroots serves the page: everything, backlinks without a heading.
+    let mdroots = Sources {
+        mdroots: true,
+        ..none
+    };
+    assert!(
+        Op::ALL
+            .iter()
+            .all(|&op| notebook::available(op, mdroots).is_ok())
+    );
 }
 
 #[test]

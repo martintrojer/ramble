@@ -333,3 +333,245 @@ fn stdin_pages_get_no_backend() {
     assert_eq!(app.lsp_label(), "—");
     assert_eq!(target(&app, 0), None);
 }
+
+// Pickers: notes, search, tags and backlinks from mdroots.
+
+/// Set `path`'s modification time to `secs` after the epoch.
+fn set_mtime(path: &Path, secs: u64) {
+    let t = SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(t)
+        .unwrap();
+}
+
+fn leader(app: &mut App, s: &str) {
+    keys(app, " ");
+    keys(app, s);
+}
+
+fn enter(app: &mut App) {
+    app.event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Enter,
+        KeyModifiers::NONE,
+    )));
+}
+
+fn esc(app: &mut App) {
+    app.event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+}
+
+/// Pump until the open picker has its items.
+fn loaded(app: &mut App) {
+    pump_until(app, "the picker's items", |a| {
+        a.picker().is_some_and(|p| !p.loading)
+    });
+}
+
+/// The open picker's title and (label, detail) rows.
+fn rows(app: &App) -> (String, Vec<(String, String)>) {
+    let p = app.picker().expect("a picker");
+    let items = p
+        .items
+        .iter()
+        .map(|i| (i.label.clone(), i.detail.clone()))
+        .collect();
+    (p.title.to_string(), items)
+}
+
+fn row(label: &str, detail: &str) -> (String, String) {
+    (label.into(), detail.into())
+}
+
+/// Source line (1-based) of the cursor's row.
+fn cursor_line(app: &App) -> usize {
+    app.page().unwrap().rendered.source_lines[app.cursor().row]
+}
+
+#[test]
+fn the_notes_picker_lists_titles_newest_first() {
+    let (tree, cache) = notebook();
+    let root = tree.path();
+    for (i, f) in [
+        "wiki.md",
+        "a.md",
+        "c.md",
+        "tagged.md",
+        "emoji.md",
+        "broken.md",
+        "b.md",
+    ]
+    .iter()
+    .enumerate()
+    {
+        set_mtime(&root.join(f), 1_000 + 10 * i as u64);
+    }
+    let mut app = open(root, cache.path(), "a.md");
+    leader(&mut app, "zf");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Notes");
+    assert_eq!(
+        items,
+        [
+            row("Note B", "b.md"),
+            row("Broken", "broken.md"),
+            row("Emoji", "emoji.md"),
+            row("Tagged", "tagged.md"),
+            row("C", "c.md"),
+            row("Note A", "a.md"),
+            row("Wiki", "wiki.md"),
+        ]
+    );
+    keys(&mut app, "emoj");
+    enter(&mut app);
+    assert_eq!(canon(&page_path(&app)), canon(&root.join("emoji.md")));
+}
+
+#[test]
+fn a_search_hit_opens_its_note_at_the_line() {
+    let (tree, cache) = notebook();
+    let root = tree.path();
+    let mut app = open(root, cache.path(), "a.md");
+    // The prompt first, then the query.
+    leader(&mut app, "zs");
+    assert!(app.picker().unwrap().prompting);
+    keys(&mut app, "back to");
+    enter(&mut app);
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Search: back to");
+    // "Back to [Note A](a)." is on line 3 of b.md.
+    assert_eq!(items, [row("Note B", "b.md:3")]);
+    enter(&mut app);
+    assert_eq!(canon(&page_path(&app)), canon(&root.join("b.md")));
+    assert_eq!(cursor_line(&app), 3);
+
+    // `:Search q` skips the prompt; a deep line is jumped to.
+    app.open_file(&root.join("a.md")).unwrap();
+    keys(&mut app, ":Search body");
+    enter(&mut app);
+    loaded(&mut app);
+    // `body` is the last line of c.md: 2 + 30 * 2 + 3.
+    assert_eq!(rows(&app).1, [row("C", "c.md:65")]);
+    enter(&mut app);
+    assert_eq!(canon(&page_path(&app)), canon(&root.join("c.md")));
+    assert_eq!(cursor_line(&app), 65);
+}
+
+#[test]
+fn tags_merge_case_insensitively_and_open_their_notes() {
+    let (tree, cache) = notebook();
+    let root = tree.path();
+    write(
+        &root.join("t2.md"),
+        "---\ntags: [Project, x]\n---\n# Second tagged\n",
+    );
+    set_mtime(&root.join("tagged.md"), 1_000);
+    set_mtime(&root.join("t2.md"), 2_000);
+    let mut app = open(root, cache.path(), "a.md");
+    leader(&mut app, "zz");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Tags");
+    // `Project` sorts before `project`: its spelling names the merged row.
+    assert_eq!(items, [row("Project", "2"), row("x", "1")]);
+    enter(&mut app);
+    assert!(app.picker().unwrap().loading, "a new request");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Tag: Project");
+    assert_eq!(
+        items,
+        [row("Second tagged", "t2.md"), row("Tagged", "tagged.md")]
+    );
+    enter(&mut app);
+    assert_eq!(canon(&page_path(&app)), canon(&root.join("t2.md")));
+}
+
+#[test]
+fn backlinks_list_linking_notes_and_land_on_the_link_back() {
+    let (tree, cache) = notebook();
+    let root = tree.path();
+    let mut app = open(root, cache.path(), "a.md");
+    keys(&mut app, "grr");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Backlinks");
+    // Sorted by source path; lines are 1-based.
+    assert_eq!(
+        items,
+        [
+            row("Note B", "b.md:3"),
+            row("Tagged", "tagged.md:6"),
+            row("Wiki", "wiki.md:3"),
+        ]
+    );
+    // wiki.md links to a.md by title only (`[[Note A]]`): landing needs
+    // mdroots' target for it.
+    keys(&mut app, "wiki");
+    enter(&mut app);
+    assert_eq!(canon(&page_path(&app)), canon(&root.join("wiki.md")));
+    pump_until(&mut app, "the link back", |a| {
+        a.link_under_cursor() == Some(1)
+    });
+    assert_eq!(target(&app, 1), Some(canon(&root.join("a.md"))));
+}
+
+#[test]
+fn a_reply_for_an_earlier_picker_is_dropped() {
+    let (tree, cache) = notebook();
+    let mut app = open(tree.path(), cache.path(), "a.md");
+    // Two pickers in a row: the worker answers both, in order; the first
+    // one's answer arrives while the second is loading and must not fill it.
+    leader(&mut app, "zf");
+    assert!(app.picker().unwrap().loading);
+    esc(&mut app);
+    leader(&mut app, "zz");
+    assert!(app.picker().unwrap().loading);
+    loaded(&mut app);
+    // Let any late answer arrive too.
+    app.pump_mdroots(Duration::from_millis(200));
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Tags");
+    assert_eq!(items, [row("project", "1")]);
+}
+
+#[test]
+fn a_lazy_root_walks_files_for_notes_and_marks_other_pickers_partial() {
+    // A monorepo marker makes mdroots index a working set only.
+    let tree = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let root = tree.path();
+    write(&root.join(".buckconfig"), "");
+    std::fs::create_dir_all(root.join("d1")).unwrap();
+    std::fs::create_dir_all(root.join("d2")).unwrap();
+    write(&root.join("d1/a.md"), "# Alpha\n");
+    write(&root.join("d1/b.md"), "# Beta\n\n[a](a.md)\n");
+    write(&root.join("d2/c.md"), "# Gamma\n");
+    let mut app = open(root, cache.path(), "d1/a.md");
+    leader(&mut app, "zf");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Notes");
+    // The file walk of the tree root: stems, sorted by path.
+    assert_eq!(
+        items,
+        [
+            row("a", "d1/a.md"),
+            row("b", "d1/b.md"),
+            row("c", "d2/c.md")
+        ]
+    );
+    esc(&mut app);
+    keys(&mut app, "grr");
+    loaded(&mut app);
+    let (title, items) = rows(&app);
+    assert_eq!(title, "Backlinks (partial)");
+    assert_eq!(items, [row("Beta", "d1/b.md:3")]);
+}

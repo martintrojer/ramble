@@ -4,6 +4,10 @@
 //!
 //! Picker requests use their own tag space: `PICKER_TAG_BASE | seq`. A reply
 //! whose seq is not the open picker's current request is dropped.
+//!
+//! On a page mdroots serves, notes, search, tags and backlinks come from
+//! mdroots' worker instead (`mdroots_glue`), with the same seq rule; the
+//! worker builds the items.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +17,7 @@ use nucleo::{Config, Matcher, Utf32Str};
 use serde_json::Value;
 
 use super::keys::{Action, KeyResult};
+use super::mdroots_glue::{PickerAnswer, PickerQuery};
 use super::{App, Mode};
 use crate::lsp::Kind;
 use crate::nav::{self, Target};
@@ -208,6 +213,7 @@ impl App {
                 .page
                 .as_ref()
                 .is_some_and(|p| !p.doc.headings.is_empty()),
+            mdroots: self.mdroots_active(),
         }
     }
 
@@ -233,7 +239,12 @@ impl App {
             return;
         }
         let zk_root = self.lsp_running().filter(|r| r.1 == Kind::Zk).map(|r| r.2);
+        let mdroots = self.mdroots_active();
         match op {
+            Op::Notes if mdroots => {
+                let tree_root = self.tree_root.clone();
+                self.mdroots_picker("Notes", Content::Notes, PickerQuery::Notes { tree_root });
+            }
             Op::Notes => match zk_root {
                 Some(root) => {
                     let params = zk::notes(&root);
@@ -257,6 +268,9 @@ impl App {
                     }
                 }
             }
+            Op::Tags if mdroots => {
+                self.mdroots_picker("Tags", Content::Tags, PickerQuery::Tags);
+            }
             Op::Tags => {
                 let root = zk_root.unwrap_or_default();
                 let params = zk::tags(&root);
@@ -273,12 +287,28 @@ impl App {
     }
 
     fn send_search(&mut self, root: PathBuf, q: &str) {
-        let params = zk::search(&root, q);
         let title = format!("Search: {q}");
+        if self.mdroots_active() {
+            self.mdroots_picker(&title, Content::Notes, PickerQuery::Search(q.into()));
+            return;
+        }
+        let params = zk::search(&root, q);
         self.picker_request(&title, Content::Notes, root, zk::EXECUTE, params);
     }
 
     fn open_backlinks(&mut self) {
+        if self.mdroots_active() {
+            let from = self
+                .page
+                .as_ref()
+                .and_then(|p| p.path.as_deref())
+                .map(canonical);
+            let sent = self.mdroots_picker("Backlinks", Content::Locations, PickerQuery::Backlinks);
+            if sent && let Some(p) = self.picker.open.as_mut() {
+                p.from = from;
+            }
+            return;
+        }
         let Some((client, kind, root)) = self.lsp_running() else {
             return;
         };
@@ -328,6 +358,47 @@ impl App {
         p.seq = seq;
         self.show_picker(p);
         true
+    }
+
+    /// Ask mdroots for a picker's items and show the picker loading. False
+    /// when it could not be sent (status set, no picker shown).
+    fn mdroots_picker(&mut self, title: &str, content: Content, query: PickerQuery) -> bool {
+        self.picker.seq += 1;
+        let seq = self.picker.seq;
+        if !self.mdroots_picker_request(seq, query) {
+            self.set_status(format!("{title}: needs an open file"));
+            return false;
+        }
+        let mut p = Picker::new(title, content, PathBuf::new());
+        p.loading = true;
+        p.seq = seq;
+        self.show_picker(p);
+        true
+    }
+
+    /// mdroots' answer to picker request `seq`. Dropped unless it answers
+    /// the open picker's current request.
+    pub(super) fn mdroots_picker_reply(&mut self, seq: u64, result: Result<PickerAnswer, String>) {
+        let Some(p) = self.picker.open.as_mut() else {
+            return;
+        };
+        if !p.loading || p.seq != seq {
+            return;
+        }
+        match result {
+            Ok(a) => {
+                p.root = a.root;
+                if a.partial {
+                    p.title.push_str(" (partial)");
+                }
+                p.set_items(a.items);
+            }
+            Err(e) => {
+                let msg = format!("{}: {e}", p.title);
+                self.close_picker();
+                self.set_status(msg);
+            }
+        }
     }
 
     fn show_picker(&mut self, p: Picker) {
@@ -431,8 +502,13 @@ impl App {
         self.close_picker();
         match content {
             Content::Tags => {
-                let params = zk::notes_by_tag(&root, &item.label);
                 let title = format!("Tag: {}", item.label);
+                if self.mdroots_active() {
+                    let query = PickerQuery::NotesWithTag(item.label);
+                    self.mdroots_picker(&title, Content::Notes, query);
+                    return;
+                }
+                let params = zk::notes_by_tag(&root, &item.label);
                 self.picker_request(&title, Content::Notes, root, zk::EXECUTE, params);
             }
             Content::Links => {

@@ -1,8 +1,9 @@
 //! Connects [mdroots](https://github.com/martintrojer/mdroots) to the app:
 //! the in-process backend for a page no configured `[[lsp.server]]` serves
 //! (spec docs/specs/2026-10-08-mdroots-migration.md, S2). It gives the
-//! page's link targets, broken-link dimming and `gd` targets, and the
-//! `mdroots ○` / `mdroots ●` status label.
+//! page's link targets, broken-link dimming and `gd` targets, the
+//! `mdroots ○` / `mdroots ●` status label, and the notes, search, tags and
+//! backlinks pickers' items.
 //!
 //! One worker thread owns [`mdroots::Workspaces`] (built on the worker, on
 //! the first request: its constructor opens the cache registry) and answers
@@ -26,21 +27,35 @@
 //! notes' changes show once the page is reopened or reloaded (`C-l`).
 //! ramble's own watcher still reloads the page itself, which refreshes it.
 //!
+//! A picker request carries the picker's seq and is answered from the
+//! root workspace of the page (`for_path`: the cached one, or opened then;
+//! on the one worker thread that is the open the page's request started).
+//! The worker builds the picker [`Item`]s; the picker drops an answer for
+//! another seq. A workspace that indexes a working set only (lazy roots;
+//! single-file) answers search, tags and backlinks as a partial list (the
+//! picker title says so); the notes picker walks the tree root instead.
+//!
 //! Limitation: the worker is one thread with no per-call cancellation, so
 //! a slow `for_path` (a big root's first index) delays every later request,
-//! even for pages in other roots. Queued page requests are coalesced to the
-//! latest. Dropping the app cancels the shared [`mdroots::Cancel`] so a
-//! running open stops; the worker is never joined.
+//! even for pages in other roots (a picker shows loading meanwhile).
+//! Queued page requests are coalesced to the latest; picker requests are
+//! answered in order, never dropped. Dropping the app cancels the shared
+//! [`mdroots::Cancel`] so a running open or search stops; the worker is
+//! never joined.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
-use mdroots::{Cancel, DocLink, IndexMode, LinkStatus, RootMode, Workspace, Workspaces};
+use mdroots::{
+    Cancel, DocLink, Freshness, IndexMode, LinkStatus, NoteSummary, RootMode, Workspace, Workspaces,
+};
 
 use super::App;
 use crate::doc::LinkKind;
+use crate::notebook::{self, Item};
 
 /// How the mdroots backend stores its index; converted to
 /// [`mdroots::Options`] on the worker. There is deliberately no `Default`:
@@ -92,8 +107,15 @@ impl MdrootsOptions {
     }
 }
 
+/// A request to the worker. Page requests are coalesced to the latest;
+/// picker requests are answered in order, each exactly once.
+enum Request {
+    Page(PageRequest),
+    Picker(PickerRequest),
+}
+
 /// A page to answer for.
-struct Request {
+struct PageRequest {
     tag: u64,
     path: PathBuf,
     /// The source ramble shows, set as the overlay while answering.
@@ -102,8 +124,53 @@ struct Request {
     refresh: Vec<PathBuf>,
 }
 
+/// A picker's items, from the root workspace of `path` (the page).
+struct PickerRequest {
+    /// The picker's seq (see `picker.rs`).
+    seq: u64,
+    path: PathBuf,
+    query: PickerQuery,
+}
+
+/// What a picker asks mdroots for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum PickerQuery {
+    /// Every note, newest first. A workspace that indexes a working set
+    /// only (lazy or single-file) would list a fraction: the file walk of
+    /// `tree_root` answers instead.
+    Notes { tree_root: PathBuf },
+    /// [`Workspace::full_text`]: mdroots' query syntax, passed unchanged.
+    Search(String),
+    /// Tags, merged case-insensitively.
+    Tags,
+    /// The notes carrying a tag (case-insensitive), newest first.
+    NotesWithTag(String),
+    /// Links to the page.
+    Backlinks,
+}
+
+/// A picker's answer: items built on the worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PickerAnswer {
+    /// The root the details are relative to.
+    pub(super) root: PathBuf,
+    pub(super) items: Vec<Item>,
+    /// From a workspace that indexes a working set only: the items may be
+    /// incomplete.
+    pub(super) partial: bool,
+}
+
+/// A worker answer.
+pub(super) enum Reply {
+    Page(PageReply),
+    Picker {
+        seq: u64,
+        result: Result<PickerAnswer, String>,
+    },
+}
+
 /// One answer for a page.
-pub(super) struct Reply {
+pub(super) struct PageReply {
     tag: u64,
     /// From the root's workspace (`for_path`), not `open_single`.
     root: bool,
@@ -186,24 +253,15 @@ impl Drop for MdrootsState {
 /// while no page request arrives.
 const POLL: Duration = Duration::from_millis(100);
 
-/// The worker loop: answer the latest queued page, and re-answer it when
-/// mdroots' watcher reports changes under its root, until the app is gone.
+/// The worker loop: answer the latest queued page and every queued picker
+/// request, and re-answer the page when mdroots' watcher reports changes
+/// under its root, until the app is gone.
 fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Sender<Reply>) {
     let workspaces = Workspaces::new(opts.clone());
     // One change subscription per root workspace answered from, by root.
     let mut subs: HashMap<PathBuf, Receiver<Vec<PathBuf>>> = HashMap::new();
     // The current page's request, re-answered on changes under its root.
-    let mut last: Option<Request> = None;
-    let send = |ws: &Workspace, req: &Request, path: &Path, root: bool| {
-        let reply = Reply {
-            tag: req.tag,
-            root,
-            single: ws.root().mode == RootMode::SingleFile,
-            watching: ws.watching(),
-            links: answer(ws, path, &req.text),
-        };
-        out.send(reply).is_ok()
-    };
+    let mut last: Option<PageRequest> = None;
     loop {
         // Block while there is nothing to watch; otherwise poll both.
         let next = if subs.is_empty() {
@@ -211,7 +269,7 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
         } else {
             rx.recv_timeout(POLL)
         };
-        let mut req = match next {
+        let first = match next {
             Ok(req) => req,
             Err(RecvTimeoutError::Disconnected) => return,
             Err(RecvTimeoutError::Timeout) => {
@@ -223,62 +281,245 @@ fn worker(opts: mdroots::Options, cancel: Cancel, rx: Receiver<Request>, out: Se
                 let root = &ws.root().path;
                 // Drain every batch: each is a refresh of this root.
                 let changed = subs.get(root).is_some_and(|sub| sub.try_iter().count() > 0);
-                if changed && !send(&ws, req, &path, true) {
+                if changed && !send_page(&out, &ws, req, &path, true) {
                     return;
                 }
                 continue;
             }
         };
-        // Coalesce: only the latest page matters, but keep every refresh.
-        while let Ok(next) = rx.try_recv() {
-            let mut refresh = std::mem::take(&mut req.refresh);
-            refresh.extend(next.refresh.iter().cloned());
-            req = next;
-            req.refresh = refresh;
+        // Coalesce pages: only the latest matters, but keep every refresh.
+        // Picker requests are kept in order.
+        let mut page: Option<PageRequest> = None;
+        let mut pickers = Vec::new();
+        for req in std::iter::once(first).chain(std::iter::from_fn(|| rx.try_recv().ok())) {
+            match req {
+                Request::Page(mut next) => {
+                    if let Some(prev) = page.take() {
+                        let mut refresh = prev.refresh;
+                        refresh.append(&mut next.refresh);
+                        next.refresh = refresh;
+                    }
+                    page = Some(next);
+                }
+                Request::Picker(p) => pickers.push(p),
+            }
         }
         if cancel.is_cancelled() {
             return;
         }
-        let path = canonical(&req.path);
-        let refresh: Vec<PathBuf> = std::mem::take(&mut req.refresh)
-            .iter()
-            .map(|p| canonical(p))
-            .collect();
-        let ws = if let Some(ws) = workspaces.get(&path) {
-            if !refresh.is_empty() {
-                let _ = ws.refresh_paths(&refresh, &cancel);
-            }
-            Ok(ws)
-        } else {
-            if let Ok(single) = Workspace::open_single(&path, opts.clone())
-                && !send(&single, &req, &path, false)
-            {
+        // The page first: it opens the root a picker on it needs anyway.
+        if let Some(mut req) = page {
+            if !answer_page(&workspaces, &opts, &cancel, &mut subs, &mut req, &out) {
                 return;
             }
-            // A freshly opened root has read every note: no refresh needed.
-            workspaces.for_path(&path)
-        };
-        let ok = match ws {
-            Ok(ws) => {
-                subs.entry(ws.root().path.clone())
-                    .or_insert_with(|| ws.subscribe());
-                send(&ws, &req, &path, true)
-            }
-            Err(e) => out
-                .send(Reply {
-                    tag: req.tag,
-                    root: true,
-                    single: true,
-                    watching: false,
-                    links: Err(e.to_string()),
-                })
-                .is_ok(),
-        };
-        if !ok {
-            return;
+            last = Some(req);
         }
-        last = Some(req);
+        for p in pickers {
+            let result = picker_answer(&workspaces, &cancel, &p);
+            if out.send(Reply::Picker { seq: p.seq, result }).is_err() {
+                return;
+            }
+        }
     }
+}
+
+/// Send the page's links from `ws`. False when the app is gone.
+fn send_page(
+    out: &Sender<Reply>,
+    ws: &Workspace,
+    req: &PageRequest,
+    path: &Path,
+    root: bool,
+) -> bool {
+    let reply = PageReply {
+        tag: req.tag,
+        root,
+        single: ws.root().mode == RootMode::SingleFile,
+        watching: ws.watching(),
+        links: answer(ws, path, &req.text),
+    };
+    out.send(Reply::Page(reply)).is_ok()
+}
+
+/// Answer a page: from its ready root workspace (refreshing the changed
+/// paths first), else from `open_single` and then the freshly opened
+/// root. False when the app is gone.
+fn answer_page(
+    workspaces: &Workspaces,
+    opts: &mdroots::Options,
+    cancel: &Cancel,
+    subs: &mut HashMap<PathBuf, Receiver<Vec<PathBuf>>>,
+    req: &mut PageRequest,
+    out: &Sender<Reply>,
+) -> bool {
+    let path = canonical(&req.path);
+    let refresh: Vec<PathBuf> = std::mem::take(&mut req.refresh)
+        .iter()
+        .map(|p| canonical(p))
+        .collect();
+    let ws = if let Some(ws) = workspaces.get(&path) {
+        if !refresh.is_empty() {
+            let _ = ws.refresh_paths(&refresh, cancel);
+        }
+        Ok(ws)
+    } else {
+        if let Ok(single) = Workspace::open_single(&path, opts.clone())
+            && !send_page(out, &single, req, &path, false)
+        {
+            return false;
+        }
+        // A freshly opened root has read every note: no refresh needed.
+        workspaces.for_path(&path)
+    };
+    match ws {
+        Ok(ws) => {
+            subs.entry(ws.root().path.clone())
+                .or_insert_with(|| ws.subscribe());
+            send_page(out, &ws, req, &path, true)
+        }
+        Err(e) => out
+            .send(Reply::Page(PageReply {
+                tag: req.tag,
+                root: true,
+                single: true,
+                watching: false,
+                links: Err(e.to_string()),
+            }))
+            .is_ok(),
+    }
+}
+
+/// Most hits a search lists.
+const SEARCH_LIMIT: usize = 200;
+
+/// A picker's items from the root workspace of the page (opened here if
+/// the page's own request has not opened it). Shapes match the zk
+/// adapter's (label = title, detail = path relative to the root) except
+/// that search hits carry their line, so Enter lands on the hit.
+fn picker_answer(
+    workspaces: &Workspaces,
+    cancel: &Cancel,
+    req: &PickerRequest,
+) -> Result<PickerAnswer, String> {
+    let path = canonical(&req.path);
+    let ws = workspaces.for_path(&path).map_err(|e| e.to_string())?;
+    let root = ws.root().path;
+    let partial = ws.freshness() == Freshness::Lazy;
+    let rel = |p: &Path| p.strip_prefix(&root).unwrap_or(p).display().to_string();
+    let note_items = |notes: Vec<NoteSummary>| -> Vec<Item> {
+        newest_first(notes)
+            .into_iter()
+            .map(|n| Item {
+                label: title_or_stem(&n.title, &n.path),
+                detail: rel(&n.path),
+                path: Some(n.path),
+                ..Item::default()
+            })
+            .collect()
+    };
+    let items = match &req.query {
+        PickerQuery::Notes { tree_root } if partial => {
+            return Ok(PickerAnswer {
+                root: tree_root.clone(),
+                items: notebook::walk_notes(tree_root),
+                partial: false,
+            });
+        }
+        PickerQuery::Notes { .. } => note_items(ws.notes()),
+        PickerQuery::NotesWithTag(tag) => note_items(ws.notes_with_tag(tag)),
+        PickerQuery::Search(q) => {
+            let hits = ws
+                .full_text(q, SEARCH_LIMIT, cancel)
+                .map_err(|e| e.to_string())?;
+            let titles: HashMap<PathBuf, String> =
+                ws.notes().into_iter().map(|n| (n.path, n.title)).collect();
+            hits.into_iter()
+                .map(|h| {
+                    let line = h.line as usize + 1; // Hit.line is 0-based.
+                    let title = titles.get(&h.path).map_or("", String::as_str);
+                    Item {
+                        label: title_or_stem(title, &h.path),
+                        detail: format!("{}:{line}", rel(&h.path)),
+                        path: Some(h.path),
+                        line: Some(line),
+                        link: None,
+                    }
+                })
+                .collect()
+        }
+        PickerQuery::Tags => merge_tags(ws.tags())
+            .into_iter()
+            .map(|(name, n)| Item {
+                label: name,
+                detail: n.to_string(),
+                ..Item::default()
+            })
+            .collect(),
+        PickerQuery::Backlinks => ws
+            .backlinks(&path)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|b| {
+                let line = b.line as usize + 1; // Backlink.line is 0-based.
+                Item {
+                    label: b.from_title,
+                    detail: format!("{}:{line}", rel(&b.from)),
+                    path: Some(b.from),
+                    line: Some(line),
+                    link: None,
+                }
+            })
+            .collect(),
+    };
+    Ok(PickerAnswer {
+        root,
+        items,
+        partial,
+    })
+}
+
+/// `notes` by modification time, newest first (zk's `sort: [modified]`);
+/// unknown times last, then by path.
+fn newest_first(mut notes: Vec<NoteSummary>) -> Vec<NoteSummary> {
+    notes.sort_by(|a, b| {
+        let by_time = match (a.modified, b.modified) {
+            (Some(x), Some(y)) => y.cmp(&x),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        by_time.then_with(|| a.path.cmp(&b.path))
+    });
+    notes
+}
+
+/// `title`, or the file stem when it is empty.
+fn title_or_stem(title: &str, path: &Path) -> String {
+    if title.is_empty() {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        title.to_string()
+    }
+}
+
+/// `tags` with names that differ only in case merged into one row (the
+/// first spelling, the summed count): `notes_with_tag` matches
+/// case-insensitively, so each spelling would open the same notes.
+fn merge_tags(tags: Vec<(String, usize)>) -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    let mut at: HashMap<String, usize> = HashMap::new();
+    for (name, n) in tags {
+        match at.get(&name.to_lowercase()) {
+            Some(&i) => out[i].1 += n,
+            None => {
+                at.insert(name.to_lowercase(), out.len());
+                out.push((name, n));
+            }
+        }
+    }
+    out
 }
 
 /// The page's links in `ws`, read with ramble's text as the overlay. The
@@ -336,12 +577,30 @@ impl App {
         m.tag = Some(tag);
         m.sent_at = Some(self.now);
         let text = page.doc.source.clone();
-        m.send(Request {
+        m.send(Request::Page(PageRequest {
             tag,
             path,
             text,
             refresh,
-        });
+        }));
+    }
+
+    /// Whether mdroots serves the current page (it has a path and no LSP
+    /// server was selected), so the pickers ask it.
+    pub(super) fn mdroots_active(&self) -> bool {
+        self.mdroots.active
+    }
+
+    /// Ask the worker for picker `seq`'s items, from the root workspace of
+    /// the current page. The answer arrives through
+    /// [`App::mdroots_picker_reply`]. False when the page has no path.
+    pub(super) fn mdroots_picker_request(&mut self, seq: u64, query: PickerQuery) -> bool {
+        let Some(path) = self.page.as_ref().and_then(|p| p.path.clone()) else {
+            return false;
+        };
+        self.mdroots
+            .send(Request::Picker(PickerRequest { seq, path, query }));
+        true
     }
 
     /// Apply pending mdroots replies, blocking up to `timeout` for the
@@ -352,16 +611,23 @@ impl App {
             Ok(r) => r,
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => return 0,
         };
-        self.mdroots_reply(first);
+        self.mdroots_dispatch(first);
         let mut n = 1;
         while let Ok(r) = self.mdroots.rx.try_recv() {
-            self.mdroots_reply(r);
+            self.mdroots_dispatch(r);
             n += 1;
         }
         n
     }
 
-    pub(super) fn mdroots_reply(&mut self, r: Reply) {
+    fn mdroots_dispatch(&mut self, r: Reply) {
+        match r {
+            Reply::Page(r) => self.mdroots_reply(r),
+            Reply::Picker { seq, result } => self.mdroots_picker_reply(seq, result),
+        }
+    }
+
+    pub(super) fn mdroots_reply(&mut self, r: PageReply) {
         if !self.mdroots.active || self.mdroots.tag != Some(r.tag) {
             return; // Another page or an older request: drop.
         }
@@ -504,7 +770,7 @@ mod tests {
         app.reload();
         let links = real_links(dir.path());
         assert!(links[0].target.is_some(), "the fixture link resolves");
-        app.mdroots_reply(Reply {
+        app.mdroots_reply(PageReply {
             tag: old,
             root: true,
             single: false,
@@ -514,7 +780,7 @@ mod tests {
         assert_eq!(app.link_target(0), None);
         assert_eq!(app.lsp_label(), "—");
         let cur = app.mdroots.tag.unwrap();
-        app.mdroots_reply(Reply {
+        app.mdroots_reply(PageReply {
             tag: cur,
             root: false,
             single: true,
@@ -523,6 +789,44 @@ mod tests {
         });
         assert!(app.link_target(0).is_some());
         assert_eq!(app.lsp_label(), "mdroots ○");
+    }
+
+    #[test]
+    fn a_picker_request_between_page_requests_is_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app(dir.path(), "# A\n\n[b](b)\n");
+        // Page, picker, page, page: the pages coalesce, the picker does not.
+        assert!(app.mdroots_picker_request(7, PickerQuery::Tags));
+        app.reload();
+        app.reload();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut picker = None;
+        while picker.is_none() {
+            assert!(Instant::now() < deadline, "no picker reply");
+            if let Ok(Reply::Picker { seq, result }) =
+                app.mdroots.rx.recv_timeout(Duration::from_millis(20))
+            {
+                picker = Some((seq, result));
+            }
+        }
+        let (seq, result) = picker.unwrap();
+        assert_eq!(seq, 7);
+        let a = result.unwrap();
+        assert_eq!(a.root, dir.path().canonicalize().unwrap());
+        assert!(a.items.is_empty(), "no tags");
+    }
+
+    #[test]
+    fn tags_merge_case_insensitively_keeping_the_first_spelling() {
+        let tags = vec![
+            ("Project".into(), 1),
+            ("project".into(), 2),
+            ("x".into(), 1),
+        ];
+        assert_eq!(
+            merge_tags(tags),
+            [("Project".to_string(), 3), ("x".to_string(), 1)]
+        );
     }
 
     #[test]
@@ -538,7 +842,7 @@ mod tests {
         let a = dir.path().join("a.md");
         let single = real_links(dir.path());
         assert_eq!(single[0].target, None, "single-file cannot see titles");
-        app.mdroots_reply(Reply {
+        app.mdroots_reply(PageReply {
             tag,
             root: false,
             single: true,
@@ -554,7 +858,7 @@ mod tests {
         .unwrap();
         let rooted = ws.document_links(&a).unwrap();
         assert_eq!(rooted[0].target.as_deref(), Some(b.as_path()));
-        app.mdroots_reply(Reply {
+        app.mdroots_reply(PageReply {
             tag,
             root: true,
             single: false,

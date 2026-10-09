@@ -139,12 +139,14 @@ fn g_question_works_from_the_sidebar_and_lists_its_keys() {
 fn unavailable_actions_are_hidden() {
     let (_d, app) = app_with(config());
     assert!(!has_keys(&app, "K"), "no LSP: no hover row");
-    assert!(!has_keys(&app, "Space zs"), "no zk: no search row");
-    assert!(!has_keys(&app, "Space zz"), "no zk: no tags row");
-    assert!(!has_keys(&app, "Space zb"), "no server: no backlinks row");
-    assert!(!has_keys(&app, "grr"));
-    assert!(!has_keys(&app, ":Search <query>"));
-    assert!(!has_keys(&app, ":Tags"));
+    // No server selected: mdroots serves the page, so search, tags and
+    // backlinks are available.
+    assert!(has_keys(&app, "Space zs"), "mdroots: search row");
+    assert!(has_keys(&app, "Space zz"), "mdroots: tags row");
+    assert!(has_keys(&app, "Space zb"), "mdroots: backlinks row");
+    assert!(has_keys(&app, "grr"));
+    assert!(has_keys(&app, ":Search <query>"));
+    assert!(has_keys(&app, ":Tags"));
     assert!(!has_keys(&app, "]r"), "no review comments: no ]r row");
     assert!(!has_keys(&app, "C-o, C-t"), "no history yet");
     assert!(!has_keys(&app, "n"), "no previous search");
