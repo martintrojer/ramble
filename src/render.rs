@@ -7,6 +7,7 @@
 use std::ops::Range;
 use std::sync::OnceLock;
 
+use mdroots::syntax::{Field, Frontmatter};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
@@ -16,7 +17,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{self, AlertKind, Alignment, Block, Document, Inline, ListItem};
-use crate::frontmatter::{self, FmKind, FrontMatter};
 
 /// Colours and styles. `Theme::catppuccin_mocha()` is the default.
 #[derive(Debug, Clone)]
@@ -145,20 +145,20 @@ pub fn render_page(doc: &Document, width: u16, theme: &Theme, expanded: bool) ->
     let inlines = |r| doc::inlines(doc, r);
     let mut r = Renderer::new(doc, width, &inlines);
     r.math = theme.math;
-    if let Some(range) = &doc.front_matter {
-        r.front_matter(range, doc.front_matter_kind, expanded);
+    if let Some(fm) = &doc.fm {
+        r.front_matter(fm, expanded);
     }
     r.blocks(&doc.blocks, true);
     r.finish()
 }
 
 /// Text of the folded front-matter marker row.
-pub fn front_matter_marker(fm: &FrontMatter, expanded: bool) -> String {
+pub fn front_matter_marker(fm: &Frontmatter, expanded: bool) -> String {
     if expanded {
         return "▾ front matter".into();
     }
-    match fm.entries.len() {
-        _ if !fm.parsed => "▸ front matter · unparsed".into(),
+    match fm.fields().len() {
+        _ if !fm.parsed() => "▸ front matter · unparsed".into(),
         1 => "▸ front matter · 1 key".into(),
         n => format!("▸ front matter · {n} keys"),
     }
@@ -576,16 +576,16 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// The front-matter block at `range` (fences included): the marker
-    /// row, then when `expanded` one row per entry (or the raw lines when
-    /// nothing was extracted), then a blank row. Every row maps to source
+    /// The front-matter block `fm`: the marker row, then when `expanded`
+    /// one row per entry (or the raw lines when nothing was extracted),
+    /// then a blank row. Every row maps to source
     /// bytes, so the cursor and yank work on them.
-    fn front_matter(&mut self, range: &Range<usize>, kind: FmKind, expanded: bool) {
+    fn front_matter(&mut self, fm: &Frontmatter, expanded: bool) {
         let dim = Style::new().fg(palette::OVERLAY);
-        let body = frontmatter::body(self.src, range);
+        let range = &fm.range;
+        let body = fm.inner();
         let text = self.slice(&body);
-        let fm = frontmatter::parse(text, kind);
-        let marker = front_matter_marker(&fm, expanded);
+        let marker = front_matter_marker(fm, expanded);
         // Folded, the marker stands for the whole block; expanded, for
         // the opening fence, so entry bytes resolve to their own rows.
         let src = Some(if expanded {
@@ -602,7 +602,7 @@ impl<'a> Renderer<'a> {
             .collect();
         self.emit(cells, Some(range.start));
         if expanded {
-            if fm.entries.is_empty() {
+            if fm.fields().is_empty() {
                 let mut at = body.start;
                 for line in text.split_inclusive('\n') {
                     let r = at..at + line.trim_end_matches(['\n', '\r']).len();
@@ -611,7 +611,7 @@ impl<'a> Renderer<'a> {
                     self.emit(cells, Some(r.start));
                 }
             } else {
-                self.front_matter_entries(&fm, body.start);
+                self.front_matter_entries(fm.fields());
             }
         }
         self.blank();
@@ -619,19 +619,18 @@ impl<'a> Renderer<'a> {
 
     /// One row per entry: the dim key padded to the widest (at most
     /// [`FM_KEY_MAX`] columns), two spaces, the value clipped with `…`.
-    fn front_matter_entries(&mut self, fm: &FrontMatter, base: usize) {
+    fn front_matter_entries(&mut self, fields: &[Field]) {
         let dim = Style::new().fg(palette::OVERLAY);
         let avail = self.avail();
-        let key_w = fm
-            .entries
+        let key_w = fields
             .iter()
             .map(|e| UnicodeWidthStr::width(e.key.as_str()))
             .max()
             .unwrap_or(0)
             .min(FM_KEY_MAX)
             .min(avail.saturating_sub(3).max(1));
-        for e in &fm.entries {
-            let entry = base + e.src.start..base + e.src.end;
+        for e in fields {
+            let entry = e.range.clone();
             let line = self.slice(&entry);
             let key = self.mapped(&e.key, line, entry.start, &entry, dim, 0);
             let mut cells = clip(key, key_w);

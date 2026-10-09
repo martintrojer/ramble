@@ -12,11 +12,17 @@ use std::ops::Range;
 use std::path::PathBuf;
 
 use mdroots::syntax::{self as md, FrontmatterFormat, ParseOptions, markdown_options, slug};
-use pulldown_cmark::{
-    BlockQuoteKind, CodeBlockKind, Event, MetadataBlockKind, Parser, Tag, TagEnd,
-};
+use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Parser, Tag, TagEnd};
 
-use crate::frontmatter::FmKind;
+/// Which delimiters a front-matter block used.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FmKind {
+    /// `---` ... `---`
+    #[default]
+    Yaml,
+    /// `+++` ... `+++`
+    Toml,
+}
 
 /// A parsed markdown document. `source` is the full input text; every
 /// range below is a byte range into it.
@@ -40,6 +46,9 @@ pub struct Document {
     pub front_matter: Option<Range<usize>>,
     /// The delimiters of `front_matter` (YAML when there is none).
     pub front_matter_kind: FmKind,
+    /// The front-matter block at `front_matter`, as [`mdroots::syntax`]
+    /// read it: entries, their source lines, the bytes between the fences.
+    pub fm: Option<md::Frontmatter>,
     /// True when the input had invalid UTF-8 that was replaced with U+FFFD.
     pub lossy: bool,
 }
@@ -235,27 +244,31 @@ pub fn parse(mut source: String) -> Document {
     if source.starts_with('\u{feff}') {
         source.drain(..'\u{feff}'.len_utf8());
     }
-    let empty = empty_front_matter(&source);
-    let masked = mask(&source, empty.as_ref().map(|(r, _)| r.clone()));
+    let mut opts = ParseOptions::default();
+    // An unfenced header (Logseq `key:: v`, MultiMarkdown, JSON) is prose
+    // to ramble; only `---` / `+++` blocks are front matter.
+    opts.unfenced_frontmatter = false;
+    let md_doc = md::parse_with(&source, &opts);
+    let fm = md_doc
+        .frontmatter()
+        .filter(|f| matches!(f.format, FrontmatterFormat::Yaml | FrontmatterFormat::Toml))
+        .cloned();
+    // pulldown-cmark emits no metadata block for a blank one.
+    let blank = fm
+        .as_ref()
+        .filter(|f| source[f.inner()].trim().is_empty())
+        .map(|f| f.range.clone());
+    let masked = mask(&source, blank);
     let events = events(&masked);
     let mut i = 0;
     let blocks = parse_blocks(&source, &events, &mut i);
-    let (headings, links) = semantic(&source);
+    let (headings, links) = semantic(&md_doc);
     let code_spans = collect_code_spans(&source, &events);
-    let (front_matter, front_matter_kind) = events
-        .iter()
-        .find_map(|(event, range)| match event {
-            Event::Start(Tag::MetadataBlock(k)) => Some((
-                Some(range.clone()),
-                match k {
-                    MetadataBlockKind::YamlStyle => FmKind::Yaml,
-                    MetadataBlockKind::PlusesStyle => FmKind::Toml,
-                },
-            )),
-            _ => None,
-        })
-        .or(empty.map(|(r, k)| (Some(r), k)))
-        .unwrap_or_default();
+    let front_matter = fm.as_ref().map(|f| f.range.clone());
+    let front_matter_kind = match fm.as_ref().map(|f| f.format) {
+        Some(FrontmatterFormat::Toml) => FmKind::Toml,
+        _ => FmKind::Yaml,
+    };
     Document {
         source,
         blocks,
@@ -264,33 +277,9 @@ pub fn parse(mut source: String) -> Document {
         code_spans,
         front_matter,
         front_matter_kind,
+        fm,
         lossy: false,
     }
-}
-
-/// A leading front-matter block with nothing but blank lines between its
-/// fences (`---` / `---` or `+++` / `+++`): its range, fences included,
-/// and kind. pulldown-cmark reads these as rules or text.
-fn empty_front_matter(src: &str) -> Option<(Range<usize>, FmKind)> {
-    let mut lines = src.split_inclusive('\n');
-    let fence = lines.next()?.trim_end();
-    let kind = match fence {
-        "---" => FmKind::Yaml,
-        "+++" => FmKind::Toml,
-        _ => return None,
-    };
-    let mut at = src.split_inclusive('\n').next()?.len();
-    for line in lines {
-        let t = line.trim_end();
-        if t == fence {
-            return Some((0..at + fence.len(), kind));
-        }
-        if !t.is_empty() {
-            return None;
-        }
-        at += line.len();
-    }
-    None
 }
 
 /// `src` with the non-blank bytes of `range` (an empty front-matter
@@ -896,26 +885,10 @@ fn collect_code_spans(src: &str, events: &Events<'_>) -> Vec<CodeSpan> {
     spans
 }
 
-/// Headings and links of `src` from [`mdroots::syntax`], in ramble's
-/// shapes. Both parses use [`markdown_options`] over the same text, so
-/// every range lines up with the layout parse.
-fn semantic(src: &str) -> (Vec<Heading>, Vec<Link>) {
-    let opts = ParseOptions::default();
-    let mut doc = md::parse_with(src, &opts);
-    let mut shift = 0;
-    if doc
-        .frontmatter()
-        .is_some_and(|f| !matches!(f.format, FrontmatterFormat::Yaml | FrontmatterFormat::Toml))
-    {
-        // An unfenced header (Logseq `key:: v`, MultiMarkdown, JSON) is
-        // prose to ramble, but mdroots drops the links in it. A leading
-        // blank line turns its detection off and changes nothing else
-        // here: there is no fenced front matter for it to hide.
-        doc = md::parse_with(&format!("\n{src}"), &opts);
-        shift = 1;
-    }
-    let at = |r: &Range<usize>| r.start - shift..r.end - shift;
-
+/// Headings and links of `doc` (the [`mdroots::syntax`] parse of the
+/// source) in ramble's shapes. It uses [`markdown_options`] like the
+/// layout parse, so every range lines up with it.
+fn semantic(doc: &md::Document) -> (Vec<Heading>, Vec<Link>) {
     let mut used = HashSet::new();
     let headings = doc
         .headings()
@@ -931,7 +904,7 @@ fn semantic(src: &str) -> (Vec<Heading>, Vec<Link>) {
                 }
                 None => slug::unique(&slug::github(&h.text), &mut used),
             },
-            range: at(&h.range),
+            range: h.range.clone(),
         })
         .collect();
 
@@ -953,8 +926,8 @@ fn semantic(src: &str) -> (Vec<Heading>, Vec<Link>) {
             Some(Link {
                 kind,
                 dest: l.target.raw.clone(),
-                range: at(&l.range),
-                text_range: at(&l.text_range),
+                range: l.range.clone(),
+                text_range: l.text_range.clone(),
                 resolved: None,
                 line: None,
             })

@@ -69,14 +69,17 @@ The page body always renders, whatever the front matter contains.
 
 ## Implementation
 
-- `src/frontmatter.rs` (new):
-  - `pub struct FrontMatter { pub entries: Vec<(String, FmValue)>, pub parsed: bool }`
-  - `pub enum FmValue { Scalar(String), List(Vec<String>), Map }`
-  - `pub fn parse(src: &str, kind: FmKind) -> FrontMatter`, where
-    `FmKind` is `Yaml` or `Toml`. It is pure and has unit tests.
-- `src/doc.rs`: record the kind next to the range. Enable the
-  pluses-delimited option at `doc.rs:445`. Strip the delimiters before
-  parsing.
+- Parsing lives in the `mdroots` crate (`mdroots::syntax`), not in
+  ramble. Its `Frontmatter` gives the block's range and format (`Yaml` or
+  `Toml`), `fields()` (key, `FieldValue`, the entry's source lines),
+  `parsed()` and `inner()` (the bytes between the fences);
+  `FieldValue::display` is the value as drawn.
+- `src/doc.rs`: one `mdroots::syntax::parse_with` per page, with
+  `unfenced_frontmatter` off (an unfenced header is prose to ramble).
+  `Document` keeps the block's range, its kind (`FmKind::Yaml` or `Toml`)
+  and the `Frontmatter` itself (`Document::fm`). A blank block is masked
+  out of the pulldown-cmark layout parse, which emits no metadata block
+  for one.
 - `src/render.rs`: emit the marker row, and the entry rows when expanded,
   at the top of the rendered page. These rows map to the front-matter
   byte range in the srcmap, so the cursor, visual selection and yank
@@ -87,15 +90,14 @@ The page body always renders, whatever the front matter contains.
   marker row (checked before link-follow). Toggling re-renders through
   the existing layout path. Add a help `BINDINGS` row for `za`; the clue
   box picks it up automatically.
-- Dependencies: one YAML crate. Use `saphyr` if it builds cleanly on the
-  current toolchain, otherwise `serde_yaml_ng`. Record which one in the
-  commit message.
+- Dependencies: none of ramble's own; YAML and TOML parsing come with
+  `mdroots`.
 - README: one line under Reading. Spec `2026-10-07-ramble.md`: note that
   front matter now has a folded marker.
 
 ## Testing
 
-- Unit tests for `frontmatter::parse`:
+- Parser tests live in `mdroots` (`mdroots-syntax`, `frontmatter.rs`):
   - valid YAML: scalars, lists (block and inline), a nested map, quoted
     values, a date;
   - broken YAML (bad indentation, a tab, an unclosed quote, a duplicate

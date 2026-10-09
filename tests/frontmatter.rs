@@ -8,8 +8,7 @@ use std::rc::Rc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Clipboard, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
-use ramble::doc::parse;
-use ramble::frontmatter::FmKind;
+use ramble::doc::{FmKind, parse};
 use ramble::render::{Theme, palette, render, render_page, to_ansi};
 use tempfile::TempDir;
 

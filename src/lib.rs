@@ -6,7 +6,6 @@ pub mod app;
 pub mod cli;
 pub mod config;
 pub mod doc;
-pub mod frontmatter;
 pub mod lsp;
 pub mod nav;
 pub mod notebook;

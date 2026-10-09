@@ -42,7 +42,7 @@ on in config. Every decision optimises for mdroots:
 
 | ramble today (main `cf0dcb8`) | After | Lines |
 |---|---|---|
-| `src/frontmatter.rs` (YAML/TOML display parsing) | `mdroots::syntax::Frontmatter` / `Value` (and `Workspace::frontmatter_range` for the region). ramble keeps only the fold UI (marker row, `za`, table layout) | −1053 |
+| `src/frontmatter.rs` (YAML/TOML display parsing; deleted in S1) | `mdroots::syntax::Frontmatter` (`fields()`, `parsed()`, `inner()`, `FieldValue::display`). ramble keeps only the fold UI (marker row, `za`, table layout) | −1053 |
 | `src/doc.rs` link, heading, slug, code-span and front-matter collection, `from_bytes` | `mdroots::syntax::parse_bytes` → `Document::{links, headings, tags, frontmatter}`. ramble's `doc.rs` keeps only blocks and inlines for layout | about −500 of 1044 |
 | `src/nav.rs::resolve` (anchors, schemes, `file:`, percent-decoding, extensionless `.md`) | `Workspace::document_links` (`DocLink.target`, `anchor`, `line`, `status`) and `Workspace::goto(path, offset)` (target plus heading range). ramble keeps only the dispatch (open page, jump to heading, open browser, open editor) | about −120 of 175 |
 | `src/app/codepath.rs` (inline code naming a file, `:LINE`) | mdroots code-mention links (`LinkKind::CodeMention`, `DocLink.line`). Gap: extra search dirs (page dir, VCS root, tree root) in `Options`; until then mdroots resolves code mentions against the root only | about −150 of 181 |
