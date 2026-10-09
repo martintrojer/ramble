@@ -317,7 +317,7 @@ impl App {
             return;
         };
         let Some(pos) = notebook::backlinks_position(kind, &page.doc, client.encoding()) else {
-            self.set_status("Backlinks need a language server");
+            self.set_status("Backlinks need mdroots or a language server");
             return;
         };
         let params = notebook::references_params(&path, pos);

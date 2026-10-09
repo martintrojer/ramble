@@ -2102,13 +2102,13 @@ fn zk_ops_are_unavailable_without_a_server_on_a_stdin_page() {
     )
     .unwrap();
     leader(&mut app, "zs");
-    assert_eq!(app.status(), "Search needs a zk notebook");
+    assert_eq!(app.status(), "Search needs mdroots or a zk server");
     leader(&mut app, "zz");
-    assert_eq!(app.status(), "Tags needs a zk notebook");
+    assert_eq!(app.status(), "Tags need mdroots or a zk server");
     keys(&mut app, "grr");
-    assert_eq!(app.status(), "Backlinks need a language server");
+    assert_eq!(app.status(), "Backlinks need mdroots or a language server");
     command(&mut app, "Backlinks");
-    assert_eq!(app.status(), "Backlinks need a language server");
+    assert_eq!(app.status(), "Backlinks need mdroots or a language server");
     assert!(app.picker().is_none());
     use ramble::notebook::Op;
     assert_eq!(app.available_ops(), [Op::Notes, Op::Links]);
@@ -2434,7 +2434,7 @@ fn marksman_backlinks_use_the_first_heading_or_are_hidden() {
     assert!(page_path(&app).ends_with("n.md"));
     running(&mut app);
     keys(&mut app, "grr");
-    assert_eq!(app.status(), "Backlinks need a language server");
+    assert_eq!(app.status(), "Backlinks need mdroots or a language server");
     assert!(app.picker().is_none());
 }
 

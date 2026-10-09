@@ -106,11 +106,11 @@ fn availability_rules() {
     assert_eq!(notebook::available(Op::Links, none), Ok(()));
     assert_eq!(
         notebook::available(Op::Search, none),
-        Err("Search needs a zk notebook")
+        Err("Search needs mdroots or a zk server")
     );
     assert_eq!(
         notebook::available(Op::Backlinks, none),
-        Err("Backlinks need a language server")
+        Err("Backlinks need mdroots or a language server")
     );
     let zk = Sources {
         server: Some(Kind::Zk),

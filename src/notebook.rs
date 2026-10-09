@@ -85,12 +85,12 @@ pub fn available(op: Op, s: Sources) -> Result<(), &'static str> {
         Op::Search | Op::Tags | Op::Backlinks if s.mdroots => Ok(()),
         Op::Links => Err("Links need an open file"),
         Op::Search if zk => Ok(()),
-        Op::Search => Err("Search needs a zk notebook"),
+        Op::Search => Err("Search needs mdroots or a zk server"),
         Op::Tags if zk => Ok(()),
-        Op::Tags => Err("Tags needs a zk notebook"),
+        Op::Tags => Err("Tags need mdroots or a zk server"),
         Op::Backlinks => match s.server {
             Some(k) if s.references && (k == Kind::Zk || s.heading) => Ok(()),
-            _ => Err("Backlinks need a language server"),
+            _ => Err("Backlinks need mdroots or a language server"),
         },
     }
 }
