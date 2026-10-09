@@ -129,7 +129,7 @@ tree and that a plain folder caches only in the given dir.
 | live reload | `Workspace::refresh_paths`, `Options::watch` + `subscribe` | used |
 | fast first page | `Workspace::open_single` + `Workspaces::for_path`, `Workspaces::get` | used |
 | `gd` targets with heading ranges | `Workspace::goto(path, offset)` | available, not used (S4) |
-| code-path links | `LinkKind::CodeMention` with `Options::code_dirs` | available, not used (S4) |
+| code-path links | `LinkKind::CodeMention` with `Options::code_dirs` | available, not used (ramble resolves code paths itself) |
 
 ## Remaining: S4, the LSP backend module (optional)
 
@@ -139,15 +139,13 @@ tree and that a plain folder caches only in the given dir.
   stays in `src/app/lsp_glue.rs`, where it reaches the app's private
   state. Its replies (documentLink, hover, references, zk commands) are
   not translated into mdroots' types.
-- Code-path links: resolve them from mdroots' `CodeMention` links with
-  `Options::code_dirs` (the page's dir, its VCS root, the tree root) and
-  delete the resolver in `src/app/codepath.rs`.
+- Code-path links stay in ramble: `src/app/codepath.rs` resolves them on
+  every page (against the page's dir, its VCS root and the tree root; any
+  existing file; `~/` from the environment). stdin and LSP pages need them
+  too, and mdroots' `CodeMention` search differs, so mdroots' code mentions
+  are not used.
 - `gd`: take targets from `Workspace::goto` and keep only the dispatch in
   `nav` (open page, jump to heading, open browser, open editor).
-
-Until then ramble resolves code paths itself (`codepath.rs`, relative paths
-against the page's dir, its VCS root and the tree root) and ignores
-mdroots' code mentions.
 
 ## Risks
 
