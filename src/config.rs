@@ -65,9 +65,9 @@ pub struct SidebarConfig {
 }
 
 /// `sidebar.show` (D11): whether the sidebar is drawn while a page is
-/// shown. No other spellings are accepted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// shown. No other spellings are accepted: anything else, the old
+/// `true`/`false` included, is an error naming the key and the three values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarShow {
     /// Shown; `<leader>e` hides it.
     #[default]
@@ -77,6 +77,39 @@ pub enum SidebarShow {
     /// Peek: shown while you use it, hidden while you read.
     Auto,
 }
+
+impl<'de> Deserialize<'de> for SidebarShow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl serde::de::Visitor<'_> for V {
+            type Value = SidebarShow;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(r#""always", "never" or "auto""#)
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<SidebarShow, E> {
+                match v {
+                    "always" => Ok(SidebarShow::Always),
+                    "never" => Ok(SidebarShow::Never),
+                    "auto" => Ok(SidebarShow::Auto),
+                    _ => Err(E::custom(format!("{SHOW_EXPECTED}, got \"{v}\""))),
+                }
+            }
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<SidebarShow, E> {
+                Err(E::custom(format!("{SHOW_EXPECTED}, got {v}")))
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<SidebarShow, E> {
+                Err(E::custom(format!("{SHOW_EXPECTED}, got {v}")))
+            }
+            fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<SidebarShow, E> {
+                Err(E::custom(format!("{SHOW_EXPECTED}, got {v}")))
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+/// The `sidebar.show` error, before what was found.
+const SHOW_EXPECTED: &str = "sidebar.show: expected \"always\", \"never\" or \"auto\"";
 
 /// `sidebar.side`: the screen edge the sidebar sits at (`:Sidebar
 /// left|right` changes it at runtime).

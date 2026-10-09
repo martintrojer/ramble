@@ -254,15 +254,24 @@ fn sidebar_show_takes_always_never_auto() {
 #[test]
 fn legacy_sidebar_spellings_are_errors() {
     // D11: no compatibility shims.
-    for src in [
-        "[sidebar]\nshow = true\n",
-        "[sidebar]\nshow = false\n",
-        "[sidebar]\nshow = \"off\"\n",
-        "[sidebar]\ndefault = \"off\"\n",
+    let show = r#"sidebar.show: expected "always", "never" or "auto""#;
+    for (src, got) in [
+        ("[sidebar]\nshow = true\n", "got true"),
+        ("[sidebar]\nshow = false\n", "got false"),
+        ("[sidebar]\nshow = \"off\"\n", "got \"off\""),
+        ("[sidebar]\nshow = 1\n", "got 1"),
     ] {
         let e = err_str(src);
         assert!(e.contains("line 2"), "{src}: {e}");
+        assert!(e.contains(show), "{src}: {e}");
+        assert!(e.contains(got), "{src}: {e}");
     }
+    let e = err_str("[sidebar]\ndefault = \"off\"\n");
+    assert!(e.contains("line 2"), "{e}");
+    assert!(
+        e.contains("`auto`, `files`, `outline`, `split`"),
+        "default names its values: {e}"
+    );
     let c = load_str("[sidebar]\ndefault = \"files\"\n").unwrap();
     assert_eq!(c.sidebar.show, SidebarShow::Always);
     assert_eq!(c.sidebar.default, SidebarMode::Files);
