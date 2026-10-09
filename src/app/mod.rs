@@ -181,6 +181,9 @@ pub struct App {
     want_col: usize,
     scroll: usize,
     status: String,
+    /// Bumped by every [`App::set_status`]; tells a message set by this
+    /// key from one left by an earlier key.
+    status_gen: u64,
     mode: Mode,
     /// Typed count, shared by all modes.
     count: Option<usize>,
@@ -264,6 +267,7 @@ impl App {
             want_col: 0,
             scroll: 0,
             status: String::new(),
+            status_gen: 0,
             mode: Mode::Normal,
             count: None,
             pending: Vec::new(),
@@ -385,7 +389,7 @@ impl App {
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
-            AppEvent::Mouse(m, now) => self.mouse(m, now),
+            AppEvent::Mouse(m, now) => self.clearing_stale_status(|a| a.mouse(m, now)),
         }
     }
 
@@ -455,6 +459,18 @@ impl App {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = msg.into();
+        self.status_gen += 1;
+    }
+
+    /// Run `f` (one key or mouse event). A status message left by an
+    /// earlier event is cleared when `f` moves the cursor, so the status
+    /// line shows the comment on the new line; one `f` sets stays.
+    fn clearing_stale_status(&mut self, f: impl FnOnce(&mut App)) {
+        let (cursor, gen_) = (self.cursor, self.status_gen);
+        f(self);
+        if self.cursor != cursor && self.status_gen == gen_ {
+            self.status.clear();
+        }
     }
 
     pub fn status(&self) -> &str {

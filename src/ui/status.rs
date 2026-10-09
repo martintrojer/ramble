@@ -1,4 +1,5 @@
-//! The status line: title, status message, the `g?` hint, LSP, position,
+//! The status line: title, status message (else the comment on the
+//! cursor line), the `g?` hint, LSP, position,
 //! history depth.
 
 use ratatui::Frame;
@@ -7,6 +8,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+use super::clip::clip_end;
 use crate::app::App;
 use crate::render::palette;
 
@@ -49,14 +51,22 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         format!(" {}", app.title()),
         base.fg(palette::BLUE),
     )];
+    let right_w = Span::raw(right.as_str()).width();
     if !app.status().is_empty() {
         spans.push(Span::styled(
             format!("  {}", app.status()),
             base.fg(palette::YELLOW),
         ));
+    } else if let Some(preview) = app.review_preview() {
+        // The comment on the cursor line, cut to the room left.
+        let title_w: usize = spans.iter().map(Span::width).sum();
+        let room = (area.width as usize).saturating_sub(title_w + right_w + 2);
+        spans.push(Span::styled(
+            format!("  {}", clip_end(&preview, room)),
+            base.fg(palette::YELLOW),
+        ));
     }
     let left_w: usize = spans.iter().map(Span::width).sum();
-    let right_w = Span::raw(right.as_str()).width();
     let hint_w = Span::raw(HELP_HINT).width();
     let hint = left_w + right_w + hint_w + 2 <= area.width as usize;
     let used = left_w + right_w + if hint { hint_w } else { 0 };

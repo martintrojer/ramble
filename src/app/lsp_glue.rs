@@ -566,7 +566,6 @@ impl App {
             && self.lsp_link_request("textDocument/definition", i, ReqKind::Definition(i))
     }
 
-    /// `K`: hover for the link under the cursor.
     /// `K` can ask for a hover: the running server offers hover.
     pub(crate) fn can_hover(&self) -> bool {
         self.lsp.client().is_some_and(|c| {
@@ -577,7 +576,13 @@ impl App {
         })
     }
 
+    /// `K`: the comments on the cursor line when it has any, else the
+    /// link preview.
     pub(super) fn hover(&mut self) {
+        if let Some(text) = self.review_hover_text() {
+            self.lsp.hover = Some(text);
+            return;
+        }
         let Some(i) = self.link_under_cursor() else {
             self.set_status("No link under cursor");
             return;

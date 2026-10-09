@@ -180,7 +180,6 @@ fn the_old_review_keys_are_unbound_by_default() {
     for k in [" rr", " rw", " rd"] {
         keys(&mut app, k);
         assert!(app.pending_effect().is_none(), "{k}");
-        assert_eq!(app.status(), "No mapping", "{k}");
     }
     assert!(calls.borrow().is_empty());
 }

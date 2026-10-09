@@ -677,3 +677,86 @@ fn a_new_page_in_another_repo_switches_batches() {
     assert_eq!(Review::open(&a.cache, &b.root).unwrap().comments().len(), 1);
     assert_eq!(a.comments().len(), 1);
 }
+
+fn status_line(app: &App) -> String {
+    screen(app)[ROWS as usize - 1].clone()
+}
+
+#[test]
+fn the_status_line_shows_the_comment_on_the_cursor_line() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "cc");
+    type_and_save(&mut app, "first line\nsecond");
+    // The action's own message wins until the cursor moves.
+    assert_eq!(app.status(), "Comment added (1 in batch)");
+    assert!(status_line(&app).contains("Comment added"));
+    keys(&mut app, "j");
+    assert_eq!(app.status(), "", "moving clears the message");
+    assert_eq!(app.review_preview(), None);
+    assert!(!status_line(&app).contains('●'), "{}", status_line(&app));
+    keys(&mut app, "k");
+    assert_eq!(app.review_preview().as_deref(), Some("● first line"));
+    assert!(
+        status_line(&app).contains("  ● first line "),
+        "{}",
+        status_line(&app)
+    );
+}
+
+#[test]
+fn a_message_set_by_a_motion_stays_and_hides_the_preview() {
+    let repo = Repo::new();
+    repo.add("doc.md", 9, 9);
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "delta");
+    keys(&mut app, "]r");
+    assert_eq!(app.status(), NO_MORE_REVIEW);
+    assert!(status_line(&app).contains(NO_MORE_REVIEW));
+    assert!(!status_line(&app).contains("● note"));
+}
+
+#[test]
+fn a_long_comment_preview_is_cut_with_an_ellipsis() {
+    let repo = Repo::new();
+    let body = "word ".repeat(30);
+    repo.review()
+        .add(Comment::on_file("doc.md", 5..=5, "beta", body.trim()))
+        .unwrap();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    let row = status_line(&app);
+    assert!(row.contains("● word word"), "{row}");
+    assert!(row.contains('…'), "{row}");
+    assert!(row.trim_end().ends_with("← 0"), "right group kept: {row}");
+}
+
+#[test]
+fn k_on_a_commented_line_shows_its_comments() {
+    let repo = Repo::new();
+    let mut r = repo.review();
+    r.add(Comment::on_file("doc.md", 5..=7, "x", "spans three\nlines"))
+        .unwrap();
+    r.add(Comment::on_file("doc.md", 5..=5, "beta", "just beta"))
+        .unwrap();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "K");
+    assert_eq!(
+        app.hover_popup(),
+        Some("● lines 5-7\nspans three\nlines\n\n● line 5\njust beta")
+    );
+    assert!(screen(&app).iter().any(|l| l.contains("● lines 5-7")));
+    send(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.hover_popup(), None);
+    goto_text(&mut app, "gamma");
+    keys(&mut app, "K");
+    assert_eq!(app.hover_popup(), Some("● lines 5-7\nspans three\nlines"));
+    send(&mut app, key(KeyCode::Esc));
+    // No comment: today's link hover (no link here).
+    goto_text(&mut app, "alpha");
+    keys(&mut app, "K");
+    assert_eq!(app.hover_popup(), None);
+    assert_eq!(app.status(), "No link under cursor");
+}

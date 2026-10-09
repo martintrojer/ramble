@@ -284,15 +284,23 @@ impl App {
     }
 
     /// Rendered rows showing each line comment of the current file, in
-    /// comment order; each list is sorted. A comment's lines map to rows
-    /// through the srcmap (so a line in the middle of a reflowed paragraph
-    /// finds its row), plus rows with a source anchor that start on one of
-    /// those lines (blank code lines draw no segments). A range that
-    /// reaches no row falls back to the last such row at or before its
-    /// start line. Lines past the end of the file count as the last line;
-    /// separator rows are never marked.
+    /// comment order; each list is sorted (see [`App::rows_for_lines`]).
     fn review_rows(&self) -> Vec<Vec<usize>> {
-        let (Some(m), Some(p)) = (self.current_marks(), &self.page) else {
+        let Some(m) = self.current_marks() else {
+            return Vec::new();
+        };
+        m.lines.iter().map(|&l| self.rows_for_lines(l)).collect()
+    }
+
+    /// Rendered rows showing 1-based source lines `(s, e)`, sorted. Lines
+    /// map to rows through the srcmap (so a line in the middle of a
+    /// reflowed paragraph finds its row), plus rows with a source anchor
+    /// that start on one of those lines (blank code lines draw no
+    /// segments). A range that reaches no row falls back to the last such
+    /// row at or before its start line. Lines past the end of the file
+    /// count as the last line; separator rows are never included.
+    fn rows_for_lines(&self, (s, e): (usize, usize)) -> Vec<usize> {
+        let Some(p) = &self.page else {
             return Vec::new();
         };
         let src = p.doc.source.as_str();
@@ -304,37 +312,79 @@ impl App {
         let line_start = |line: usize| starts.get(line - 1).copied().unwrap_or(src.len());
         let lines = &p.rendered.source_lines;
         let sourced = |r: &usize| self.row_has_source(*r);
-        m.lines
+        let (s, e) = (s.clamp(1, last), e.clamp(1, last));
+        let (s, e) = (s.min(e), s.max(e));
+        let bytes = line_start(s)..line_start(e + 1);
+        let mut rows: Vec<usize> = p
+            .rendered
+            .srcmap
+            .spans_for(bytes)
             .iter()
-            .map(|&(s, e)| {
-                let (s, e) = (s.clamp(1, last), e.clamp(1, last));
-                let (s, e) = (s.min(e), s.max(e));
-                let bytes = line_start(s)..line_start(e + 1);
-                let mut rows: Vec<usize> = p
-                    .rendered
-                    .srcmap
-                    .spans_for(bytes)
-                    .iter()
-                    .map(|sp| sp.row)
-                    .collect();
-                rows.extend(
-                    (0..lines.len())
-                        .filter(|&r| (s..=e).contains(&lines[r]))
-                        .filter(sourced),
-                );
-                if rows.is_empty() {
-                    rows.extend(
-                        (0..lines.len())
-                            .rev()
-                            .filter(sourced)
-                            .find(|&r| lines[r] <= s),
-                    );
-                }
-                rows.sort_unstable();
-                rows.dedup();
-                rows
+            .map(|sp| sp.row)
+            .collect();
+        rows.extend(
+            (0..lines.len())
+                .filter(|&r| (s..=e).contains(&lines[r]))
+                .filter(sourced),
+        );
+        if rows.is_empty() {
+            rows.extend(
+                (0..lines.len())
+                    .rev()
+                    .filter(sourced)
+                    .find(|&r| lines[r] <= s),
+            );
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+
+    /// Working-copy comments on the current file whose lines are drawn on
+    /// the cursor row (the rows the gutter marks for them), in batch order.
+    pub fn review_comments_at_cursor(&self) -> Vec<&Comment> {
+        let row = self.cursor.row;
+        self.review_comments_here()
+            .into_iter()
+            .filter(|c| {
+                let lines = (c.lines.0 as usize, c.lines.1 as usize);
+                self.rows_for_lines(lines).binary_search(&row).is_ok()
             })
             .collect()
+    }
+
+    /// The status-line preview for the cursor row: `● ` and the first line
+    /// of the first comment on it.
+    pub fn review_preview(&self) -> Option<String> {
+        let c = *self.review_comments_at_cursor().first()?;
+        Some(format!("{MARKER} {}", c.body.lines().next().unwrap_or("")))
+    }
+
+    /// `K` on a commented line: the popup text, every comment on the row
+    /// as `● line a` / `● lines a-b` over its body.
+    pub(super) fn review_hover_text(&self) -> Option<String> {
+        let cs = self.review_comments_at_cursor();
+        if cs.is_empty() {
+            return None;
+        }
+        let parts: Vec<String> = cs
+            .iter()
+            .map(|c| {
+                let (a, b) = c.lines;
+                let at = if a == b {
+                    format!("line {a}")
+                } else {
+                    format!("lines {a}-{b}")
+                };
+                format!("{MARKER} {at}\n{}", c.body.trim_end())
+            })
+            .collect();
+        Some(parts.join("\n\n"))
+    }
+
+    /// The cursor is on a commented line (`K` shows the comments).
+    pub(crate) fn has_comment_here(&self) -> bool {
+        !self.review_comments_at_cursor().is_empty()
     }
 
     /// Every rendered row the gutter marks, sorted.

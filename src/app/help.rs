@@ -330,6 +330,13 @@ pub(crate) static BINDINGS: &[Binding] = &[
         App::can_comment,
     ),
     b(
+        "K",
+        N,
+        G::Review,
+        "show the comments on this line",
+        App::has_comment_here,
+    ),
+    b(
         "]r",
         N,
         G::Review,

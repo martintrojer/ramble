@@ -145,7 +145,7 @@ fn is_ctrl_l(key: &KeyEvent) -> bool {
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
-        self.handle_key_inner(key);
+        self.clearing_stale_status(|a| a.handle_key_inner(key));
         self.clue_sync();
     }
 
