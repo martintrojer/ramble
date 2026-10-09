@@ -4,7 +4,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event,
+};
 use ratatui::DefaultTerminal;
 
 use super::{App, AppEvent, StartOptions};
@@ -21,15 +24,15 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
     push_title();
     // Installs a panic hook that restores the terminal before unwinding.
     let mut terminal = ratatui::try_init().context("initialising terminal")?;
-    term_cmds(&mouse_setup(mouse))?;
+    term_cmds(&term_setup(mouse))?;
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = term_cmds(&mouse_teardown(mouse));
+        let _ = term_cmds(&term_teardown(mouse));
         pop_title();
         hook(info);
     }));
     let result = event_loop(&mut terminal, &mut app, mouse);
-    let _ = term_cmds(&mouse_teardown(mouse));
+    let _ = term_cmds(&term_teardown(mouse));
     ratatui::restore();
     pop_title();
     result
@@ -40,25 +43,29 @@ pub fn run(opts: StartOptions) -> anyhow::Result<()> {
 pub enum TermCmd {
     EnableMouse,
     DisableMouse,
+    /// Bracketed paste: a paste arrives as one [`Event::Paste`], not as
+    /// keys (a pasted newline would be Enter).
+    EnablePaste,
+    DisablePaste,
 }
 
-/// What entering the TUI (or coming back from a launched program) sends
-/// for the mouse: capture it when `enabled` (`[mouse] enabled`).
-pub fn mouse_setup(enabled: bool) -> Vec<TermCmd> {
-    if enabled {
-        vec![TermCmd::EnableMouse]
-    } else {
-        Vec::new()
+/// What entering the TUI (or coming back from a launched program) sends:
+/// bracketed paste, and mouse capture when `mouse` (`[mouse] enabled`).
+pub fn term_setup(mouse: bool) -> Vec<TermCmd> {
+    let mut cmds = vec![TermCmd::EnablePaste];
+    if mouse {
+        cmds.push(TermCmd::EnableMouse);
     }
+    cmds
 }
 
 /// What leaving the TUI (exit, panic, launching a program) sends.
-pub fn mouse_teardown(enabled: bool) -> Vec<TermCmd> {
-    if enabled {
-        vec![TermCmd::DisableMouse]
-    } else {
-        Vec::new()
+pub fn term_teardown(mouse: bool) -> Vec<TermCmd> {
+    let mut cmds = vec![TermCmd::DisablePaste];
+    if mouse {
+        cmds.push(TermCmd::DisableMouse);
     }
+    cmds
 }
 
 fn term_cmds(cmds: &[TermCmd]) -> std::io::Result<()> {
@@ -67,6 +74,8 @@ fn term_cmds(cmds: &[TermCmd]) -> std::io::Result<()> {
         match c {
             TermCmd::EnableMouse => crossterm::execute!(out, EnableMouseCapture)?,
             TermCmd::DisableMouse => crossterm::execute!(out, DisableMouseCapture)?,
+            TermCmd::EnablePaste => crossterm::execute!(out, EnableBracketedPaste)?,
+            TermCmd::DisablePaste => crossterm::execute!(out, DisableBracketedPaste)?,
         }
     }
     Ok(())
@@ -127,6 +136,7 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> any
                 Event::Key(key) => app.event(AppEvent::Key(key)),
                 Event::Resize(cols, rows) => app.event(AppEvent::Resize(cols, rows)),
                 Event::Mouse(m) => app.event(AppEvent::Mouse(m, Instant::now())),
+                Event::Paste(text) => app.event(AppEvent::Paste(text)),
                 _ => {}
             }
         }
@@ -151,21 +161,21 @@ fn write_terminal_output(app: &mut App, out: &mut impl std::io::Write) -> std::i
     Ok(())
 }
 
-/// Leave raw mode, mouse capture (when `mouse`) and the alternate screen,
-/// run `f` (which may use the terminal), then re-enter and clear so the
-/// next draw repaints fully.
+/// Leave raw mode, bracketed paste, mouse capture (when `mouse`) and the
+/// alternate screen, run `f` (which may use the terminal), then re-enter
+/// and clear so the next draw repaints fully.
 pub fn suspend_and_run<R>(
     terminal: &mut DefaultTerminal,
     mouse: bool,
     f: impl FnOnce() -> R,
 ) -> anyhow::Result<R> {
-    term_cmds(&mouse_teardown(mouse))?;
+    term_cmds(&term_teardown(mouse))?;
     crossterm::terminal::disable_raw_mode()?;
     crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
     let r = f();
     crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     crossterm::terminal::enable_raw_mode()?;
-    term_cmds(&mouse_setup(mouse))?;
+    term_cmds(&term_setup(mouse))?;
     terminal.clear()?;
     Ok(r)
 }
@@ -176,11 +186,17 @@ mod tests {
     use crate::app::{StartOptions, StartTarget};
 
     #[test]
-    fn mouse_capture_follows_the_config() {
-        assert_eq!(mouse_setup(true), [TermCmd::EnableMouse]);
-        assert_eq!(mouse_teardown(true), [TermCmd::DisableMouse]);
-        assert!(mouse_setup(false).is_empty());
-        assert!(mouse_teardown(false).is_empty());
+    fn mouse_capture_follows_the_config_and_paste_is_always_bracketed() {
+        assert_eq!(
+            term_setup(true),
+            [TermCmd::EnablePaste, TermCmd::EnableMouse]
+        );
+        assert_eq!(
+            term_teardown(true),
+            [TermCmd::DisablePaste, TermCmd::DisableMouse]
+        );
+        assert_eq!(term_setup(false), [TermCmd::EnablePaste]);
+        assert_eq!(term_teardown(false), [TermCmd::DisablePaste]);
     }
 
     #[test]

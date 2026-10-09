@@ -2905,3 +2905,59 @@ fn k_on_a_comment_is_not_replaced_by_a_late_link_hover() {
     pump_for(&mut app, Duration::from_millis(800));
     assert_eq!(app.hover_popup(), comment, "late link hover dropped");
 }
+
+fn paste(app: &mut App, text: &str) {
+    app.event(AppEvent::Paste(text.into()));
+}
+
+#[test]
+fn a_paste_lands_in_the_search_prompt_as_one_line() {
+    let (_d, mut app) = app();
+    keys(&mut app, "/");
+    paste(&mut app, "Para 3\nhas\tfoo");
+    assert_eq!(app.search_prompt().as_deref(), Some("/Para 3 has foo"));
+    assert_eq!(app.mode(), Mode::Search, "the newline was not Enter");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.cursor().row, para_row(3));
+}
+
+#[test]
+fn a_paste_lands_in_the_command_line_and_the_picker() {
+    let (_d, mut app, _fx) = nav_app();
+    keys(&mut app, ":");
+    paste(&mut app, "e b\r\n.md");
+    assert_eq!(app.cmdline_prompt().as_deref(), Some(":e b .md"));
+    assert_eq!(app.mode(), Mode::Command);
+    send(&mut app, key(KeyCode::Esc));
+    leader(&mut app, "zl");
+    paste(&mut app, "#section");
+    assert_eq!(app.picker().unwrap().input, "#section");
+    assert_eq!(picker_labels(&app), ["h"]);
+}
+
+#[test]
+fn a_paste_lands_in_the_sidebar_filter() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.md"), "# A\n").unwrap();
+    std::fs::write(dir.path().join("b.md"), "# B\n").unwrap();
+    let mut o = opts(dir.path(), StartTarget::Dir(dir.path().to_path_buf()));
+    o.config.sidebar.show = SidebarShow::Always;
+    o.config.sidebar.default = SidebarMode::Files;
+    let mut app = App::new(o, (80, ROWS)).unwrap();
+    keys(&mut app, "/");
+    assert_eq!(app.mode(), Mode::Filter);
+    paste(&mut app, "b\n");
+    assert_eq!(app.filter_prompt().as_deref(), Some("/b "));
+    assert_eq!(app.mode(), Mode::Filter);
+}
+
+#[test]
+fn a_paste_in_normal_mode_does_nothing() {
+    let (_d, mut app) = app();
+    let before = app.cursor();
+    paste(&mut app, "jjjG:q\n");
+    assert_eq!(app.cursor(), before, "no keys replayed");
+    assert_eq!(app.mode(), Mode::Normal);
+    assert!(!app.should_quit());
+    assert_eq!(app.cmdline_prompt(), None);
+}

@@ -71,7 +71,7 @@ pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_fil
 pub use review_glue::{
     FileMarks, MARKER as REVIEW_MARKER, Markers, NO_MORE_REVIEW, NO_REVIEW, REVIEW_POLL, canonical,
 };
-pub use run::{TermCmd, mouse_setup, mouse_teardown, run, suspend_and_run};
+pub use run::{TermCmd, run, suspend_and_run, term_setup, term_teardown};
 pub use search::find_all;
 pub use sidebar::Focus;
 pub use visual::{VisualAction, VisualKind};
@@ -167,6 +167,21 @@ pub enum AppEvent {
     Lsp(crate::lsp::LspEvent),
     /// A mouse event and when it arrived (double clicks are timed with it).
     Mouse(MouseEvent, Instant),
+    /// Text pasted into the terminal (bracketed paste).
+    Paste(String),
+}
+
+/// `text` as one prompt line: each line break (`\r\n`, `\n`, `\r`) and
+/// tab becomes a space; other control characters are dropped.
+fn paste_line(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter_map(|c| match c {
+            '\n' | '\r' | '\t' => Some(' '),
+            c if c.is_control() => None,
+            c => Some(c),
+        })
+        .collect()
 }
 
 /// Runs an editor on a file (at a line, if given) outside the TUI.
@@ -398,6 +413,26 @@ impl App {
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
             AppEvent::Mouse(m, now) => self.clearing_stale_status(|a| a.mouse(m, now)),
+            AppEvent::Paste(text) => self.paste(&text),
+        }
+    }
+
+    /// A bracketed paste: typed into the open prompt (comment, `/` search,
+    /// `:` command, sidebar filter, picker) as one line, newlines and tabs
+    /// as spaces. Anywhere else it is dropped, never replayed as keys.
+    pub fn paste(&mut self, text: &str) {
+        let text = paste_line(text);
+        match self.mode {
+            Mode::Comment => self.comment_insert(&text),
+            Mode::Search => self.search_insert(&text),
+            Mode::Command => {
+                if let Some(s) = &mut self.cmdline {
+                    s.push_str(&text);
+                }
+            }
+            Mode::Filter => self.filter_insert(&text),
+            Mode::Picker => self.picker_insert(&text),
+            _ => {}
         }
     }
 

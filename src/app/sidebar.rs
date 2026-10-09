@@ -1379,6 +1379,15 @@ impl App {
         }
     }
 
+    /// Pasted text (one line) appended to the filter being typed.
+    pub(super) fn filter_insert(&mut self, text: &str) {
+        if let Some(p) = &mut self.sidebar.prompt {
+            p.push_str(text);
+            let p = p.clone();
+            self.set_pane_filter(Some(p));
+        }
+    }
+
     fn set_pane_filter(&mut self, filter: Option<String>) {
         match self.sidebar.focus {
             Focus::Files => {

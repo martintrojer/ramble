@@ -159,6 +159,23 @@ impl App {
                 prompt.pop();
             }
         }
+        self.search_typed();
+    }
+
+    /// Pasted text (one line) appended to the pattern being typed.
+    pub(super) fn search_insert(&mut self, text: &str) {
+        let Some(prompt) = &mut self.search.prompt else {
+            return;
+        };
+        prompt.push_str(text);
+        self.search_typed();
+    }
+
+    /// The prompt changed: search for what it holds now.
+    fn search_typed(&mut self) {
+        let Some(prompt) = &self.search.prompt else {
+            return;
+        };
         self.search.pattern = prompt.clone();
         self.search.whole_word = false;
         self.refresh_search();

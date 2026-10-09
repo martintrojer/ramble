@@ -208,6 +208,25 @@ fn cc_on_a_paragraph_line_saves_one_comment() {
 }
 
 #[test]
+fn a_multi_line_paste_lands_in_the_prompt_as_one_line_and_runs_no_keys() {
+    let repo = Repo::new();
+    let mut app = repo.open("doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "cc");
+    let cursor = app.cursor();
+    app.event(AppEvent::Paste("first\r\nsecond\tthird\njj".into()));
+    assert_eq!(app.mode(), Mode::Comment, "the newline was not Enter");
+    assert_eq!(
+        app.comment_prompt().unwrap(),
+        "comment: first second third jj"
+    );
+    assert_eq!(app.cursor(), cursor, "no keys replayed");
+    assert!(repo.comments().is_empty(), "nothing saved yet");
+    send(&mut app, key(KeyCode::Enter));
+    assert_eq!(only(&repo).2, "first second third jj");
+}
+
+#[test]
 fn visual_lines_over_three_list_items_cover_their_source_lines() {
     let repo = Repo::new();
     let src = "# L\n\n- one\n- two\n- three\n- four\n";

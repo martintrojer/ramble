@@ -108,6 +108,13 @@ impl App {
         }
     }
 
+    /// Pasted text (one line) appended to the typed comment.
+    pub(super) fn comment_insert(&mut self, text: &str) {
+        if let Some(d) = &mut self.comment {
+            d.text.push_str(text);
+        }
+    }
+
     fn comment_end(&mut self) -> Option<Draft> {
         if self.mode == Mode::Comment {
             self.mode = Mode::Normal;

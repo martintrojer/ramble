@@ -441,6 +441,16 @@ impl App {
         p.set_items(items);
     }
 
+    /// Pasted text (one line) appended to the picker's input.
+    pub(super) fn picker_insert(&mut self, text: &str) {
+        if let Some(p) = self.picker.open.as_mut() {
+            p.input.push_str(text);
+            if !p.prompting {
+                p.refilter();
+            }
+        }
+    }
+
     pub(super) fn picker_action(&mut self, a: PickerAction) {
         let Some(p) = self.picker.open.as_mut() else {
             self.mode = Mode::Normal;
