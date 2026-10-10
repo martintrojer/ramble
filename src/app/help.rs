@@ -515,20 +515,26 @@ pub(crate) static BINDINGS: &[Binding] = &[
     b("Enter", P, G::Pickers, "in a picker: open", App::can_pick),
     b("Esc", P, G::Pickers, "in a picker: close", App::can_pick),
     // The help overlay itself.
-    b("j, Down", Ctx::Help, G::Help, "scroll down", always),
-    b("k, Up", Ctx::Help, G::Help, "scroll up", always),
-    b("C-d", Ctx::Help, G::Help, "half page down", always),
-    b("C-u", Ctx::Help, G::Help, "half page up", always),
-    b("gg", Ctx::Help, G::Help, "top", always),
-    b("G", Ctx::Help, G::Help, "bottom", always),
+    b(
+        "j, Down",
+        Ctx::Help,
+        G::Help,
+        "in help: scroll down",
+        always,
+    ),
+    b("k, Up", Ctx::Help, G::Help, "in help: scroll up", always),
+    b("C-d", Ctx::Help, G::Help, "in help: half page down", always),
+    b("C-u", Ctx::Help, G::Help, "in help: half page up", always),
+    b("gg", Ctx::Help, G::Help, "in help: top", always),
+    b("G", Ctx::Help, G::Help, "in help: bottom", always),
     b(
         "/",
         Ctx::Help,
         G::Help,
-        "filter (Enter keeps, Esc clears)",
+        "in help: filter (Enter keeps, Esc clears)",
         always,
     ),
-    b("q, Esc, g?", Ctx::Help, G::Help, "close", always),
+    b("q, Esc, g?", Ctx::Help, G::Help, "in help: close", always),
 ];
 
 /// Named keys of the `keys` notation, as whole alternatives.
@@ -786,11 +792,14 @@ impl App {
         let leader = self.config.keys.leader;
         let has_vcs = self.has_vcs_root();
         let mut out = Vec::new();
+        // A key in several contexts shown at once is listed once.
+        let mut seen = std::collections::HashSet::new();
         for g in Group::ALL {
             let mut items: Vec<HelpLine> = BINDINGS
                 .iter()
                 .filter(|b| b.group == g && self.ctx_shown(b.context))
                 .filter(|b| (b.avail)(self) && self.leader_free(b.keys))
+                .filter(|b| seen.insert((b.keys, b.desc)))
                 .map(|b| HelpLine::Item {
                     keys: show_leader(b.keys, leader),
                     desc: b.desc.to_string(),

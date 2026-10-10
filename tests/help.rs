@@ -374,3 +374,18 @@ fn raw_view_rows_are_listed() {
     assert!(has_keys(&app, "gR"));
     assert!(has_keys(&app, ":Raw"));
 }
+
+/// `g?` lists a key and its description once (the help overlay's own
+/// keys used to repeat the page's `C-d` / `C-u` rows word for word).
+#[test]
+fn help_lists_each_key_once() {
+    let (_d, app) = app_with(config());
+    let mut seen = std::collections::HashSet::new();
+    let dups: Vec<_> = items(&app)
+        .into_iter()
+        .map(|(k, d, _)| (k, d))
+        .filter(|row| !seen.insert(row.clone()))
+        .collect();
+    assert_eq!(dups, Vec::<(String, String)>::new());
+    assert!(has_keys(&app, "C-d") && has_keys(&app, "C-u"));
+}
