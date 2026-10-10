@@ -3,8 +3,11 @@
 
 use std::ops::Range;
 
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
 use super::{App, Mode};
-use crate::render::{ScreenSpan, SrcMap};
+use crate::render::{ScreenSpan, Segment, SrcMap};
 
 /// Search state of the current page.
 #[derive(Debug, Clone, Default)]
@@ -19,8 +22,9 @@ pub(super) struct Search {
     hits: Vec<Range<usize>>,
     /// The prompt text while typing; `None` outside search mode.
     prompt: Option<String>,
-    /// Pattern before the prompt opened (restored by Esc).
-    saved: Option<(String, bool)>,
+    /// Pattern, whole-word flag and direction before the prompt opened
+    /// (restored by Esc).
+    saved: Option<(String, bool, bool)>,
 }
 
 fn is_word(c: char) -> bool {
@@ -77,22 +81,95 @@ pub fn find_all(text: &str, pat: &str, whole_word: bool) -> Vec<Range<usize>> {
     out
 }
 
-/// Screen spans drawn from `src`, trimmed to the columns of `src` within
-/// each segment (a hit across a wrap yields one span per row).
-pub(super) fn hit_spans(map: &SrcMap, src: &Range<usize>) -> Vec<ScreenSpan> {
+/// One source grapheme of a segment and the columns it is drawn on.
+struct Drawn {
+    src: Range<usize>,
+    col: usize,
+    w: usize,
+}
+
+/// The source graphemes of `seg` with their columns, when the segment
+/// draws its source one grapheme per cell as the renderer does (tabs as
+/// four columns, control characters as one). `None` when the widths do not
+/// add up to the span (converted math, markers): callers then scale.
+fn drawn_graphemes(src: &str, seg: &Segment) -> Option<Vec<Drawn>> {
+    let text = src.get(seg.src.clone())?;
+    let mut col = seg.span.col_start;
+    let mut out = Vec::new();
+    for (i, g) in text.grapheme_indices(true) {
+        let w = if g == "\t" {
+            4
+        } else if g.chars().any(char::is_control) {
+            1
+        } else {
+            g.width()
+        };
+        let start = seg.src.start + i;
+        out.push(Drawn {
+            src: start..start + g.len(),
+            col,
+            w,
+        });
+        col += w;
+    }
+    (col == seg.span.col_end).then_some(out)
+}
+
+/// The source byte of the character drawn at (`row`, `col`), always on a
+/// char boundary of `src`, or `None` on a row with no drawn source.
+fn char_at(map: &SrcMap, src: &str, row: usize, col: usize) -> Option<usize> {
+    let mut byte = map.source_at(row, col)?;
+    let lo = map.segments.partition_point(|s| s.span.row < row);
+    let seg = map.segments[lo..]
+        .iter()
+        .take_while(|s| s.span.row == row)
+        .find(|s| (s.span.col_start..s.span.col_end).contains(&col));
+    if let Some(g) = seg
+        .and_then(|s| drawn_graphemes(src, s))
+        .and_then(|gs| gs.into_iter().find(|g| (g.col..g.col + g.w).contains(&col)))
+    {
+        byte = g.src.start;
+    }
+    // `source_at` scales columns to bytes, so it can land inside a char.
+    while !src.is_char_boundary(byte) {
+        byte -= 1;
+    }
+    Some(byte)
+}
+
+/// Screen spans drawn from `range` of `src`, trimmed to the columns of
+/// `range` within each segment (a hit across a wrap yields one span per
+/// row).
+pub(super) fn hit_spans(map: &SrcMap, src: &str, range: &Range<usize>) -> Vec<ScreenSpan> {
     map.segments
         .iter()
-        .filter(|s| s.src.start < src.end && src.start < s.src.end)
+        .filter(|s| s.src.start < range.end && range.start < s.src.end)
         .map(|s| {
             let cols = s.span.col_end - s.span.col_start;
             let len = (s.src.end - s.src.start).max(1);
             let at = |b: usize| s.span.col_start + (b - s.src.start) * cols / len;
-            let a = at(src.start.max(s.src.start));
-            let b = at(src.end.min(s.src.end)).max(a + 1).min(s.span.col_end);
+            let (a, b) = match drawn_graphemes(src, s) {
+                Some(gs) => {
+                    let mut hit = gs
+                        .iter()
+                        .filter(|g| g.src.start < range.end && range.start < g.src.end);
+                    let first = hit.next();
+                    let last = hit.next_back().or(first);
+                    (
+                        first.map_or(s.span.col_start, |g| g.col),
+                        last.map_or(s.span.col_start, |g| g.col + g.w),
+                    )
+                }
+                None => (
+                    at(range.start.max(s.src.start)),
+                    at(range.end.min(s.src.end)),
+                ),
+            };
+            let a = a.min(s.span.col_end.saturating_sub(1));
             ScreenSpan {
                 row: s.span.row,
                 col_start: a,
-                col_end: b,
+                col_end: b.max(a + 1).min(s.span.col_end),
             }
         })
         .collect()
@@ -116,7 +193,7 @@ impl App {
         self.search
             .hits
             .iter()
-            .flat_map(|h| hit_spans(&p.rendered.srcmap, h))
+            .flat_map(|h| hit_spans(&p.rendered.srcmap, &p.doc.source, h))
             .collect()
     }
 
@@ -141,7 +218,11 @@ impl App {
 
     /// `/` (forward) or `?`: open the prompt.
     pub(super) fn search_start(&mut self, forward: bool) {
-        self.search.saved = Some((self.search.pattern.clone(), self.search.whole_word));
+        self.search.saved = Some((
+            self.search.pattern.clone(),
+            self.search.whole_word,
+            self.search.forward,
+        ));
         self.search.prompt = Some(String::new());
         self.search.forward = forward;
         self.mode = Mode::Search;
@@ -188,7 +269,7 @@ impl App {
         let saved = self.search.saved.take();
         if typed.is_empty() {
             // Empty pattern repeats the last one, as in vim.
-            if let Some((pat, ww)) = saved {
+            if let Some((pat, ww, _)) = saved {
                 self.search.pattern = pat;
                 self.search.whole_word = ww;
             }
@@ -197,13 +278,15 @@ impl App {
         self.search_next(true, 1);
     }
 
-    /// Esc in the prompt: close it and restore the previous pattern.
+    /// Esc in the prompt: close it and restore the previous pattern and
+    /// direction.
     pub(super) fn search_cancel(&mut self) {
         self.mode = Mode::Normal;
         self.search.prompt = None;
-        if let Some((pat, ww)) = self.search.saved.take() {
+        if let Some((pat, ww, forward)) = self.search.saved.take() {
             self.search.pattern = pat;
             self.search.whole_word = ww;
+            self.search.forward = forward;
         }
         self.refresh_search();
     }
@@ -215,8 +298,10 @@ impl App {
     }
 
     /// `*` (forward) / `#`: whole-word search for the word under the cursor.
+    /// Both skip the word under the cursor, as in vim: `#` searches back
+    /// from the word's start, not from the cursor.
     pub(super) fn search_word(&mut self, forward: bool) {
-        let Some(word) = self.word_under_cursor() else {
+        let Some((word, start)) = self.word_under_cursor() else {
             self.set_status("No word under cursor");
             return;
         };
@@ -224,16 +309,22 @@ impl App {
         self.search.whole_word = true;
         self.search.forward = forward;
         self.refresh_search();
+        if !forward
+            && let Some(p) = &self.page
+            && let Some(s) =
+                hit_spans(&p.rendered.srcmap, &p.doc.source, &(start..start + 1)).first()
+        {
+            self.cursor.row = s.row;
+            self.cursor.col = s.col_start;
+        }
         self.search_next(true, 1);
     }
 
-    fn word_under_cursor(&self) -> Option<String> {
+    /// The word under the cursor and the source byte it starts at.
+    fn word_under_cursor(&self) -> Option<(String, usize)> {
         let p = self.page.as_ref()?;
-        let byte = p
-            .rendered
-            .srcmap
-            .source_at(self.cursor.row, self.cursor.col)?;
         let src = &p.doc.source;
+        let byte = char_at(&p.rendered.srcmap, src, self.cursor.row, self.cursor.col)?;
         let at = src[byte..].chars().next()?;
         if !is_word(at) {
             return None;
@@ -248,7 +339,7 @@ impl App {
             .char_indices()
             .find(|&(_, c)| !is_word(c))
             .map_or(src.len(), |(i, _)| byte + i);
-        Some(src[start..end].to_string())
+        Some((src[start..end].to_string(), start))
     }
 
     /// `n` (`same` = true) / `N`, `count` times.
@@ -268,7 +359,7 @@ impl App {
         }
         let forward = self.search.forward == same;
         let Some(p) = &self.page else { return };
-        let map = &p.rendered.srcmap;
+        let (map, src) = (&p.rendered.srcmap, p.doc.source.as_str());
         // Compare screen positions, not source bytes: a blank or rule row
         // has no byte under it but still sits between the hits above and
         // below it (vim searches onward from the cursor position).
@@ -276,7 +367,11 @@ impl App {
             .search
             .hits
             .iter()
-            .filter_map(|h| hit_spans(map, &(h.start..h.start + 1)).first().copied())
+            .filter_map(|h| {
+                hit_spans(map, src, &(h.start..h.start + 1))
+                    .first()
+                    .copied()
+            })
             .map(|s| (s.row, s.col_start))
             .collect();
         starts.sort_unstable();
@@ -324,6 +419,35 @@ mod tests {
         assert_eq!(find_all("Foo foo FOO", "Foo", false), vec![0..3]);
         assert_eq!(find_all("é É x", "é", false), vec![0..2, 3..5]);
         assert!(find_all("abc", "", false).is_empty());
+    }
+
+    #[test]
+    fn char_at_lands_on_a_char_boundary_when_columns_are_scaled() {
+        use crate::render::Segment;
+        // Six bytes of "ééé" drawn on two columns (as converted math is):
+        // the widths do not add up, so the column is scaled to a byte.
+        let src = "ééé";
+        let seg = |cols| Segment {
+            src: 0..src.len(),
+            span: ScreenSpan {
+                row: 0,
+                col_start: 0,
+                col_end: cols,
+            },
+            link: None,
+        };
+        let map = SrcMap {
+            segments: vec![seg(4)],
+        };
+        assert_eq!(map.source_at(0, 1), Some(1), "scaled byte inside \"é\"");
+        assert_eq!(char_at(&map, src, 0, 1), Some(0));
+        assert_eq!(char_at(&map, src, 0, 3), Some(4));
+        // Widths add up: each column maps to its own grapheme.
+        let map = SrcMap {
+            segments: vec![seg(3)],
+        };
+        assert_eq!(char_at(&map, src, 0, 1), Some(2));
+        assert_eq!(char_at(&map, src, 0, 9), Some(4), "past the end snaps");
     }
 
     #[test]

@@ -80,7 +80,9 @@ impl SrcMap {
     }
 
     /// The source byte drawn at (row, col), or the nearest drawn byte on
-    /// that row, or `None` for an empty row.
+    /// that row, or `None` for an empty row. Inside a segment the byte is
+    /// scaled from the column, so it can fall inside a multi-byte char:
+    /// move it to a char boundary before slicing the source with it.
     pub fn source_at(&self, row: usize, col: usize) -> Option<usize> {
         let lo = self.segments.partition_point(|s| s.span.row < row);
         let hi = self.segments.partition_point(|s| s.span.row <= row);
