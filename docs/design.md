@@ -66,6 +66,8 @@ Enumerations accept only their documented values; there are no aliases.
 
 - No rendering dependency. Input is UTF-8; invalid bytes become U+FFFD with a
   status note. A NUL in the first 8 KiB means binary: a message, no render.
+  Interactive stdin is the exception: it is decoded lossily with no note and
+  no binary check (`--print` from stdin still gets the binary check).
 - Two parses, both with `mdroots::syntax::markdown_options()` so ranges line
   up (a test checks every mdroots range falls on a layout boundary):
   - ramble's pulldown-cmark layout parse: blocks, inlines, code spans, math;
@@ -315,10 +317,10 @@ command = ["${editor}", "+${line}", "${file}"]
 ```
 
 Variables, substituted per argument with no shell: `${file}`, `${line}`,
-`${dir}` (the selected tree folder when the sidebar has focus, else the
-page's folder), `${vcs_root}`, `${editor}` (`$VISUAL`, `$EDITOR`, `vi`). The
-working directory is `${vcs_root}`, else `${dir}`. A launcher whose variable
-has no value, or with `needs_vcs` outside a repo, is unavailable with a
+`${dir}` (the page's folder, or the working directory for stdin),
+`${vcs_root}`, `${editor}` (`$VISUAL`, `$EDITOR`, `vi`). The working
+directory is `${vcs_root}`, else `${dir}`. A launcher whose variable has no
+value, or with `needs_vcs` outside a repo, is unavailable with a
 status message. User entries replace defaults by name; `disabled = true`
 removes one. `:Launch <name>` runs one by name.
 
@@ -345,8 +347,10 @@ removes one. `:Launch <name>` runs one by name.
   written in the browsed tree. `tests/lsp.rs` drives a scripted fake server
   (`tests/support/fake_lsp.rs`). zk and marksman end-to-end tests run the
   real servers when installed and print a skip otherwise.
-- **Edges:** print mode against `expected.ansi`, a real `notify` watcher,
-  CLI precedence, config overrides and errors, and tmux end-to-end tests.
+- **Edges:** print mode against the insta snapshot
+  `tests/snapshots/cli__print_golden_at_width_80.snap`, a real `notify`
+  watcher, CLI precedence, config overrides and errors, and tmux end-to-end
+  tests.
 
 ## Out of scope
 

@@ -1,4 +1,5 @@
-//! ramble: a read-only TUI markdown reader backed by markdown language servers.
+//! ramble: a read-only TUI markdown reader backed by the built-in mdroots
+//! index, with optional markdown language servers.
 //!
 //! Module layout follows `docs/design.md` § Architecture.
 
