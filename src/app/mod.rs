@@ -285,10 +285,7 @@ impl App {
         let mut app = App {
             config: opts.config,
             tree_root: opts.tree_root,
-            theme: Theme {
-                math,
-                ..Theme::catppuccin_mocha()
-            },
+            theme: Theme { math },
             size,
             page: None,
             rows: Vec::new(),

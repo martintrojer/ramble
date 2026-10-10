@@ -52,7 +52,6 @@ fn main() -> ExitCode {
             };
             let theme = render::Theme {
                 math: config.render.math,
-                ..render::Theme::catppuccin_mocha()
             };
             let page = render::render(&document, width, &theme);
             let mut out = std::io::stdout().lock();

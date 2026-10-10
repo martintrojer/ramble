@@ -8,6 +8,8 @@
 # [render]
 ## Upper bound on the reflow width, in columns.
 # max_width = 100
+## The colour theme. Catppuccin Mocha is the only one; any other value is a
+## config error.
 # theme = "catppuccin-mocha"
 ## Draw LaTeX math ($…$, $$…$$, ```math) as Unicode; false shows the source.
 # math = true

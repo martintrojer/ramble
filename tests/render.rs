@@ -786,10 +786,7 @@ proptest! {
 
 fn render_md(src: &str, width: u16, math: bool) -> (Document, RenderedPage) {
     let d = ramble::doc::parse(src.to_string());
-    let theme = Theme {
-        math,
-        ..Theme::catppuccin_mocha()
-    };
+    let theme = Theme { math };
     let page = render(&d, width, &theme);
     (d, page)
 }

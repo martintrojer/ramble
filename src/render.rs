@@ -15,12 +15,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{self, AlertKind, Alignment, Block, Document, Inline, ListItem};
 
-/// Colours and styles. `Theme::catppuccin_mocha()` is the default.
+/// Render options. Colours are always Catppuccin Mocha ([`palette`] and
+/// two-face's embedded code theme); `Theme::catppuccin_mocha()` is the default.
 #[derive(Debug, Clone)]
 pub struct Theme {
-    pub name: String,
-    /// syntect theme name inside two-face's embedded set.
-    pub code_theme: String,
     /// Convert LaTeX math to Unicode (`[render] math`). Off: math shows
     /// as its raw source, delimiters included, in the math colour.
     pub math: bool,
@@ -28,11 +26,7 @@ pub struct Theme {
 
 impl Theme {
     pub fn catppuccin_mocha() -> Self {
-        Self {
-            name: "catppuccin-mocha".into(),
-            code_theme: "catppuccin-mocha".into(),
-            math: true,
-        }
+        Self { math: true }
     }
 }
 
@@ -293,8 +287,21 @@ impl Cell {
     }
 }
 
+/// Decoration cells for `text`, sanitized like source text: some of it
+/// (footnote labels) comes from the document.
 fn deco_cells(text: &str, style: Style) -> Vec<Cell> {
-    text.graphemes(true).map(|g| Cell::deco(g, style)).collect()
+    text.graphemes(true)
+        .map(|g| {
+            let (text, w) = sanitize(g);
+            Cell {
+                text,
+                w,
+                style,
+                src: None,
+                link: None,
+            }
+        })
+        .collect()
 }
 
 fn width_of(cells: &[Cell]) -> usize {
@@ -997,7 +1004,7 @@ impl<'a> Renderer<'a> {
             Block::CodeBlock {
                 lang, code, lines, ..
             } if self.math && lang.as_deref() == Some("math") => self.math_fence(code, lines),
-            Block::CodeBlock { lang, code, .. } => self.code_block(lang.as_deref(), code),
+            Block::CodeBlock { lang, lines, .. } => self.code_block(lang.as_deref(), lines),
             Block::BlockQuote {
                 range,
                 alert,
@@ -1048,9 +1055,10 @@ impl<'a> Renderer<'a> {
                 children,
             } => {
                 let style = Style::new().fg(palette::PEACH);
-                let tag = format!("[{label}]");
-                if UnicodeWidthStr::width(tag.as_str()) <= 6 {
-                    let first = deco_cells(&format!("{tag} "), style);
+                let tag = deco_cells(&format!("[{label}]"), style);
+                if width_of(&tag) <= 6 {
+                    let mut first = tag;
+                    first.extend(deco_cells(" ", style));
                     let rest = deco_cells(&" ".repeat(width_of(&first)), style);
                     self.with_prefix(first, rest, |r| {
                         if children.is_empty() {
@@ -1059,7 +1067,7 @@ impl<'a> Renderer<'a> {
                         r.blocks(children, true);
                     });
                 } else {
-                    self.emit(deco_cells(&tag, style), Some(range.start));
+                    self.emit(tag, Some(range.start));
                     let pad = deco_cells("    ", style);
                     self.with_prefix(pad.clone(), pad, |r| r.blocks(children, true));
                 }
@@ -1101,15 +1109,26 @@ impl<'a> Renderer<'a> {
         self.list_depth -= 1;
     }
 
-    fn code_block(&mut self, lang: Option<&str>, code: &Range<usize>) {
+    /// A code block from its text `pieces`, which skip container prefixes
+    /// (`> `, list indent); a top-level piece may hold several lines.
+    fn code_block(&mut self, lang: Option<&str>, pieces: &[Range<usize>]) {
         let ss = syntaxes();
         let syntax = lang
             .and_then(find_syntax)
             .unwrap_or_else(|| ss.find_syntax_plain_text());
         let mut hl = HighlightLines::new(syntax, code_theme());
         let fallback = Style::new().fg(palette::GREEN);
-        let mut offset = code.start;
-        for line in self.slice(code).split_inclusive('\n') {
+        let lines = pieces.iter().flat_map(|piece| {
+            self.slice(piece)
+                .split_inclusive('\n')
+                .scan(piece.start, |at, line| {
+                    let start = *at;
+                    *at += line.len();
+                    Some((start, line))
+                })
+        });
+        let lines: Vec<(usize, &str)> = lines.collect();
+        for (offset, line) in lines {
             let mut cells = Vec::new();
             let pieces = hl
                 .highlight_line(line, ss)
@@ -1129,7 +1148,6 @@ impl<'a> Renderer<'a> {
                 b += piece.len();
             }
             self.emit(cells, Some(offset));
-            offset += line.len();
         }
     }
 

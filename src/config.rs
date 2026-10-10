@@ -40,7 +40,6 @@ pub struct MouseConfig {
 pub struct RenderConfig {
     /// Upper bound on the reflow width.
     pub max_width: u16,
-    pub theme: String,
     /// Convert LaTeX math to Unicode; off shows the raw source.
     pub math: bool,
 }
@@ -115,6 +114,9 @@ impl<'de> Deserialize<'de> for SidebarShow {
 }
 
 /// The `sidebar.show` error, before what was found.
+/// `[render] theme`: the one accepted value.
+const THEME: &str = "catppuccin-mocha";
+
 const SHOW_EXPECTED: &str = "sidebar.show: expected \"always\", \"never\" or \"auto\"";
 
 /// `sidebar.side`: the screen edge the sidebar sits at (`:Sidebar
@@ -278,7 +280,6 @@ impl Default for Config {
         Self {
             render: RenderConfig {
                 max_width: 100,
-                theme: "catppuccin-mocha".into(),
                 math: true,
             },
             sidebar: SidebarConfig {
@@ -341,7 +342,8 @@ struct RawMouse {
 #[serde(deny_unknown_fields)]
 struct RawRender {
     max_width: Option<u16>,
-    theme: Option<String>,
+    /// Only [`THEME`] is accepted; the key exists so configs naming it load.
+    theme: Option<toml::Spanned<String>>,
     math: Option<bool>,
 }
 
@@ -479,7 +481,17 @@ impl Config {
         let mut c = Self::default();
         if let Some(r) = raw.render {
             set(&mut c.render.max_width, r.max_width);
-            set(&mut c.render.theme, r.theme);
+            if let Some(t) = r.theme
+                && t.get_ref() != THEME
+            {
+                return Err((
+                    Some(t.span().start),
+                    format!(
+                        "unknown theme {:?}: the only theme is {THEME:?}",
+                        t.get_ref()
+                    ),
+                ));
+            }
             set(&mut c.render.math, r.math);
         }
         if let Some(s) = raw.sidebar {

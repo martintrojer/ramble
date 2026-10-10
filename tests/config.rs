@@ -33,7 +33,6 @@ fn missing_file_yields_defaults() {
 fn defaults_match_spec() {
     let c = Config::default();
     assert_eq!(c.render.max_width, 100);
-    assert_eq!(c.render.theme, "catppuccin-mocha");
     assert!(c.render.math);
     assert_eq!(c.sidebar.show, SidebarShow::Always);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
