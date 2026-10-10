@@ -643,6 +643,11 @@ fn is_inline_event(event: &Event<'_>) -> bool {
 fn inline_run(events: &Events<'_>, i: &mut usize, at: usize) -> Range<usize> {
     let mut span: Option<Range<usize>> = None;
     while let Some((event, range)) = events.get(*i) {
+        if matches!(event, Event::TaskListMarker(_)) {
+            // Read by the enclosing item (`task_marker`); not text.
+            *i += 1;
+            continue;
+        }
         if !is_inline_event(event) {
             break;
         }
