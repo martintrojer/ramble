@@ -1110,7 +1110,10 @@ impl<'a> Renderer<'a> {
     }
 
     /// A code block from its text `pieces`, which skip container prefixes
-    /// (`> `, list indent); a top-level piece may hold several lines.
+    /// (`> `, list indent) and the `\r` of CRLF. Pieces are not lines: one
+    /// piece may hold several lines and one line may span pieces (`first`,
+    /// `\nsecond`, `\n` for a CRLF fence), so lines come from their joined
+    /// text, split after each `\n`.
     fn code_block(&mut self, lang: Option<&str>, pieces: &[Range<usize>]) {
         let ss = syntaxes();
         let syntax = lang
@@ -1118,17 +1121,28 @@ impl<'a> Renderer<'a> {
             .unwrap_or_else(|| ss.find_syntax_plain_text());
         let mut hl = HighlightLines::new(syntax, code_theme());
         let fallback = Style::new().fg(palette::GREEN);
-        let lines = pieces.iter().flat_map(|piece| {
-            self.slice(piece)
-                .split_inclusive('\n')
-                .scan(piece.start, |at, line| {
-                    let start = *at;
-                    *at += line.len();
-                    Some((start, line))
-                })
-        });
-        let lines: Vec<(usize, &str)> = lines.collect();
-        for (offset, line) in lines {
+        // Each line: its text and, per segment, (offset in text, source offset).
+        let mut lines: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+        let mut cur: (String, Vec<(usize, usize)>) = Default::default();
+        for piece in pieces {
+            let mut at = piece.start;
+            for part in self.slice(piece).split_inclusive('\n') {
+                cur.1.push((cur.0.len(), at));
+                cur.0.push_str(part);
+                at += part.len();
+                if part.ends_with('\n') {
+                    lines.push(std::mem::take(&mut cur));
+                }
+            }
+        }
+        if !cur.0.is_empty() {
+            lines.push(cur);
+        }
+        for (line, segs) in &lines {
+            let src_at = |j: usize| {
+                let (t, s) = segs[segs.partition_point(|&(t, _)| t <= j) - 1];
+                s + (j - t)
+            };
             let mut cells = Vec::new();
             let pieces = hl
                 .highlight_line(line, ss)
@@ -1137,17 +1151,17 @@ impl<'a> Renderer<'a> {
                         .map(|(st, s)| (syntect_style(st), s))
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|_| vec![(fallback, line)]);
-            let mut b = offset;
+                .unwrap_or_else(|_| vec![(fallback, line.as_str())]);
+            let mut b = 0;
             for (style, piece) in pieces {
                 for (i, g) in piece.grapheme_indices(true) {
                     if !matches!(g, "\n" | "\r\n" | "\r") {
-                        self.push_grapheme(&mut cells, g, b + i, style, None);
+                        self.push_grapheme(&mut cells, g, src_at(b + i), style, None);
                     }
                 }
                 b += piece.len();
             }
-            self.emit(cells, Some(offset));
+            self.emit(cells, Some(src_at(0)));
         }
     }
 

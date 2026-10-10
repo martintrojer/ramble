@@ -133,3 +133,44 @@ fn other_theme_is_a_config_error() {
     assert!(e.contains("unknown theme \"gruvbox\""), "{e}");
     assert!(e.contains("catppuccin-mocha"), "{e}");
 }
+
+/// `s` with every `\n` as `\r\n`.
+fn crlf(s: &str) -> String {
+    s.replace('\n', "\r\n")
+}
+
+#[test]
+fn crlf_top_level_fence_has_no_extra_rows() {
+    let src = crlf("```text\nfirst\n\nsecond\n```\n");
+    let (d, p) = page(&src);
+    assert_eq!(rows(&p), ["first", "", "second"]);
+    let second = d.source.find("second").unwrap();
+    assert_eq!(p.srcmap.source_at(2, 0), Some(second));
+    assert_eq!(p.source_lines, [2, 3, 4]);
+}
+
+#[test]
+fn crlf_fence_in_blockquote_has_no_extra_rows() {
+    let (d, p) = page(&crlf(QUOTE_FENCE));
+    assert_eq!(rows(&p), ["│ first", "│ second"]);
+    let second = d.source.find("second").unwrap();
+    assert_eq!(p.srcmap.source_at(1, 2), Some(second));
+}
+
+#[test]
+fn crlf_fence_in_list_item_has_no_extra_rows() {
+    let (d, p) = page(&crlf(LIST_FENCE));
+    assert_eq!(rows(&p), ["• item", "  first", "    second"]);
+    let second = d.source.find("second").unwrap();
+    assert_eq!(p.srcmap.source_at(2, 4), Some(second));
+}
+
+#[test]
+fn crlf_fences_print_without_extra_rows() {
+    let top = strip_sgr(&print(crlf("```text\nfirst\nsecond\n```\n").as_bytes()));
+    assert_eq!(top, "first\nsecond\n");
+    let quote = strip_sgr(&print(crlf(QUOTE_FENCE).as_bytes()));
+    assert_eq!(quote, "│ first\n│ second\n");
+    let list = strip_sgr(&print(crlf(LIST_FENCE).as_bytes()));
+    assert_eq!(list, "• item\n  first\n    second\n");
+}
