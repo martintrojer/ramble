@@ -156,7 +156,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
     ),
     b("ZZ", N, G::General, "quit (as q)", always),
     b(
-        "C-l",
+        "R",
         Any,
         G::General,
         "refresh: re-read file and tree, redraw",
@@ -1223,7 +1223,7 @@ mod tests {
             ":",
             "q",
             "g?",
-            "C-l",
+            "R",
             "<leader>e",
             "<leader>E",
             "C-w h",

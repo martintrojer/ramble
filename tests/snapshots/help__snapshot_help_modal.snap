@@ -10,7 +10,7 @@ expression: screen(&app)
 "    │  :                 command line                                      │    "
 "    │  q                 quit (warns first if comments are not sent)       │    "
 "    │  ZZ                quit (as q)                                       │    "
-"    │  C-l               refresh: re-read file and tree, redraw            │    "
+"    │  R                 refresh: re-read file and tree, redraw            │    "
 "    │  za                fold or expand the front matter (or Enter on it)  │    "
 "    │  gR                toggle the raw source view                        │    "
 "    │Motions                                                               │    "

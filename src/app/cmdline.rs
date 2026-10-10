@@ -2,7 +2,7 @@
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
 //! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`,
 //! `:Sidebar left|right` (the screen edge), `:Raw`, and
-//! `:e` / `:Refresh` without an argument (refresh, as `C-l`).
+//! `:e` / `:Refresh` without an argument (refresh, as `R`).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -16,8 +16,8 @@ use crate::notebook::Op;
 /// with [`App::execute`].
 pub(crate) const COMMANDS: &[(&str, &str)] = &[
     (":e <path>", "open a file (relative to this one)"),
-    (":e", "re-read this file and the tree (as C-l)"),
-    (":Refresh", "re-read this file and the tree (as C-l)"),
+    (":e", "re-read this file and the tree (as R)"),
+    (":Refresh", "re-read this file and the tree (as R)"),
     (":q", "quit (asks first if comments are not sent)"),
     (":q!", "quit without asking"),
     (":Notes", "notes picker"),

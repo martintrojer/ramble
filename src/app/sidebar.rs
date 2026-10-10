@@ -661,6 +661,7 @@ impl App {
                 (_, Some(':')) => KeyResult::Action(Action::Cmd(super::CmdAction::Start)),
                 (KeyCode::Esc, _) => act(S::FilterClear),
                 (_, Some('q')) => KeyResult::Action(Action::Quit),
+                (_, Some('R')) => KeyResult::Action(Action::Refresh),
                 _ => KeyResult::None,
             },
             _ => KeyResult::None,

@@ -257,7 +257,7 @@ pub struct App {
     /// The comment being typed.
     comment: Option<comment::Draft>,
     help: help::HelpState,
-    /// `C-l` asked `run` to clear the terminal before the next draw.
+    /// `R` asked `run` to clear the terminal before the next draw.
     clear_request: bool,
     visual: visual::VisualState,
     clue: clue::ClueState,

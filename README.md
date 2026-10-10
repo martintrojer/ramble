@@ -133,7 +133,7 @@ server your editor already uses, point it at zk or marksman in the config.
 
 **Around the edges**
 - Live reload when the file changes on disk, keeping your place and the
-  folders you collapsed. `C-l` (or `:e`) re-reads the page
+  folders you collapsed. `R` (or `:e`) re-reads the page
   and the file tree on demand.
 - Launchers: configurable keys that hand off to another program and come
   back. `<leader>o` opens your editor at the cursor line.

@@ -1050,7 +1050,7 @@ fn snapshot_split_mode() {
 }
 
 #[test]
-fn ctrl_l_refreshes_the_tree_keeping_expansion_and_selection() {
+fn r_refreshes_the_tree_keeping_expansion_and_selection() {
     let (_d, root) = fixture();
     let mut app = app_on(
         &root,
@@ -1064,7 +1064,7 @@ fn ctrl_l_refreshes_the_tree_keeping_expansion_and_selection() {
     assert_eq!(app.tree().unwrap().selected(), Some(deep.as_path()));
     write(&root, "docs/new.md", "# N\n");
     std::fs::remove_file(root.join("docs/guide.md")).unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     let tree = app.tree().unwrap();
     assert_eq!(names(tree), ["docs", "  deep", "  new.md", "img", "a.md"]);
     assert!(tree.is_expanded(&root.join("docs")));
@@ -1096,7 +1096,7 @@ fn refresh_rewalks_collapsed_but_walked_dirs() {
 }
 
 #[test]
-fn ctrl_l_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
+fn r_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
     let (_d, root) = fixture();
     let mut app = app_on(
         &root,
@@ -1107,7 +1107,7 @@ fn ctrl_l_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
     keys(&mut app, "ggh");
     let docs = root.join("docs");
     assert!(!app.tree().unwrap().is_expanded(&docs));
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     let tree = app.tree().unwrap();
     assert!(!tree.is_expanded(&docs), "refresh re-expanded docs/");
     assert_eq!(tree.selected(), Some(docs.as_path()));
@@ -1134,7 +1134,7 @@ fn watcher_reload_keeps_a_collapsed_ancestor_of_the_open_file_collapsed() {
 }
 
 #[test]
-fn ctrl_l_with_no_page_refreshes_the_tree_only() {
+fn r_with_no_page_refreshes_the_tree_only() {
     let (_d, root) = fixture();
     let mut app = app_on(
         &root,
@@ -1142,7 +1142,7 @@ fn ctrl_l_with_no_page_refreshes_the_tree_only() {
         config(SidebarMode::Files),
     );
     write(&root, "c.md", "# C\n");
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert_eq!(names(app.tree().unwrap()), ["docs", "img", "a.md", "c.md"]);
     assert_eq!(app.status(), "Refreshed tree");
     assert!(app.take_clear_request());
@@ -1416,7 +1416,7 @@ fn show_refits_the_width() {
 }
 
 #[test]
-fn ctrl_l_refits_the_width() {
+fn r_refits_the_width() {
     let (_d, root) = fixture();
     let mut app = sized(
         &root,
@@ -1426,7 +1426,7 @@ fn ctrl_l_refits_the_width() {
     );
     assert_eq!(app.sidebar_cols(), MIN_COLS);
     write(&root, LONG_NAME, "# L\n");
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert!(app.sidebar_cols() > MIN_COLS, "{}", app.sidebar_cols());
 }
 
@@ -1688,7 +1688,7 @@ fn root_moves_only_in_the_tree_and_dash_is_files_pane_only() {
     // The status-line title stays relative to the original root.
     assert_eq!(app.title(), "guide.md");
     // A refresh keeps the browsing root.
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert_eq!(app.tree().unwrap().root(), root);
 }
 

@@ -24,7 +24,7 @@
 //! answers from, and re-answers the current page when a change lands under
 //! that root. mdroots watches only roots it reconciles in a DB on a local
 //! disk; in a lazy or single-file workspace (and in memory mode) other
-//! notes' changes show once the page is reopened or reloaded (`C-l`).
+//! notes' changes show once the page is reopened or reloaded (`R`).
 //! ramble's own watcher still reloads the page itself, which refreshes it.
 //!
 //! A picker request carries the picker's seq and is answered from the
@@ -665,7 +665,7 @@ impl App {
 
     /// The current page (at `path`) has no LSP server: ask mdroots. The
     /// page itself is refreshed in a ready root workspace first, so a
-    /// reload (watcher, `C-l`) or a revisit sees the file as it is now.
+    /// reload (watcher, `R`) or a revisit sees the file as it is now.
     pub(super) fn mdroots_page_changed(&mut self, path: PathBuf) {
         self.mdroots.active = true;
         self.mdroots_request(path.clone(), vec![path]);

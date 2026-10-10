@@ -124,7 +124,7 @@ Rule:
 
 When it is recomputed:
 - On a page change, a mode change, showing the sidebar, a resize, and a
-  tree refresh (`C-l`).
+  tree refresh (`R`).
 - Expanding a folder or changing a filter may widen the sidebar right
   away, but never narrows it. It narrows at the next page change, so it
   doesn't shift while you browse the tree.

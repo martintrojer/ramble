@@ -95,7 +95,7 @@ ramble UI loop ── mpsc ──▶ worker thread ── mdroots::Workspaces (i
   mdroots' watcher: the worker opens with `Options::watch` and subscribes
   to each root workspace it answers from. mdroots watches only roots it
   reconciles in a database on a local disk; elsewhere such changes show
-  after `C-l` or reopening the page.
+  after `R` or reopening the page.
 - **Status line.** `mdroots ●` from the root's workspace, `mdroots ○` from
   the single-file one, `—` before the first answer or when nothing serves
   the page, and the usual spinner after a slow request. A page under a

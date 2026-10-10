@@ -288,7 +288,7 @@ impl App {
         self.on_reloaded();
     }
 
-    /// `C-l` / `:e` / `:Refresh`: re-read the current file (not stdin),
+    /// `R` / `:e` / `:Refresh`: re-read the current file (not stdin),
     /// re-read the file tree if built, and ask `run` to clear the
     /// terminal. A status set by the reload (binary, not UTF-8) or the
     /// deleted-file banner is kept.

@@ -2799,18 +2799,19 @@ fn page_text(app: &App) -> String {
 }
 
 #[test]
-fn ctrl_l_rereads_the_file_without_a_watcher_event() {
+fn r_rereads_the_file_without_a_watcher_event() {
     let (dir, mut app) = app();
     goto_row_text(&mut app, "Para 5 has foo.bar words");
     keys(&mut app, "w");
     let cursor = app.cursor();
     let edited = source() + "New tail\n";
     std::fs::write(dir.path().join("doc.md"), edited).unwrap();
-    assert!(
-        !page_text(&app).contains("New tail"),
-        "no reload without C-l"
-    );
+    assert!(!page_text(&app).contains("New tail"), "no reload without R");
+    // C-l moves between panes now; it no longer refreshes.
     app.handle_key(ctrl('l'));
+    assert!(!page_text(&app).contains("New tail"), "C-l reloaded");
+    assert!(!app.take_clear_request(), "C-l asked for a clear");
+    app.handle_key(key(KeyCode::Char('R')));
     assert!(page_text(&app).contains("New tail"));
     assert_eq!(app.cursor(), cursor, "cursor kept");
     assert_eq!(app.status(), "Refreshed");
@@ -2834,42 +2835,42 @@ fn colon_e_without_a_path_and_refresh_reread_the_file() {
 }
 
 #[test]
-fn ctrl_l_on_a_deleted_file_keeps_the_banner_and_content() {
+fn r_on_a_deleted_file_keeps_the_banner_and_content() {
     let (dir, mut app) = app_with(b"# Kept\n");
     std::fs::remove_file(dir.path().join("doc.md")).unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert!(page_text(&app).contains("Kept"));
     assert_eq!(app.banner(), Some(ramble::app::DELETED_BANNER));
     assert_ne!(app.status(), "Refreshed");
 }
 
 #[test]
-fn ctrl_l_keeps_binary_and_lossy_statuses() {
+fn r_keeps_binary_and_lossy_statuses() {
     let (dir, mut app) = app_with(b"# One\n");
     std::fs::write(dir.path().join("doc.md"), b"# a\0b\n").unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert_eq!(app.status(), "looks binary");
     std::fs::write(dir.path().join("doc.md"), b"# a\xffb\n").unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert_eq!(app.status(), "not valid UTF-8");
 }
 
 #[test]
-fn ctrl_l_on_stdin_does_not_reread() {
+fn r_on_stdin_does_not_reread() {
     let dir = tempfile::tempdir().unwrap();
     let mut app = App::new(
         opts(dir.path(), StartTarget::Stdin("# Hi\n".into())),
         (COLS, ROWS),
     )
     .unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert!(page_text(&app).contains("Hi"));
     assert_eq!(app.status(), "Nothing to refresh (stdin)");
     assert!(app.take_clear_request());
     let mut o = opts(dir.path(), StartTarget::Stdin("# Hi\n".into()));
     o.config.sidebar.default = SidebarMode::Files;
     let mut app = App::new(o, (COLS * 2, ROWS)).unwrap();
-    app.handle_key(ctrl('l'));
+    app.handle_key(key(KeyCode::Char('R')));
     assert_eq!(app.status(), "Refreshed tree; stdin page unchanged");
 }
 

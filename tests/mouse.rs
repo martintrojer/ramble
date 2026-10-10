@@ -282,7 +282,7 @@ fn arrow_clicks_follow_the_marker_gutter_and_the_indent_cap() {
     });
     write(&t.root, "n1/n2/n3/n4/n5/n6/deep.md", "# Deep\n");
     t.app
-        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        .handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
     t.draw();
     let files = t.app.layout().files.unwrap().pane;
     let tree = |t: &T, rel: &str| t.app.tree().unwrap().is_expanded(&t.root.join(rel));
@@ -350,7 +350,7 @@ fn double_click_a_non_markdown_file_edits_it() {
     let mut t = setup_with(SidebarMode::Files, |c| c.sidebar.show_all = true);
     write(&t.root, "z.txt", "plain\n");
     t.app
-        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        .handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
     t.draw();
     let at = t.files_cell("z.txt");
     t.click(at, 0);
@@ -816,7 +816,7 @@ fn many() -> T {
     }
     std::fs::write(t.root.join("a.md"), page).unwrap();
     t.app
-        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        .handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
     t.draw();
     t
 }
@@ -899,7 +899,7 @@ fn long_outline() -> T {
     }
     std::fs::write(t.root.join("a.md"), page).unwrap();
     t.app
-        .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
+        .handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
     t.draw();
     t
 }
