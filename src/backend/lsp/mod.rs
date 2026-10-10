@@ -362,23 +362,28 @@ impl Client {
 
     /// `textDocument/didOpen` with `languageId = "markdown"`. To reload,
     /// [`Client::did_close`] first, then call again with a higher `version`.
-    pub fn did_open(&self, path: &Path, text: &str, version: i32) -> anyhow::Result<()> {
+    /// Returns the URI sent, which the matching `didClose` must reuse.
+    pub fn did_open(&self, path: &Path, text: &str, version: i32) -> anyhow::Result<Uri> {
+        let uri = canonical_uri(path);
         self.notify(
             "textDocument/didOpen",
             json!({"textDocument": {
-                "uri": canonical_uri(path),
+                "uri": uri,
                 "languageId": "markdown",
                 "version": version,
                 "text": text,
             }}),
-        )
+        )?;
+        Ok(uri)
     }
 
-    /// `textDocument/didClose`, balancing an earlier [`Client::did_open`].
-    pub fn did_close(&self, path: &Path) -> anyhow::Result<()> {
+    /// `textDocument/didClose` for the `uri` an earlier [`Client::did_open`]
+    /// returned. Not re-resolved from a path: a symlink retargeted or removed
+    /// since would name another document.
+    pub fn did_close(&self, uri: &Uri) -> anyhow::Result<()> {
         self.notify(
             "textDocument/didClose",
-            json!({"textDocument": {"uri": canonical_uri(path)}}),
+            json!({"textDocument": {"uri": uri}}),
         )
     }
 

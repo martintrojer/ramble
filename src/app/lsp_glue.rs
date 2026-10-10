@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
+use lsp_types::Uri;
 use serde_json::{Value, json};
 
 use super::App;
@@ -162,8 +163,10 @@ pub(super) struct LspState {
     /// Bumped on every page shown (open, follow, back/forward, reload).
     page_id: u64,
     /// The document `didOpen` was last sent for and not closed yet: instance
-    /// name and the path sent. At most one document is open at a time.
-    open: Option<(String, PathBuf)>,
+    /// name and the exact URI sent, which `didClose` reuses (re-resolving the
+    /// path could name another file once a symlink changes). At most one
+    /// document is open at a time.
+    open: Option<(String, Uri)>,
     // Per page, reset by `lsp_page_changed`.
     /// Instance name and kind for the current page.
     instance: Option<(String, Kind)>,
@@ -281,10 +284,10 @@ impl App {
         let l = &mut self.lsp;
         // Close the page being left (a reload closes and reopens it): LSP
         // 3.17 forbids a second didOpen for a document already open.
-        if let Some((name, path)) = l.open.take()
+        if let Some((name, uri)) = l.open.take()
             && let Some(Instance::Running(client)) = l.instances.get(&name)
         {
-            let _ = client.did_close(&path);
+            let _ = client.did_close(&uri);
         }
         l.page_id += 1;
         l.instance = None;
@@ -323,22 +326,22 @@ impl App {
         let Some(client) = l.client() else { return };
         let key = crate::lsp::uri_to_path(&canonical_uri(path)).unwrap_or_else(|| path.clone());
         let version = l.versions.get(&key).map_or(1, |v| v + 1);
-        if let Err(e) = client.did_open(path, &page.doc.source, version) {
-            self.status = format!("LSP: {e:#}");
-            return;
-        }
+        let uri = match client.did_open(path, &page.doc.source, version) {
+            Ok(uri) => uri,
+            Err(e) => {
+                self.status = format!("LSP: {e:#}");
+                return;
+            }
+        };
         let tag = tag(l.page_id, version);
         let sent = client.request(
             "textDocument/documentLink",
-            json!({"textDocument": {"uri": canonical_uri(path)}}),
+            json!({"textDocument": {"uri": &uri}}),
             tag,
         );
         l.versions.insert(key, version);
         l.version = Some(version);
-        l.open = l
-            .instance
-            .as_ref()
-            .map(|(name, _)| (name.clone(), path.clone()));
+        l.open = l.instance.as_ref().map(|(name, _)| (name.clone(), uri));
         if let Ok(id) = sent {
             l.requests.push(Request {
                 id,
