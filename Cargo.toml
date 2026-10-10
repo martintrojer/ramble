@@ -1,6 +1,6 @@
 [package]
 name = "ramble"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.90"
 description = "A read-only TUI markdown reader with a built-in notebook index"
@@ -28,8 +28,8 @@ ignore = "0.4"
 nucleo = "0.5"
 latex-to-unicode = "0.1"
 term-maths = "1"
-mdroots = "0.2.4"
-debrief-review = "0.3"
+mdroots = "0.2.9"
+debrief-review = "0.3.1"
 
 # Scripted fake language server for tests/lsp.rs. Not a test target itself.
 [[bin]]
