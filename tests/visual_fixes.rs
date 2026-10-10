@@ -198,3 +198,95 @@ fn huge_operator_count_product_is_capped() {
     assert_eq!(mode, Mode::Normal);
     assert!(yanked.is_some_and(|t| t.starts_with("Title")));
 }
+
+/// A paragraph mixing two-byte Greek, three-byte wide CJK and ASCII.
+const MIXED: &str = "αβγδεζη θικλμνξ 日本語 テキスト alpha beta gamma delta iota kappa lambda tail rest words more words here";
+
+fn mixed_src() -> String {
+    format!("# Title\n\n{MIXED}\n\nTail.\n")
+}
+
+const WIDTHS: [(u16, u16); 4] = [(30, 60), (60, 30), (30, 100), (100, 30)];
+
+/// Keys putting the cursor on a word start (or inside a word), the word
+/// there, and what `veee` from there selects. The search lands on the
+/// paragraph start; `w`/`l` move by drawn cell on any layout.
+const MIXED_CASES: [(&str, &str, &str); 3] = [
+    ("/αβγ\n8w", "iota", "iota kappa lambda"),
+    ("/αβγ\nw", "θικλμνξ", "θικλμνξ 日本語 テキスト"),
+    ("/αβγ\n2wl", "本語", "本語 テキスト alpha"),
+];
+
+#[test]
+fn selections_on_multibyte_and_wide_text_keep_their_source_text_across_a_resize() {
+    for (to_word, _, sel) in MIXED_CASES {
+        for (from, to) in WIDTHS {
+            {
+                let (_d, mut app, clip) = app(&mixed_src(), from);
+                keys(&mut app, to_word);
+                keys(&mut app, "veee");
+                app.resize(to, ROWS);
+                keys(&mut app, "y");
+                assert_eq!(clip.last().as_deref(), Some(sel), "active {from} -> {to}");
+            }
+            let (_d, mut app, clip) = app(&mixed_src(), from);
+            keys(&mut app, to_word);
+            keys(&mut app, "veee");
+            app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            app.resize(to, ROWS);
+            keys(&mut app, "gggvy");
+            assert_eq!(clip.last().as_deref(), Some(sel), "gv {from} -> {to}");
+        }
+    }
+}
+
+#[test]
+fn cursor_on_multibyte_and_wide_text_stays_on_its_grapheme_across_a_resize() {
+    for (to_word, word, _) in MIXED_CASES {
+        for (from, to) in WIDTHS {
+            let (_d, mut app, clip) = app(&mixed_src(), from);
+            keys(&mut app, to_word);
+            keys(&mut app, "vey");
+            assert_eq!(clip.last().as_deref(), Some(word), "before {from}");
+            keys(&mut app, to_word);
+            app.resize(to, ROWS);
+            keys(&mut app, "vey");
+            assert_eq!(clip.last().as_deref(), Some(word), "{from} -> {to}");
+        }
+    }
+}
+
+#[test]
+fn selection_ending_on_a_blank_row_keeps_its_source_text_across_a_resize() {
+    for (from, to) in WIDTHS {
+        // Anchor on the blank separator above "Tail.".
+        {
+            let (_d, mut app, clip) = app(&src(), from);
+            keys(&mut app, "/Tail\nkvj");
+            app.resize(to, ROWS);
+            keys(&mut app, "y");
+            assert_eq!(clip.last().as_deref(), Some("T"), "active {from} -> {to}");
+        }
+
+        // Cursor on the blank separator, anchor on "lambda".
+        let (_d, mut app, clip) = app(&src(), from);
+        keys(&mut app, "/tau\nvj");
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.resize(to, ROWS);
+        keys(&mut app, "gggvy");
+        assert_eq!(clip.last().as_deref(), Some("tau"), "gv {from} -> {to}");
+    }
+}
+
+#[test]
+fn gv_over_greek_and_ascii_keeps_its_source_text_when_widened() {
+    // The review probe: the selection is on an ASCII-only row at 30
+    // columns, and shares a segment with the Greek text at 60.
+    let src = "# Title\n\nαβγδεζη θικλμνξ οπρστ φχψω alpha beta gamma delta iota kappa lambda tail rest words more words here\n\nTail.\n";
+    let (_d, mut app, clip) = app(src, 30);
+    keys(&mut app, "/iota\nveeey");
+    assert_eq!(clip.last().as_deref(), Some("iota kappa lambda"));
+    app.resize(60, ROWS);
+    keys(&mut app, "gvy");
+    assert_eq!(clip.last().as_deref(), Some("iota kappa lambda"));
+}

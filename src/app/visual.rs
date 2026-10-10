@@ -601,10 +601,7 @@ impl App {
 
     pub(super) fn row_segments(&self, row: usize) -> &[Segment] {
         let Some(p) = &self.page else { return &[] };
-        let segs = &p.rendered.srcmap.segments;
-        let lo = segs.partition_point(|s| s.span.row < row);
-        let hi = segs.partition_point(|s| s.span.row <= row);
-        &segs[lo..hi]
+        super::page::row_segments(&p.rendered.srcmap, row)
     }
 
     /// Source bytes of the grapheme drawn at `g` on `row`, on grapheme

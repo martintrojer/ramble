@@ -8,11 +8,16 @@ use anyhow::Context;
 use super::motion::row_cells;
 use super::{App, Cursor, Mode, Page};
 use crate::doc::{self, Document};
-use crate::render::{self, RenderedPage, SrcMap};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
-/// A layout-independent position: a source byte and whether it was taken
-/// from a nearby row because the position was on a blank one.
-pub(super) type Anchor = (usize, bool);
+use crate::render::{self, RenderedPage, Segment, SrcMap};
+
+/// A layout-independent position: a source byte and a row offset. Offset
+/// 0: the position is on that byte. Otherwise it is on a row with no
+/// source, that many rows below (positive) or above (negative) the row
+/// drawing the byte.
+pub(super) type Anchor = (usize, isize);
 
 impl App {
     /// Load and render `path`, cursor to the top. An I/O error is returned;
@@ -111,28 +116,38 @@ impl App {
         self.anchor_at(self.cursor)
     }
 
-    /// Where `c` is, as a source byte: `(byte, fallback)` where `fallback`
-    /// means `c` was on a blank row and `byte` comes from the nearest row
-    /// with text.
+    /// Where `c` is, layout-independently: the source byte drawn at `c`
+    /// (offset 0). On a row with no source (a blank separator) the last
+    /// byte of the nearest row above with source and the number of rows
+    /// down from it, or, above the first such row, the first byte of the
+    /// next one and the (negative) rows up from it.
     pub(super) fn anchor_at(&self, c: Cursor) -> Option<Anchor> {
         let p = self.page.as_ref()?;
         let map = &p.rendered.srcmap;
-        if let Some(b) = map.source_at(c.row, c.col) {
-            return Some((b, false));
+        if let Some(b) = source_at(map, &p.doc.source, c.row, c.col) {
+            return Some((b, 0));
+        }
+        let rows = |r: usize| self.row_segments(r);
+        if let Some(r) = (0..c.row).rev().find(|&r| !rows(r).is_empty()) {
+            let b = rows(r).iter().map(|s| s.src.end - 1).max()?;
+            return Some((b, (c.row - r) as isize));
         }
         let n = p.rendered.lines.len();
-        (0..c.row)
-            .rev()
-            .chain(c.row + 1..n)
-            .find_map(|r| map.source_at(r, 0))
-            .map(|b| (b, true))
+        let r = (c.row + 1..n).find(|&r| !rows(r).is_empty())?;
+        let b = rows(r).iter().map(|s| s.src.start).min()?;
+        Some((b, c.row as isize - r as isize))
     }
 
     /// Row and (unsnapped) column of an anchor on the current layout.
-    fn anchor_row_col(&self, (byte, fallback): Anchor) -> Option<(usize, usize)> {
-        let map = &self.page.as_ref()?.rendered.srcmap;
+    fn anchor_row_col(&self, (byte, off): Anchor) -> Option<(usize, usize)> {
+        let p = self.page.as_ref()?;
+        let map = &p.rendered.srcmap;
         let row = map.row_for(byte)?;
-        Some((row, if fallback { 0 } else { col_for(map, byte) }))
+        if off == 0 {
+            return Some((row, col_for(map, &p.doc.source, byte)));
+        }
+        let last = p.rendered.lines.len().saturating_sub(1);
+        Some((row.saturating_add_signed(off).min(last), 0))
     }
 
     /// The position of an anchor from [`App::anchor_at`] on the current
@@ -156,11 +171,14 @@ impl App {
         self.anchor_cursor(a)
     }
 
-    /// Put the cursor back on an anchor from [`App::cursor_anchor`].
+    /// Put the cursor back on an anchor from [`App::cursor_anchor`]. From
+    /// a blank row it lands at the start of the row holding the anchor
+    /// byte (the row above), not on the blank row.
     pub(super) fn restore_anchor(&mut self, anchor: Option<Anchor>) {
-        if let Some((row, col)) = anchor.and_then(|a| self.anchor_row_col(a)) {
+        let at = anchor.and_then(|(b, off)| self.anchor_row_col((b, 0)).map(|rc| (rc, off)));
+        if let Some(((row, col), off)) = at {
             self.cursor.row = row;
-            self.want_col = col;
+            self.want_col = if off == 0 { col } else { 0 };
         }
         self.set_col(self.want_col);
     }
@@ -185,13 +203,71 @@ impl App {
     }
 }
 
-/// Screen column of `byte` on the first segment drawn at or after it.
-fn col_for(map: &SrcMap, byte: usize) -> usize {
+/// The segments drawn on `row`.
+pub(super) fn row_segments(map: &SrcMap, row: usize) -> &[Segment] {
+    let lo = map.segments.partition_point(|s| s.span.row < row);
+    let hi = map.segments.partition_point(|s| s.span.row <= row);
+    &map.segments[lo..hi]
+}
+
+/// Columns a source grapheme takes when drawn as text (see
+/// `render::push_grapheme`): a tab four, other control characters one.
+fn drawn_width(g: &str) -> usize {
+    if g == "\t" {
+        4
+    } else if g.chars().any(char::is_control) {
+        1
+    } else {
+        g.width()
+    }
+}
+
+/// Start byte and column of each source grapheme of `s`, when they add
+/// up to its drawn width (the text is drawn as is); `None` when the drawn
+/// text differs from the source (escapes, entities, math).
+fn grapheme_cols(s: &Segment, source: &str) -> Option<Vec<(usize, usize)>> {
+    let text = source.get(s.src.clone())?;
+    let mut col = s.span.col_start;
+    let mut out = Vec::new();
+    for (i, g) in text.grapheme_indices(true) {
+        let w = drawn_width(g);
+        if w > 0 {
+            out.push((s.src.start + i, col));
+        }
+        col += w;
+    }
+    (col == s.span.col_end).then_some(out)
+}
+
+/// The source byte drawn at (`row`, `col`): exactly the grapheme there
+/// when the segment's graphemes add up to its width, else
+/// [`SrcMap::source_at`]'s scaled estimate.
+fn source_at(map: &SrcMap, source: &str, row: usize, col: usize) -> Option<usize> {
+    let exact = row_segments(map, row)
+        .iter()
+        .find(|s| (s.span.col_start..s.span.col_end).contains(&col))
+        .and_then(|s| grapheme_cols(s, source))
+        .and_then(|gs| gs.into_iter().rev().find(|&(_, c)| c <= col))
+        .map(|(b, _)| b);
+    exact.or_else(|| map.source_at(row, col))
+}
+
+/// Screen column of `byte` on the first segment drawn at or after it:
+/// the column of the grapheme holding it, exactly when the segment's
+/// graphemes add up to its width, else scaled.
+fn col_for(map: &SrcMap, source: &str, byte: usize) -> usize {
     let Some(s) = map.segments.iter().find(|s| s.src.end > byte) else {
         return 0;
     };
     if byte <= s.src.start {
         return s.span.col_start;
+    }
+    if let Some(gs) = grapheme_cols(s, source) {
+        return gs
+            .iter()
+            .rev()
+            .find(|&&(b, _)| b <= byte)
+            .map_or(s.span.col_start, |&(_, c)| c);
     }
     let cols = s.span.col_end - s.span.col_start;
     let len = (s.src.end - s.src.start).max(1);
