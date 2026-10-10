@@ -139,6 +139,15 @@ impl T {
         panic!("{text:?} not drawn in {area:?}");
     }
 
+    /// Screen cell of `text` on a files row of a fresh frame. The pane's
+    /// title row shows the clipped temp root (`.tmpXXXXXX`), which can
+    /// spell a short name like `n4`, so only the item rows are searched.
+    fn files_cell(&mut self, text: &str) -> (u16, u16) {
+        self.draw();
+        let items = self.app.layout().files.expect("files drawn").items;
+        self.find_in(items, text)
+    }
+
     fn text_cell(&mut self, text: &str) -> (u16, u16) {
         let area = self.app.layout().text.expect("text drawn");
         self.find_in(area, text)
@@ -229,8 +238,7 @@ fn click_past_the_line_end_clamps_and_wide_chars_land_on_their_start() {
 #[test]
 fn click_a_files_row_focuses_and_selects_it_and_the_arrow_expands() {
     let mut t = setup();
-    let files = t.app.layout().files.unwrap().pane;
-    let at = t.find_in(files, "c.md");
+    let at = t.files_cell("c.md");
     t.click(at, 0);
     assert_eq!(t.app.focus(), Focus::Files);
     assert_eq!(t.selected_file(), Some(t.root.join("c.md")));
@@ -244,7 +252,7 @@ fn click_a_files_row_focuses_and_selects_it_and_the_arrow_expands() {
             .ends_with("a.md")
     );
 
-    let docs = t.find_in(files, "docs");
+    let docs = t.files_cell("docs");
     assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
     // A click on the name selects without toggling.
     t.click(docs, 2000);
@@ -280,7 +288,7 @@ fn arrow_clicks_follow_the_marker_gutter_and_the_indent_cap() {
     let tree = |t: &T, rel: &str| t.app.tree().unwrap().is_expanded(&t.root.join(rel));
 
     // Depth 0: the arrow sits right after the 1-column marker gutter.
-    let (_, y) = t.find_in(files, "n1");
+    let (_, y) = t.files_cell("n1");
     let x = arrow_on_row(&mut t, y);
     assert_eq!(x, files.x + 1, "depth-0 arrow after the gutter");
     t.click((x - 1, y), 0); // the gutter: selects, no toggle
@@ -292,14 +300,14 @@ fn arrow_clicks_follow_the_marker_gutter_and_the_indent_cap() {
     let mut path = String::from("n1");
     for d in 2..=6 {
         path.push_str(&format!("/n{d}"));
-        let (_, y) = t.find_in(files, &format!("n{d}"));
+        let (_, y) = t.files_cell(&format!("n{d}"));
         let x = arrow_on_row(&mut t, y);
         t.click((x + 1, y), 2000 + 1000 * d);
         assert!(tree(&t, &path), "depth {} arrow at {x}", d - 1);
     }
     // n5 (depth 4) and n6 (depth 5) are past the cap: same arrow column.
-    let (_, y5) = t.find_in(files, "n5");
-    let (_, y6) = t.find_in(files, "n6");
+    let (_, y5) = t.files_cell("n5");
+    let (_, y6) = t.files_cell("n6");
     let (x5, x6) = (arrow_on_row(&mut t, y5), arrow_on_row(&mut t, y6));
     assert_eq!(x5, x6, "capped indent");
     // The column right after the arrow cell is the name: no toggle.
@@ -312,8 +320,7 @@ fn arrow_clicks_follow_the_marker_gutter_and_the_indent_cap() {
 #[test]
 fn double_click_a_file_opens_it_but_not_after_the_timeout() {
     let mut t = setup();
-    let files = t.app.layout().files.unwrap().pane;
-    let at = t.find_in(files, "b.md");
+    let at = t.files_cell("b.md");
     t.click(at, 0);
     t.click(at, 401);
     assert!(
@@ -345,8 +352,7 @@ fn double_click_a_non_markdown_file_edits_it() {
     t.app
         .handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL));
     t.draw();
-    let files = t.app.layout().files.unwrap().pane;
-    let at = t.find_in(files, "z.txt");
+    let at = t.files_cell("z.txt");
     t.click(at, 0);
     t.click(at, 100);
     assert_eq!(
@@ -460,8 +466,7 @@ fn dragging_below_the_text_scrolls() {
 #[test]
 fn drag_from_the_sidebar_is_ignored() {
     let mut t = setup();
-    let files = t.app.layout().files.unwrap().pane;
-    let at = t.find_in(files, "b.md");
+    let at = t.files_cell("b.md");
     let g = t.text_cell("gamma");
     t.press(at, 0);
     t.drag(g, 10);
@@ -473,8 +478,7 @@ fn drag_from_the_sidebar_is_ignored() {
 #[test]
 fn wheel_scrolls_the_pane_under_the_pointer_without_focusing_it() {
     let mut t = setup();
-    let files = t.app.layout().files.unwrap().pane;
-    let b = t.find_in(files, "b.md");
+    let b = t.files_cell("b.md");
     t.click(b, 0);
     assert_eq!(t.app.focus(), Focus::Files);
     let a = t.text_cell("Alpha");
@@ -697,8 +701,7 @@ fn dragging_onto_the_top_row_scrolls_up() {
 #[test]
 fn a_text_click_moves_focus_from_the_sidebar_to_the_content() {
     let mut t = setup();
-    let files = t.app.layout().files.unwrap().pane;
-    let b = t.find_in(files, "b.md");
+    let b = t.files_cell("b.md");
     t.click(b, 0);
     assert_eq!(t.app.focus(), Focus::Files);
     let g = t.text_cell("gamma");
@@ -711,8 +714,7 @@ fn a_files_click_leaves_visual_mode() {
     let mut t = setup();
     t.keys("vl");
     assert_eq!(t.app.mode(), Mode::Visual(VisualKind::Char));
-    let files = t.app.layout().files.unwrap().pane;
-    let b = t.find_in(files, "b.md");
+    let b = t.files_cell("b.md");
     t.click(b, 0);
     assert_eq!(t.app.mode(), Mode::Normal);
     assert_eq!(t.app.focus(), Focus::Files);
@@ -832,11 +834,11 @@ fn clicks_in_a_scrolled_files_list_hit_the_drawn_row_and_it_stays_put() {
     t.keys("G");
     t.draw();
     assert!(t.app.layout().files.unwrap().skip > 0, "list scrolled");
-    let at = t.find_in(files.pane, "f20.md");
+    let at = t.files_cell("f20.md");
     t.click(at, 1000);
     assert_eq!(t.selected_file(), Some(t.root.join("f20.md")));
     t.draw();
-    assert_eq!(t.find_in(files.pane, "f20.md"), at, "the list did not move");
+    assert_eq!(t.files_cell("f20.md"), at, "the list did not move");
     t.click(at, 1100);
     assert_eq!(opened(&t), "f20.md");
 }
@@ -1041,12 +1043,12 @@ fn right_side_layout_puts_the_sidebar_at_the_right_edge() {
 fn right_side_click_a_files_row_selects_it_and_the_arrow_toggles() {
     let mut t = right();
     let files = t.app.layout().files.unwrap().pane;
-    let at = t.find_in(files, "c.md");
+    let at = t.files_cell("c.md");
     t.click(at, 0);
     assert_eq!(t.app.focus(), Focus::Files);
     assert_eq!(t.selected_file(), Some(t.root.join("c.md")));
 
-    let docs = t.find_in(files, "docs");
+    let docs = t.files_cell("docs");
     assert_eq!(docs.0, files.x + 3, "gutter and arrow before the name");
     t.click(docs, 2000);
     assert!(!t.app.tree().unwrap().is_expanded(&t.root.join("docs")));
@@ -1065,8 +1067,7 @@ fn right_side_click_a_files_row_selects_it_and_the_arrow_toggles() {
 #[test]
 fn right_side_wheel_scrolls_the_pane_under_the_pointer() {
     let mut t = right();
-    let files = t.app.layout().files.unwrap().pane;
-    let b = t.find_in(files, "b.md");
+    let b = t.files_cell("b.md");
     t.click(b, 0);
     t.mouse(MouseEventKind::ScrollDown, b, 1000);
     assert_eq!(t.selected_file(), Some(t.root.join("e.md")));
