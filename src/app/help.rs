@@ -147,8 +147,14 @@ use Group as G;
 pub(crate) static BINDINGS: &[Binding] = &[
     b("g?", Any, G::General, "show this help", always),
     b(":", Any, G::General, "command line", always),
-    b("q", Any, G::General, "quit", always),
-    b("ZZ", N, G::General, "quit", always),
+    b(
+        "q",
+        Any,
+        G::General,
+        "quit (warns first if comments are not sent)",
+        always,
+    ),
+    b("ZZ", N, G::General, "quit (as q)", always),
     b(
         "C-l",
         Any,

@@ -18,7 +18,8 @@ pub(crate) const COMMANDS: &[(&str, &str)] = &[
     (":e <path>", "open a file (relative to this one)"),
     (":e", "re-read this file and the tree (as C-l)"),
     (":Refresh", "re-read this file and the tree (as C-l)"),
-    (":q", "quit"),
+    (":q", "quit (asks first if comments are not sent)"),
+    (":q!", "quit without asking"),
     (":Notes", "notes picker"),
     (":Search <query>", "search notes"),
     (":Tags", "tags picker"),
@@ -111,7 +112,8 @@ impl App {
         };
         match cmd {
             "" => {}
-            "q" | "q!" | "qa" | "quit" => self.quit = true,
+            "q!" | "qa!" => self.quit = true,
+            "q" | "qa" | "quit" => self.quit_checked(),
             "e" | "edit" | "Refresh" if arg.is_empty() => self.refresh(),
             "e" | "edit" => {
                 let path = self.link_dir().join(arg);

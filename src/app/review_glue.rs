@@ -505,6 +505,38 @@ impl App {
         }
     }
 
+    /// `q`, `ZZ`, `:q`: quit, unless the batch holds comments not sent
+    /// yet. The batch is re-read first, so comments another handle sent or
+    /// added count as they are now. Then warn; quitting again while that
+    /// same warning shows quits. A batch that can't be read warns every
+    /// time (nothing is known to be safe to drop). `:q!` and `C-c` quit
+    /// without asking.
+    pub(super) fn quit_checked(&mut self) {
+        let n = match &mut self.review.store {
+            None => 0,
+            Some(store) => match store.reload() {
+                Ok(_) => store.comments().len(),
+                Err(e) => {
+                    return self
+                        .set_status(format!("Review batch unreadable ({e}); :q! quits anyway"));
+                }
+            },
+        };
+        if n == 0 {
+            self.quit = true;
+            return;
+        }
+        let warning = match n {
+            1 => "1 comment not sent: <leader>rr sends it; q again or :q! quits".to_string(),
+            n => format!("{n} comments not sent: <leader>rr sends them; q again or :q! quits"),
+        };
+        if self.status == warning {
+            self.quit = true;
+            return;
+        }
+        self.set_status(warning);
+    }
+
     /// The hand-back (TUI suspended): re-read and export the batch, pipe it
     /// to `[send] command`, falling back to the clipboard, then remove the
     /// exported comments. Comments added meanwhile stay in the batch; a

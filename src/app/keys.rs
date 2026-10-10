@@ -352,7 +352,7 @@ impl App {
         use Action as A;
         let n = |count: Option<usize>| count.unwrap_or(1).max(1);
         match action {
-            A::Quit => self.quit = true,
+            A::Quit => self.quit_checked(),
             A::Left(c) => self.horizontal(-(n(c) as isize)),
             A::Right(c) => self.horizontal(n(c) as isize),
             A::Down(c) => self.vertical(n(c) as isize),

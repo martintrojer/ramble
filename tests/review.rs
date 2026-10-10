@@ -1719,3 +1719,93 @@ fn page_down_walks_a_tall_selection_back_with_the_box_off_its_rows() {
         }
     }
 }
+
+// Quitting with comments the batch hasn't sent.
+
+#[test]
+fn q_with_unsent_comments_warns_and_a_second_q_quits() {
+    let repo = Repo::new();
+    let mut app = repo.open("notes/doc.md", DOC);
+    goto_text(&mut app, "beta");
+    keys(&mut app, "cc");
+    type_and_save(&mut app, "fix");
+    keys(&mut app, "q");
+    assert!(!app.should_quit());
+    assert_eq!(app.status(), UNSENT_1);
+    keys(&mut app, "q");
+    assert!(app.should_quit());
+}
+
+#[test]
+fn zz_and_colon_q_warn_and_colon_q_bang_quits() {
+    let repo = Repo::new();
+    repo.add("notes/doc.md", 5, 5);
+    repo.add("notes/doc.md", 7, 7);
+    let mut app = repo.open("notes/doc.md", DOC);
+    keys(&mut app, "ZZ");
+    assert!(!app.should_quit());
+    assert_eq!(app.status(), UNSENT_2);
+    // Moving on clears the warning; the next quit warns again.
+    keys(&mut app, "j");
+    app.execute("q");
+    assert!(!app.should_quit());
+    assert_eq!(app.status(), UNSENT_2);
+    app.execute("q!");
+    assert!(app.should_quit());
+}
+
+#[test]
+fn q_quits_once_another_handle_sent_the_batch() {
+    let repo = Repo::new();
+    repo.add("notes/doc.md", 5, 5);
+    let mut app = repo.open("notes/doc.md", DOC);
+    let ids: Vec<u64> = repo.comments().iter().map(|c| c.id).collect();
+    repo.review().remove_all(&ids).unwrap();
+    keys(&mut app, "q");
+    assert!(app.should_quit(), "{}", app.status());
+}
+
+const UNSENT_1: &str = "1 comment not sent: <leader>rr sends it; q again or :q! quits";
+const UNSENT_2: &str = "2 comments not sent: <leader>rr sends them; q again or :q! quits";
+
+#[test]
+fn q_after_the_warning_warns_again_when_the_batch_grew() {
+    let repo = Repo::new();
+    repo.add("notes/doc.md", 5, 5);
+    let mut app = repo.open("notes/doc.md", DOC);
+    keys(&mut app, "q");
+    assert_eq!(app.status(), UNSENT_1);
+    // Another handle adds a comment while the warning shows.
+    repo.add("notes/doc.md", 7, 7);
+    keys(&mut app, "q");
+    assert!(!app.should_quit());
+    assert_eq!(app.status(), UNSENT_2);
+    keys(&mut app, "q");
+    assert!(app.should_quit());
+}
+
+#[test]
+fn q_when_the_batch_cannot_be_read_warns_and_q_bang_quits() {
+    let repo = Repo::new();
+    repo.add("notes/doc.md", 5, 5);
+    let mut app = repo.open("notes/doc.md", DOC);
+    // Make the batch unreadable: corrupt its file.
+    let reviews = repo.cache.join("reviews");
+    let file = std::fs::read_dir(&reviews)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().is_some_and(|x| x == "json"))
+        .unwrap();
+    std::fs::write(&file, "{ not json").unwrap();
+    keys(&mut app, "q");
+    assert!(!app.should_quit());
+    assert!(
+        app.status().starts_with("Review batch unreadable"),
+        "{}",
+        app.status()
+    );
+    keys(&mut app, "q");
+    assert!(!app.should_quit(), "an unreadable batch never quits on q");
+    app.execute("q!");
+    assert!(app.should_quit());
+}

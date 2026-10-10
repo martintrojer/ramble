@@ -169,6 +169,8 @@ server your editor already uses, point it at zk or marksman in the config.
 - `<leader>rr` sends the batch as markdown to `[send] command` on stdin
   (with `DEBRIEF_ROOT` set), or copies it to the clipboard when there is no
   command or it fails, then clears the batch.
+- Quitting (`q`, `ZZ`, `:q`) with comments not sent yet warns once; quit
+  again, or `:q!`, to leave them in the batch.
 - The window or tmux pane title shows the file you're reading.
 - `g?` lists every key that works right now. The list is tested against the
   real keymap, so it can't drift.
