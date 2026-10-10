@@ -89,30 +89,36 @@ struct Drawn {
 }
 
 /// The source graphemes of `seg` with their columns, when the segment
-/// draws its source one grapheme per cell as the renderer does (tabs as
-/// four columns, control characters as one). `None` when the widths do not
-/// add up to the span (converted math, markers): callers then scale.
+/// draws its source one grapheme per cell as the renderer does: verbatim
+/// (tabs as four columns, control characters as one) or as prose, where
+/// each whitespace grapheme is collapsed to one space. `None` when neither
+/// adds up to the span (converted math, markers): callers then scale.
 fn drawn_graphemes(src: &str, seg: &Segment) -> Option<Vec<Drawn>> {
     let text = src.get(seg.src.clone())?;
-    let mut col = seg.span.col_start;
-    let mut out = Vec::new();
-    for (i, g) in text.grapheme_indices(true) {
-        let w = if g == "\t" {
-            4
-        } else if g.chars().any(char::is_control) {
-            1
-        } else {
-            g.width()
-        };
-        let start = seg.src.start + i;
-        out.push(Drawn {
-            src: start..start + g.len(),
-            col,
-            w,
-        });
-        col += w;
-    }
-    (col == seg.span.col_end).then_some(out)
+    let layout = |collapsed: bool| {
+        let mut col = seg.span.col_start;
+        let mut out = Vec::new();
+        for (i, g) in text.grapheme_indices(true) {
+            let w = if collapsed && g.chars().all(char::is_whitespace) {
+                1
+            } else if g == "\t" {
+                4
+            } else if g.chars().any(char::is_control) {
+                1
+            } else {
+                g.width()
+            };
+            let start = seg.src.start + i;
+            out.push(Drawn {
+                src: start..start + g.len(),
+                col,
+                w,
+            });
+            col += w;
+        }
+        (col == seg.span.col_end).then_some(out)
+    };
+    layout(false).or_else(|| layout(true))
 }
 
 /// The source byte of the character drawn at (`row`, `col`), always on a

@@ -1,5 +1,6 @@
-//! Regression tests for `*` / `#` on multi-byte and wide text, `?` then
-//! Esc keeping the search direction, and `#` from inside a word.
+//! Regression tests for `*` / `#` on multi-byte and wide text, also after
+//! whitespace collapsed in prose, `?` then Esc keeping the search
+//! direction, and `#` from inside a word.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Cursor, StartOptions, StartTarget};
@@ -73,40 +74,58 @@ fn words_by_col(text: &str) -> Vec<(usize, Option<String>)> {
     out
 }
 
-#[test]
-fn star_and_hash_on_multibyte_and_wide_text_find_the_word_under_the_cursor() {
-    for line in ["éa", "日本 abc", "&amp;éééé"] {
-        let (_d, mut app) = app_with(&format!("{line}\n"));
-        let drawn = row_text(&app, 0);
-        assert_eq!(drawn, line, "drawn verbatim");
-        for (col, want) in words_by_col(&drawn) {
-            for key in ["*", "#"] {
-                esc(&mut app);
-                keys(&mut app, "0");
-                while app.cursor().col < col {
-                    keys(&mut app, "l");
+/// `*` and `#` on every column of the first row of `line`, drawn as
+/// `drawn`, find the word drawn under the cursor and land on its start.
+fn assert_star_and_hash_find_drawn_words(line: &str, drawn: &str) {
+    let (_d, mut app) = app_with(&format!("{line}\n"));
+    assert_eq!(row_text(&app, 0), drawn, "{line:?} drawn");
+    for (col, want) in words_by_col(drawn) {
+        for key in ["*", "#"] {
+            esc(&mut app);
+            keys(&mut app, "0");
+            while app.cursor().col < col {
+                keys(&mut app, "l");
+            }
+            assert_eq!(app.cursor(), at(0, col), "{line:?}");
+            keys(&mut app, key);
+            let src = &app.page().unwrap().doc.source;
+            let found: Vec<&str> = app.search_hits().iter().map(|h| &src[h.clone()]).collect();
+            match &want {
+                Some(w) => {
+                    assert_eq!(found, vec![w.as_str()], "{line:?} col {col} {key}");
+                    let start = drawn.find(w.as_str()).unwrap();
+                    let start_col = drawn[..start].width();
+                    assert_eq!(app.cursor(), at(0, start_col), "{line:?} col {col} {key}");
                 }
-                assert_eq!(app.cursor(), at(0, col), "{line:?}");
-                keys(&mut app, key);
-                let src = &app.page().unwrap().doc.source;
-                let found: Vec<&str> = app.search_hits().iter().map(|h| &src[h.clone()]).collect();
-                match &want {
-                    Some(w) => {
-                        assert_eq!(found, vec![w.as_str()], "{line:?} col {col} {key}");
-                        let start = drawn.find(w.as_str()).unwrap();
-                        let start_col = drawn[..start].width();
-                        assert_eq!(app.cursor(), at(0, start_col), "{line:?} col {col} {key}");
-                    }
-                    None => {
-                        assert_eq!(
-                            app.status(),
-                            "No word under cursor",
-                            "{line:?} col {col} {key}"
-                        );
-                    }
+                None => {
+                    assert_eq!(
+                        app.status(),
+                        "No word under cursor",
+                        "{line:?} col {col} {key}"
+                    );
                 }
             }
         }
+    }
+}
+
+#[test]
+fn star_and_hash_on_multibyte_and_wide_text_find_the_word_under_the_cursor() {
+    for line in ["éa", "日本 abc", "&amp;éééé"] {
+        assert_star_and_hash_find_drawn_words(line, line);
+    }
+}
+
+#[test]
+fn star_and_hash_after_collapsed_whitespace_find_the_drawn_word() {
+    // Prose collapses a tab (or a wide space) to one drawn space, so the
+    // source widths do not add up to the segment as they do verbatim.
+    for (line, drawn) in [
+        ("é\tabc", "é abc"),
+        ("日本\tabc x", "日本 abc x"),
+        ("é\u{3000}abc", "é abc"),
+    ] {
+        assert_star_and_hash_find_drawn_words(line, drawn);
     }
 }
 
