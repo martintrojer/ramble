@@ -64,6 +64,9 @@ pub enum SidebarAction {
     FocusLast,
     Down,
     Up,
+    /// `C-d` / `C-u`: half the pane's drawn rows down / up.
+    HalfDown,
+    HalfUp,
     Top,
     Bottom,
     /// `h`: collapse the directory, or select the parent.
@@ -642,6 +645,8 @@ impl App {
             [a, b] if plain(a) == Some('g') && plain(b) == Some('?') => {
                 KeyResult::Action(Action::Help(super::HelpAction::Open))
             }
+            [k] if is_ctrl(k, 'd') => act(S::HalfDown),
+            [k] if is_ctrl(k, 'u') => act(S::HalfUp),
             [k] => match (k.code, plain(k)) {
                 (_, Some('j')) | (KeyCode::Down, _) => act(S::Down),
                 (_, Some('k')) | (KeyCode::Up, _) => act(S::Up),
@@ -1310,6 +1315,8 @@ impl App {
             }
             S::Down => self.pane_move(1),
             S::Up => self.pane_move(-1),
+            S::HalfDown => self.pane_move(self.half_pane()),
+            S::HalfUp => self.pane_move(-self.half_pane()),
             S::Top => self.pane_move(isize::MIN),
             S::Bottom => self.pane_move(isize::MAX),
             S::Collapse => self.tree_collapse(),
@@ -1406,6 +1413,19 @@ impl App {
 
     /// Move the focused pane's selection; `isize::MIN` / `MAX` mean the
     /// first / last row.
+    /// Half the rows the focused list pane drew in the last frame (at
+    /// least 1), as `C-d` / `C-u` move in the page.
+    fn half_pane(&self) -> isize {
+        let l = self.layout();
+        let area = match self.sidebar.focus {
+            Focus::Files => l.files,
+            Focus::Outline => l.outline,
+            Focus::Content => None,
+        };
+        let rows = area.map_or(0, |a| a.items.height);
+        isize::from(i16::try_from(rows / 2).unwrap_or(i16::MAX)).max(1)
+    }
+
     fn pane_move(&mut self, delta: isize) {
         self.pane_move_in(self.sidebar.focus, delta);
     }

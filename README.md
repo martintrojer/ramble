@@ -95,7 +95,8 @@ server your editor already uses, point it at zk or marksman in the config.
   is fine), the current page's outline, or both stacked.
 - On `auto` it shows the tree until you open something, then the outline.
   `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
-  split, `C-w h/l/j/k` moves between panes. It sits on the left or the
+  split, `C-w h/l/j/k` moves between panes. In a pane, `j/k`, `C-d/C-u`
+  (half a pane) and `gg/G` move the selection. It sits on the left or the
   right (`side`, `:Sidebar left|right`); `C-w h/l` follow the screen.
 - `show = "auto"` makes it a peek: hidden while you read, shown while you
   use it (`C-w` into it, `<leader>E`), hidden again when you open a file,

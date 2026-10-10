@@ -1831,3 +1831,108 @@ fn going_up_from_a_hidden_or_ignored_dir_lists_and_selects_it() {
     keys(&mut app, ".-");
     assert!(!names(app.tree().unwrap()).contains(&"build".to_string()));
 }
+
+/// root/n00.md … n39.md: a files list taller than the pane.
+fn many_notes() -> (TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    for i in 0..40 {
+        write(&root, &format!("n{i:02}.md"), "# N\n");
+    }
+    (dir, root)
+}
+
+/// Draw a frame, then the rows the focused list pane draws items in.
+fn pane_rows(app: &App) -> usize {
+    let mut term = Terminal::new(TestBackend::new(SIZE.0, SIZE.1)).unwrap();
+    term.draw(|f| ramble::ui::draw(f, app)).unwrap();
+    let l = app.layout();
+    let area = match app.focus() {
+        Focus::Files => l.files,
+        Focus::Outline => l.outline,
+        Focus::Content => None,
+    };
+    area.unwrap().items.height as usize
+}
+
+#[test]
+fn ctrl_d_u_move_half_a_pane_in_the_files_list() {
+    let (_d, root) = many_notes();
+    let mut app = app_on(
+        &root,
+        StartTarget::Dir(root.clone()),
+        config(SidebarMode::Files),
+    );
+    assert_eq!(app.focus(), Focus::Files);
+    let half = (pane_rows(&app) / 2).max(1);
+    let sel = |app: &App| app.tree().unwrap().selected().unwrap().to_path_buf();
+    let at = |i: usize| root.join(format!("n{i:02}.md"));
+    app.handle_key(ctrl('d'));
+    assert_eq!(sel(&app), at(half));
+    app.handle_key(ctrl('d'));
+    assert_eq!(sel(&app), at(2 * half));
+    app.handle_key(ctrl('u'));
+    assert_eq!(sel(&app), at(half));
+    // Clamped at both ends.
+    keys(&mut app, "G");
+    app.handle_key(ctrl('d'));
+    assert_eq!(sel(&app), at(39));
+    keys(&mut app, "gg");
+    app.handle_key(ctrl('u'));
+    assert_eq!(sel(&app), at(0));
+}
+
+#[test]
+fn ctrl_d_u_gg_g_move_in_the_outline() {
+    let (_d, root) = fixture();
+    let body: String = (0..30).map(|i| format!("## H{i}\n\ntext\n\n")).collect();
+    let page = write(&root, "long.md", &format!("# Top\n\n{body}"));
+    let mut app = app_on(&root, StartTarget::File(page), config(SidebarMode::Outline));
+    win(&mut app, 'h');
+    assert_eq!(app.focus(), Focus::Outline);
+    let half = (pane_rows(&app) / 2).max(1);
+    let last = 30; // # Top + 30 sections
+    app.handle_key(ctrl('d'));
+    assert_eq!(app.outline_selected(), Some(half));
+    app.handle_key(ctrl('u'));
+    assert_eq!(app.outline_selected(), Some(0));
+    keys(&mut app, "G");
+    assert_eq!(app.outline_selected(), Some(last));
+    app.handle_key(ctrl('d'));
+    assert_eq!(app.outline_selected(), Some(last));
+    keys(&mut app, "gg");
+    assert_eq!(app.outline_selected(), Some(0));
+}
+
+#[test]
+fn ctrl_d_u_in_split_mode_use_each_panes_own_height() {
+    let (_d, root) = many_notes();
+    let body: String = (0..30).map(|i| format!("## H{i}\n\ntext\n\n")).collect();
+    let page = write(&root, "n00.md", &format!("# Top\n\n{body}"));
+    let mut app = app_on(&root, StartTarget::File(page), config(SidebarMode::Split));
+    win(&mut app, 'h');
+    // Split: files on top, outline below, each with its own height.
+    win(&mut app, 'k');
+    assert_eq!(app.focus(), Focus::Files);
+    let files_rows = pane_rows(&app);
+    let files_half = (files_rows / 2).max(1);
+    let start = app.tree().unwrap().selected().unwrap().to_path_buf();
+    let items = app.tree().unwrap().visible_items();
+    let i0 = items.iter().position(|i| i.path == start).unwrap();
+    app.handle_key(ctrl('d'));
+    let sel = app.tree().unwrap().selected().unwrap().to_path_buf();
+    assert_eq!(sel, items[(i0 + files_half).min(items.len() - 1)].path);
+    win(&mut app, 'j');
+    assert_eq!(app.focus(), Focus::Outline);
+    let outline_rows = pane_rows(&app);
+    let outline_half = (outline_rows / 2).max(1);
+    assert!(
+        files_rows < 16 && outline_rows < 16,
+        "both panes share the height"
+    );
+    keys(&mut app, "gg");
+    app.handle_key(ctrl('d'));
+    assert_eq!(app.outline_selected(), Some(outline_half));
+    app.handle_key(ctrl('u'));
+    assert_eq!(app.outline_selected(), Some(0));
+}

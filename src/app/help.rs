@@ -464,6 +464,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
     ),
     b("j, Down", S, G::Sidebar, "down", always),
     b("k, Up", S, G::Sidebar, "up", always),
+    b("C-d, C-u", S, G::Sidebar, "half a pane down, up", always),
     b("gg", S, G::Sidebar, "first row", always),
     b("G", S, G::Sidebar, "last row", always),
     b(
