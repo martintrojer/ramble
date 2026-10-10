@@ -176,6 +176,10 @@ server your editor already uses, point it at zk or marksman in the config.
 
 ## Install
 
+Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64) are on the
+[releases page](https://github.com/martintrojer/ramble/releases). From
+source:
+
 ```sh
 cargo install --path .
 ```

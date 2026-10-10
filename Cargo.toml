@@ -29,7 +29,7 @@ nucleo = "0.5"
 latex-to-unicode = "0.1"
 term-maths = "1"
 mdroots = "0.2.4"
-debrief-review = { path = "/Users/mtrojer/hacking/debrief/crates/debrief-review" }
+debrief-review = "0.1"
 
 # Scripted fake language server for tests/lsp.rs. Not a test target itself.
 [[bin]]
