@@ -120,6 +120,10 @@ fn sidebar_on_right(a: &App) -> bool {
     side_right(a) && a.can_focus_or_peek()
 }
 
+fn pane_nav(a: &App) -> bool {
+    a.config.keys.pane_nav
+}
+
 fn not_auto(a: &App) -> bool {
     !a.show_is_auto()
 }
@@ -467,6 +471,35 @@ pub(crate) static BINDINGS: &[Binding] = &[
         G::Sidebar,
         "last pane",
         App::can_focus_or_peek,
+    ),
+    // `[keys] pane_nav`: C-w h/j/k/l, then the tmux pane past the edge.
+    b(
+        "C-h",
+        Any,
+        G::Sidebar,
+        "as C-w h (at the edge: tmux)",
+        pane_nav,
+    ),
+    b(
+        "C-j",
+        Any,
+        G::Sidebar,
+        "as C-w j (at the edge: tmux)",
+        pane_nav,
+    ),
+    b(
+        "C-k",
+        Any,
+        G::Sidebar,
+        "as C-w k (at the edge: tmux)",
+        pane_nav,
+    ),
+    b(
+        "C-l",
+        Any,
+        G::Sidebar,
+        "as C-w l (at the edge: tmux)",
+        pane_nav,
     ),
     b("j, Down", S, G::Sidebar, "down", always),
     b("k, Up", S, G::Sidebar, "up", always),
@@ -1232,6 +1265,10 @@ mod tests {
             "C-w j",
             "C-w k",
             "C-w p",
+            "C-h",
+            "C-j",
+            "C-k",
+            "C-l",
             "<leader>zf",
             "<leader>zs",
             "<leader>zz",

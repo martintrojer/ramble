@@ -232,6 +232,21 @@ fn ctrl_w_lists_window_keys_per_focus() {
 }
 
 #[test]
+fn ctrl_w_names_the_one_key_pane_moves_unless_pane_nav_is_off() {
+    for pane_nav in [true, false] {
+        let mut c = config();
+        c.keys.pane_nav = pane_nav;
+        let (_d, mut app) = app_sized(c, (100, 30));
+        app.handle_key(ctrl('w'));
+        let h = desc(&app, "h").unwrap();
+        assert_eq!(h.ends_with("(or C-h)"), pane_nav, "{h}");
+        let j = desc(&app, "j").unwrap();
+        assert_eq!(j.ends_with("(or C-j)"), pane_nav, "{j}");
+        assert!(!desc(&app, "w").unwrap().contains("(or"));
+    }
+}
+
+#[test]
 fn ctrl_w_with_the_sidebar_hidden_shows_no_box() {
     for side in [SidebarSide::Left, SidebarSide::Right] {
         let mut c = config();
@@ -488,11 +503,11 @@ fn ctrl_w_rows_follow_the_sidebar_side() {
     let (_d, mut app) = app_sized(c, (100, 30));
     app.handle_key(ctrl('w'));
     assert_eq!(row_keys(&app), ["W", "j", "k", "l", "p", "w"]);
-    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar");
+    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar (or C-l)");
     app.handle_key(key(KeyCode::Char('l')));
     assert_ne!(app.focus(), Focus::Content);
     app.handle_key(ctrl('w'));
     assert_eq!(row_keys(&app), ["W", "h", "j", "k", "l", "p", "w"]);
-    assert_eq!(desc(&app, "h").unwrap(), "to the content");
-    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar");
+    assert_eq!(desc(&app, "h").unwrap(), "to the content (or C-h)");
+    assert_eq!(desc(&app, "l").unwrap(), "to the sidebar (or C-l)");
 }

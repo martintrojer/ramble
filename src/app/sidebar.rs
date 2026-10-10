@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::keys::{Action, KeyResult};
+use super::pane_nav::Dir;
 use super::sidebar_width::{self, MIN_CONTENT};
 use super::{App, Mode, StartTarget};
 use crate::config::{SidebarConfig, SidebarMode, SidebarShow, SidebarSide, SidebarWidth};
@@ -598,20 +599,30 @@ pub(super) fn window_keymap(keys: &[KeyEvent], side: SidebarSide) -> Option<KeyR
     let Some(k) = rest.first() else {
         return Some(KeyResult::Pending);
     };
-    let (left, right) = match side {
-        SidebarSide::Left => (SidebarAction::FocusSidebar, SidebarAction::FocusContent),
-        SidebarSide::Right => (SidebarAction::FocusContent, SidebarAction::FocusSidebar),
-    };
+    let dir = |d| act(focus_toward(d, side));
     Some(match k.code {
-        KeyCode::Char('h') | KeyCode::Left => act(left),
-        KeyCode::Char('l') | KeyCode::Right => act(right),
+        KeyCode::Char('h') | KeyCode::Left => dir(Dir::Left),
+        KeyCode::Char('l') | KeyCode::Right => dir(Dir::Right),
         KeyCode::Char('w') => act(SidebarAction::FocusNext),
         KeyCode::Char('W') => act(SidebarAction::FocusPrev),
-        KeyCode::Char('j') | KeyCode::Down => act(SidebarAction::FocusBelow),
-        KeyCode::Char('k') | KeyCode::Up => act(SidebarAction::FocusAbove),
+        KeyCode::Char('j') | KeyCode::Down => dir(Dir::Down),
+        KeyCode::Char('k') | KeyCode::Up => dir(Dir::Up),
         KeyCode::Char('p') => act(SidebarAction::FocusLast),
         _ => KeyResult::None,
     })
+}
+
+/// The focus move `C-w h/l/j/k` (and `C-h/l/j/k`) runs for `dir`, with
+/// the sidebar at `side`.
+pub(super) fn focus_toward(dir: Dir, side: SidebarSide) -> SidebarAction {
+    match (dir, side) {
+        (Dir::Left, SidebarSide::Left) | (Dir::Right, SidebarSide::Right) => {
+            SidebarAction::FocusSidebar
+        }
+        (Dir::Left | Dir::Right, _) => SidebarAction::FocusContent,
+        (Dir::Down, _) => SidebarAction::FocusBelow,
+        (Dir::Up, _) => SidebarAction::FocusAbove,
+    }
 }
 
 /// Keys in the filter prompt.
@@ -638,6 +649,9 @@ impl App {
             return r;
         }
         if let Some(r) = window_keymap(keys, self.sidebar_side()) {
+            return r;
+        }
+        if let Some(r) = self.pane_nav_keymap(keys) {
             return r;
         }
         match keys {

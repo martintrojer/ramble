@@ -29,6 +29,7 @@ mod mdroots_glue;
 mod motion;
 mod mouse;
 mod page;
+mod pane_nav;
 mod picker;
 mod raw;
 mod review_glue;
@@ -68,6 +69,7 @@ pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use mdroots_glue::MdrootsOptions;
 pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
+pub use pane_nav::{Dir, TMUX_WAIT, tmux_command};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use review_glue::{
     FileMarks, MARKER as REVIEW_MARKER, Markers, NO_MORE_REVIEW, NO_REVIEW, REVIEW_POLL, canonical,
@@ -229,7 +231,10 @@ pub struct App {
     term_out: Rc<RefCell<Vec<u8>>>,
     /// Runs launcher commands (`launch::system_run` by default).
     runner: Box<launch::Runner>,
-    /// Environment lookup for `${editor}`.
+    /// Runs `tmux select-pane` for a pane move at the edge
+    /// (`pane_nav::spawn_capped` by default: never blocks long).
+    pane_runner: Box<launch::Runner>,
+    /// Environment lookup for `${editor}` and `$TMUX`.
     env: Box<launch::EnvLookup>,
     /// Launcher key sequences after the leader, with indices into
     /// `config.launch`.
@@ -308,6 +313,7 @@ impl App {
             }),
             term_out,
             runner: Box::new(launch::system_run),
+            pane_runner: Box::new(pane_nav::spawn_capped),
             env: Box::new(|k| std::env::var(k).ok()),
             leader_bindings,
             launch_reloaded_at: None,
@@ -367,7 +373,17 @@ impl App {
         self
     }
 
-    /// Replace the environment lookup used for `${editor}`.
+    /// Replace the runner of the tmux hand-off at a pane edge (tests
+    /// record the command).
+    pub fn with_pane_runner(
+        mut self,
+        runner: impl FnMut(&LaunchCommand) -> anyhow::Result<Exit> + 'static,
+    ) -> Self {
+        self.pane_runner = Box::new(runner);
+        self
+    }
+
+    /// Replace the environment lookup used for `${editor}` and `$TMUX`.
     pub fn with_env(mut self, env: impl Fn(&str) -> Option<String> + 'static) -> Self {
         self.env = Box::new(env);
         self

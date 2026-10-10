@@ -117,7 +117,17 @@ impl App {
         if !self.clue_active() {
             return Vec::new();
         }
-        self.clue_rows_for(&self.pending, true)
+        let mut rows = self.clue_rows_for(&self.pending, true);
+        // After `C-w`, name the one-key forms of `h j k l` (`pane_nav`).
+        let ctrl_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        if self.config.keys.pane_nav && matches!(&self.pending[..], [k] if same_key(k, &ctrl_w)) {
+            for r in &mut rows {
+                if matches!(r.key.as_str(), "h" | "j" | "k" | "l") && !r.group {
+                    r.desc = format!("{} (or C-{})", r.desc, r.key);
+                }
+            }
+        }
+        rows
     }
 
     /// Rows after `pending` in the current mode and focus; `avail` false

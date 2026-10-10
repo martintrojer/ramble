@@ -44,8 +44,8 @@
 ## it comes back when the terminal grows, unless you hid it. 0 disables.
 # auto_hide_below = 80
 ## left | right: the screen edge the sidebar sits at (:Sidebar left|right
-## switches it). C-w h and C-w l follow the screen: on the right, C-w l
-## goes to the sidebar.
+## switches it). C-w h / C-h and C-w l / C-l follow the screen: on the
+## right, C-l goes to the sidebar.
 # side = "left"
 
 ## ---------------------------------------------------------------------------
@@ -54,6 +54,10 @@
 # leader = " "
 ## After a pause in a key sequence, show the keys that can come next.
 # clue = true
+## C-h / C-j / C-k / C-l move between panes as C-w h/j/k/l do; at the edge,
+## inside tmux, they move to the tmux pane there. false unbinds them (the
+## C-w keys stay).
+# pane_nav = true
 
 ## ---------------------------------------------------------------------------
 ## Mouse: click, double-click, drag to copy, wheel. Shift+drag still makes

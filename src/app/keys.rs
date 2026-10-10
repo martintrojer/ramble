@@ -121,6 +121,8 @@ pub enum Action {
     Help(super::HelpAction),
     /// `R`: re-read the file and the tree, redraw the terminal.
     Refresh,
+    /// `C-h/j/k/l`: the pane that way (`[keys] pane_nav`).
+    PaneNav(super::pane_nav::Dir),
 }
 
 /// What a key sequence means so far.
@@ -234,6 +236,9 @@ impl App {
             return r;
         }
         if let Some(r) = sidebar::window_keymap(keys, self.sidebar_side()) {
+            return r;
+        }
+        if let Some(r) = self.pane_nav_keymap(keys) {
             return r;
         }
         if let Some(r) = super::picker::normal_keys(keys) {
@@ -408,6 +413,7 @@ impl App {
             A::ToggleRaw => self.toggle_raw(),
             A::Help(a) => self.help_action(a),
             A::Refresh => self.refresh(),
+            A::PaneNav(d) => self.pane_nav(d),
         }
     }
 }

@@ -95,9 +95,9 @@ server your editor already uses, point it at zk or marksman in the config.
   is fine), the current page's outline, or both stacked.
 - On `auto` it shows the tree until you open something, then the outline.
   `<leader>e` shows or hides it, `<leader>E` cycles outline, files and
-  split, `C-w h/l/j/k` moves between panes. In a pane, `j/k`, `C-d/C-u`
+  split, `C-h/l/j/k` (or `C-w h/l/j/k`) moves between panes. In a pane, `j/k`, `C-d/C-u`
   (half a pane) and `gg/G` move the selection. It sits on the left or the
-  right (`side`, `:Sidebar left|right`); `C-w h/l` follow the screen.
+  right (`side`, `:Sidebar left|right`); `C-h/l` follow the screen.
 - `show = "auto"` makes it a peek: hidden while you read, shown while you
   use it (`C-w` into it, `<leader>E`), hidden again when you open a file,
   jump to a heading, click the text or press `Esc`. When the page has no
@@ -202,6 +202,22 @@ ramble doc.md | less -R      # same, automatically, when stdout is a pipe
 
 Inside, press `g?` for the full list of keys.
 
+### Moving between panes
+
+`C-h` / `C-j` / `C-k` / `C-l` move to the pane left / below / above / right,
+as `C-w h/j/k/l` do (the same keys as nvim and tmux). Where there is no pane
+that way and ramble runs inside tmux, the move goes on to the tmux pane
+there (`tmux select-pane`), as
+[vim-tmux-navigator](https://github.com/christoomey/vim-tmux-navigator)
+does. `[keys] pane_nav = false` unbinds them; the `C-w` keys stay.
+
+vim-tmux-navigator only forwards these keys to panes it thinks run vim. To
+let ramble receive them, add it to the pattern in `~/.tmux.conf`:
+
+```tmux
+set -g @vim_navigator_pattern '(\S+/)?g?\.?(view|l?n?vim?x?|fzf|debrief|ramble)(diff)?(-wrapped)?'
+```
+
 ## Configure
 
 ramble works with no config file. To customise it:
@@ -231,6 +247,7 @@ side = "left"                # left | right; :Sidebar left|right switches it
 [keys]
 leader = " "
 clue = true                  # after a pause mid-sequence, show the next keys
+pane_nav = true              # C-h/j/k/l move between panes (and tmux panes)
 
 [mouse]
 enabled = true               # false leaves the mouse to the terminal / tmux

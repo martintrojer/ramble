@@ -46,6 +46,7 @@ fn defaults_match_spec() {
     assert_eq!(c.sidebar.reading, SidebarReading::Outline);
     assert_eq!(c.sidebar.side, SidebarSide::Left);
     assert_eq!(c.keys.leader, ' ');
+    assert!(c.keys.pane_nav);
     assert!(c.mouse.enabled);
     assert!(
         c.lsp.server.is_empty(),
@@ -74,7 +75,7 @@ fn defaults_match_spec() {
 #[test]
 fn partial_override_keeps_other_defaults() {
     let c = load_str(
-        "[render]\nmax_width = 72\nmath = false\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\n[review]\nenabled = false\n",
+        "[render]\nmax_width = 72\nmath = false\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\npane_nav = false\n[review]\nenabled = false\n",
     )
     .unwrap();
     let mut want = Config::default();
@@ -82,6 +83,7 @@ fn partial_override_keeps_other_defaults() {
     want.render.math = false;
     want.sidebar.default = SidebarMode::Split;
     want.keys.leader = ',';
+    want.keys.pane_nav = false;
     want.review.enabled = false;
     assert_eq!(c, want);
 }
