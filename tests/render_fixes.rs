@@ -174,3 +174,44 @@ fn crlf_fences_print_without_extra_rows() {
     let list = strip_sgr(&print(crlf(LIST_FENCE).as_bytes()));
     assert_eq!(list, "• item\n  first\n    second\n");
 }
+
+// A tab the container prefix only partly consumes leaves code-owned
+// columns the parser synthesizes as spaces with no source bytes.
+const TAB_LIST_FENCE: &str = "- item\n\n  ```text\n\tfirst\n\tsecond\n  ```\n";
+const TAB_QUOTE_FENCE: &str = "> ```text\n>\tfirst\n>\tsecond\n> ```\n";
+
+#[test]
+fn partial_tab_in_list_fence_keeps_code_indent() {
+    let (d, p) = page(TAB_LIST_FENCE);
+    assert_eq!(rows(&p), ["• item", "    first", "    second"]);
+    let second = d.source.find("second").unwrap();
+    assert_eq!(p.srcmap.source_at(2, 4), Some(second));
+    // The synthesized columns map to the tab they come from.
+    assert_eq!(p.srcmap.source_at(2, 2), Some(second - 1));
+}
+
+#[test]
+fn partial_tab_in_quote_fence_keeps_code_indent() {
+    let (d, p) = page(TAB_QUOTE_FENCE);
+    assert_eq!(rows(&p), ["│   first", "│   second"]);
+    let second = d.source.find("second").unwrap();
+    assert_eq!(p.srcmap.source_at(1, 4), Some(second));
+}
+
+#[test]
+fn partial_tab_in_indented_code_keeps_code_indent() {
+    // `>` then two tabs: the quote marker and its space take two columns,
+    // the indented block four, and the code keeps the remaining two.
+    let (_, p) = page(">\t\tcode\n");
+    assert_eq!(rows(&p), ["│   code"]);
+}
+
+#[test]
+fn partial_tab_fences_print_with_code_indent() {
+    let list = strip_sgr(&print(TAB_LIST_FENCE.as_bytes()));
+    assert_eq!(list, "• item\n    first\n    second\n");
+    let quote = strip_sgr(&print(TAB_QUOTE_FENCE.as_bytes()));
+    assert_eq!(quote, "│   first\n│   second\n");
+    let crlf_list = strip_sgr(&print(crlf(TAB_LIST_FENCE).as_bytes()));
+    assert_eq!(crlf_list, "• item\n    first\n    second\n");
+}

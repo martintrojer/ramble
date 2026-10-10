@@ -127,7 +127,7 @@ pub enum Block {
         lang: Option<String>,
         range: Range<usize>,
         code: Range<usize>,
-        lines: Vec<Range<usize>>,
+        lines: Vec<CodePiece>,
     },
     BlockQuote {
         range: Range<usize>,
@@ -158,6 +158,17 @@ pub enum Block {
         range: Range<usize>,
         children: Vec<Block>,
     },
+}
+
+/// One text piece of a code block: `pad` spaces with no source bytes, then
+/// the source bytes `range`. The pad is the code-owned rest of a tab that a
+/// container prefix or the code indent only partly consumed (`>\tx` in a
+/// fence keeps two of the tab's columns); the tab is the byte before
+/// `range`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodePiece {
+    pub pad: usize,
+    pub range: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -729,13 +740,22 @@ fn parse_blocks(src: &str, events: &Events<'_>, i: &mut usize) -> Vec<Block> {
                 };
                 let mut code: Option<Range<usize>> = None;
                 let mut lines = Vec::new();
-                while let Some((Event::Text(_), r)) = events.get(*i) {
-                    lines.push(r.clone());
+                let mut pad = 0;
+                while let Some((Event::Text(t), r)) = events.get(*i) {
+                    *i += 1;
                     code = Some(match code {
                         None => r.clone(),
                         Some(c) => c.start..r.end,
                     });
-                    *i += 1;
+                    // Synthesized spaces: the parser's text, not the source's.
+                    if r.is_empty() {
+                        pad += t.len();
+                        continue;
+                    }
+                    lines.push(CodePiece {
+                        pad: std::mem::take(&mut pad),
+                        range: r.clone(),
+                    });
                 }
                 skip_to_end(events, i);
                 let code = code.unwrap_or_else(|| {

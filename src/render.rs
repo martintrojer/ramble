@@ -13,7 +13,7 @@ use syntect::parsing::{SyntaxReference, SyntaxSet};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::doc::{self, AlertKind, Alignment, Block, Document, Inline, ListItem};
+use crate::doc::{self, AlertKind, Alignment, Block, CodePiece, Document, Inline, ListItem};
 
 /// Render options. Colours are always Catppuccin Mocha ([`palette`] and
 /// two-face's embedded code theme); `Theme::catppuccin_mocha()` is the default.
@@ -1113,8 +1113,9 @@ impl<'a> Renderer<'a> {
     /// (`> `, list indent) and the `\r` of CRLF. Pieces are not lines: one
     /// piece may hold several lines and one line may span pieces (`first`,
     /// `\nsecond`, `\n` for a CRLF fence), so lines come from their joined
-    /// text, split after each `\n`.
-    fn code_block(&mut self, lang: Option<&str>, pieces: &[Range<usize>]) {
+    /// text, split after each `\n`. A piece's pad spaces map to the tab
+    /// they come from.
+    fn code_block(&mut self, lang: Option<&str>, pieces: &[CodePiece]) {
         let ss = syntaxes();
         let syntax = lang
             .and_then(find_syntax)
@@ -1124,9 +1125,18 @@ impl<'a> Renderer<'a> {
         // Each line: its text and, per segment, (offset in text, source offset).
         let mut lines: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
         let mut cur: (String, Vec<(usize, usize)>) = Default::default();
-        for piece in pieces {
-            let mut at = piece.start;
-            for part in self.slice(piece).split_inclusive('\n') {
+        for CodePiece { pad, range } in pieces {
+            let tab = if self.src.as_bytes().get(range.start.wrapping_sub(1)) == Some(&b'\t') {
+                range.start - 1
+            } else {
+                range.start
+            };
+            for _ in 0..*pad {
+                cur.1.push((cur.0.len(), tab));
+                cur.0.push(' ');
+            }
+            let mut at = range.start;
+            for part in self.slice(range).split_inclusive('\n') {
                 cur.1.push((cur.0.len(), at));
                 cur.0.push_str(part);
                 at += part.len();
@@ -1461,14 +1471,15 @@ impl Renderer<'_> {
     }
 
     /// A fenced ```` ```math ```` block, drawn like a standalone `$$` block.
-    fn math_fence(&mut self, code: &Range<usize>, pieces: &[Range<usize>]) {
+    fn math_fence(&mut self, code: &Range<usize>, pieces: &[CodePiece]) {
         // The pieces already skip container prefixes, so a `>` left in them
-        // is LaTeX. A top-level piece may hold several lines.
+        // is LaTeX. A top-level piece may hold several lines. Pads are
+        // leading space, trimmed anyway.
         let mut tex = String::new();
         let mut first: Option<Range<usize>> = None;
-        for piece in pieces {
-            let mut offset = piece.start;
-            for line in self.slice(piece).split_inclusive('\n') {
+        for CodePiece { range, .. } in pieces {
+            let mut offset = range.start;
+            for line in self.slice(range).split_inclusive('\n') {
                 let body = line.trim_end_matches(['\n', '\r']);
                 let text = body.trim();
                 if first.is_none() && !text.is_empty() {

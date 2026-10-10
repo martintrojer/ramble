@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use proptest::prelude::*;
 use ramble::doc::{
-    AlertKind, Alignment, Block, Document, Inline, InlineStyle, Link, LinkKind, ListItem,
+    AlertKind, Alignment, Block, CodePiece, Document, Inline, InlineStyle, Link, LinkKind, ListItem,
 };
 use ramble::render::{RenderedPage, Theme, palette, render, render_with, to_ansi};
 use ratatui::style::{Color, Modifier, Style};
@@ -335,7 +335,10 @@ fn fixture() -> Document {
             lang: Some("rust".into()),
             range: code_fence.start..code_end.end,
             code: code_fence.end + 1..code_end.start,
-            lines: std::iter::once(code_fence.end + 1..code_end.start).collect(),
+            lines: vec![CodePiece {
+                pad: 0,
+                range: code_fence.end + 1..code_end.start,
+            }],
         },
         Block::Table {
             range: table.clone(),
