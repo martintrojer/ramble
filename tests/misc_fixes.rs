@@ -117,7 +117,15 @@ fn pickers_do_not_panic_in_tiny_terminals() {
         let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
         term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
     }
+    app.event(AppEvent::Key(KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )));
+    assert!(app.picker().is_none(), "picker closed: {}", app.status());
     keys(&mut app, "g?");
-    let mut term = Terminal::new(TestBackend::new(80, 1)).unwrap();
-    term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    assert!(app.help_view().is_some(), "help open: {}", app.status());
+    for h in 0..=3 {
+        let mut term = Terminal::new(TestBackend::new(80, h)).unwrap();
+        term.draw(|f| ramble::ui::draw(f, &app)).unwrap();
+    }
 }
