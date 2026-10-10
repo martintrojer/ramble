@@ -81,11 +81,16 @@ impl App {
     /// Put the cursor column at the grapheme under `want_col` on its row.
     pub(super) fn clamp_cursor(&mut self) {
         self.cursor.row = self.cursor.row.min(self.last_row());
-        let cells = self.cells(self.cursor.row);
-        self.cursor.col = match cells.iter().rposition(|c| c.col <= self.want_col) {
-            Some(i) => cells[i].col,
-            None => 0,
-        };
+        self.cursor.col = self.snap_col(self.cursor.row, self.want_col);
+    }
+
+    /// Column of the grapheme under `col` on `row` (0 on an empty row).
+    pub(super) fn snap_col(&self, row: usize, col: usize) -> usize {
+        let cells = self.cells(row);
+        cells
+            .iter()
+            .rposition(|c| c.col <= col)
+            .map_or(0, |i| cells[i].col)
     }
 
     pub(super) fn cells(&self, row: usize) -> &[Cell] {

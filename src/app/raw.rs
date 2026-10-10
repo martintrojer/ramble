@@ -17,14 +17,16 @@ impl App {
     }
 
     /// Show the current page raw (or rendered), keeping the cursor on the
-    /// same source byte, as resize does.
+    /// same source byte (and the visual selections), as resize does.
     pub(super) fn set_raw(&mut self, on: bool) {
         if self.page.is_none() || self.raw() == on {
             return;
         }
         let anchor = self.cursor_anchor();
+        let visual = self.visual_anchors();
         self.relayout_raw(on);
         self.restore_anchor(anchor);
+        self.restore_visual_anchors(visual);
         self.keep_visible();
     }
 

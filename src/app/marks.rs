@@ -30,21 +30,25 @@ impl App {
         self.marks.entry(key).or_default().insert(c, byte);
     }
 
-    /// `'{a-z}`: the start of the marked row.
-    pub(super) fn goto_mark(&mut self, c: char) {
-        let Some(key) = self.page_key() else { return };
+    /// `'{a-z}`: the start of the marked row. False (cursor unchanged)
+    /// when the mark is not set or no longer on the page.
+    pub(super) fn goto_mark(&mut self, c: char) -> bool {
+        let Some(key) = self.page_key() else {
+            return false;
+        };
         let Some(&byte) = self.marks.get(&key).and_then(|m| m.get(&c)) else {
             self.set_status(format!("Mark not set: {c}"));
-            return;
+            return false;
         };
         let Some(row) = self
             .page
             .as_ref()
             .and_then(|p| p.rendered.srcmap.row_for(byte))
         else {
-            return;
+            return false;
         };
         self.goto_row(row);
+        true
     }
 
     /// `yu` has something to copy: a link under the cursor or a file path.

@@ -20,6 +20,10 @@ pub struct Entry {
     pub cursor_row: usize,
     pub cursor_col: usize,
     pub scroll: usize,
+    /// The cursor as a source byte and whether it was taken from a nearby
+    /// row (the cursor was on a blank one), so the position survives a
+    /// re-layout (resize, sidebar width). `None`: use the row and column.
+    pub anchor: Option<(usize, bool)>,
     /// Sidebar mode when the page was left (`None`: keep the current one).
     pub sidebar: Option<crate::config::SidebarMode>,
     /// The page was shown as raw source.

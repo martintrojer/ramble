@@ -20,7 +20,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use super::comment::CommentAction;
-use super::keys::{Action, KeyResult};
+use super::keys::{Action, KeyResult, MAX_COUNT};
+use super::page::Anchor;
 use super::{App, Cursor, Mode};
 use crate::render::{ScreenSpan, Segment};
 
@@ -67,6 +68,22 @@ struct Selection {
     kind: VisualKind,
     anchor: Cursor,
     cursor: Cursor,
+}
+
+/// A [`Selection`] as source anchors, to survive a re-layout.
+#[derive(Debug, Clone, Copy)]
+struct SelectionAnchors {
+    kind: VisualKind,
+    anchor: Option<Anchor>,
+    cursor: Option<Anchor>,
+}
+
+/// The visual selections as source anchors: the active selection's anchor
+/// (the cursor is anchored by the caller) and the `gv` selection.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct VisualAnchors {
+    active: Option<Anchor>,
+    last: Option<SelectionAnchors>,
 }
 
 /// Visual and operator-pending state.
@@ -234,7 +251,7 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
         let count = match (self.visual.op_count, self.count) {
             (None, None) => None,
-            (a, b) => Some(a.unwrap_or(1).saturating_mul(b.unwrap_or(1))),
+            (a, b) => Some(a.unwrap_or(1).saturating_mul(b.unwrap_or(1)).min(MAX_COUNT)),
         };
         let act = |v| KeyResult::Action(Action::Visual(v));
         if let [k] = keys {
@@ -341,6 +358,43 @@ impl App {
             anchor: self.visual.anchor,
             cursor: self.cursor,
         })
+    }
+
+    /// The visual selections as source anchors, before a re-layout.
+    pub(super) fn visual_anchors(&self) -> VisualAnchors {
+        VisualAnchors {
+            active: self
+                .visual_kind()
+                .and_then(|_| self.anchor_at(self.visual.anchor)),
+            last: self.visual.last.map(|s| SelectionAnchors {
+                kind: s.kind,
+                anchor: self.anchor_at(s.anchor),
+                cursor: self.anchor_at(s.cursor),
+            }),
+        }
+    }
+
+    /// Put the visual selections back on their source bytes after a
+    /// re-layout. A position that no longer maps keeps its row and column,
+    /// clamped to the page.
+    pub(super) fn restore_visual_anchors(&mut self, a: VisualAnchors) {
+        let last_row = self.last_row();
+        let place = |app: &Self, old: Cursor, anchor: Option<Anchor>| {
+            app.reanchor(old, anchor).unwrap_or(Cursor {
+                row: old.row.min(last_row),
+                col: old.col,
+            })
+        };
+        if self.visual_kind().is_some() {
+            self.visual.anchor = place(self, self.visual.anchor, a.active);
+        }
+        if let (Some(s), Some(sa)) = (self.visual.last, a.last) {
+            self.visual.last = Some(Selection {
+                kind: sa.kind,
+                anchor: place(self, s.anchor, sa.anchor),
+                cursor: place(self, s.cursor, sa.cursor),
+            });
+        }
     }
 
     fn visual_cancel(&mut self) {
@@ -458,7 +512,18 @@ impl App {
     pub(super) fn op_motion(&mut self, motion: Action) {
         self.mode = Mode::Normal;
         let (start, want) = (self.cursor, self.want_col);
-        self.apply(motion);
+        // A motion that fails (`'a` with mark a unset) cancels the
+        // operator, as in vim; its status message stays.
+        let moved = match motion {
+            Action::GotoMark(c) => self.goto_mark(c),
+            _ => {
+                self.apply(motion);
+                true
+            }
+        };
+        if !moved {
+            return;
+        }
         let end = self.cursor;
         let (lo, hi) = ordered(start, end);
         let mut linewise = motion_kind(motion) == MotionKind::Linewise;

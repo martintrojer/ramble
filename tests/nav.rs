@@ -107,6 +107,7 @@ fn e(name: &str, row: usize) -> Entry {
         cursor_row: row,
         cursor_col: 0,
         scroll: 0,
+        anchor: None,
         sidebar: None,
         raw: false,
     }
@@ -162,6 +163,7 @@ fn stdin_entries_keep_text() {
         cursor_row: 0,
         cursor_col: 0,
         scroll: 0,
+        anchor: None,
         sidebar: None,
         raw: false,
     });

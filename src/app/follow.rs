@@ -24,6 +24,7 @@ impl App {
             cursor_row: self.cursor.row,
             cursor_col: self.cursor.col,
             scroll: self.scroll,
+            anchor: self.cursor_anchor(),
             sidebar: Some(self.sidebar_mode()),
             raw: p.raw,
         })
@@ -208,7 +209,7 @@ impl App {
         }
     }
 
-    /// Show the entry's page with its cursor and scroll.
+    /// Show the entry's page with its cursor (by source byte) and scroll.
     pub(super) fn restore(&mut self, e: &Entry) -> Result<(), String> {
         match &e.page {
             PageRef::File(path) => {
@@ -226,9 +227,26 @@ impl App {
             self.set_sidebar_mode(m);
         }
         self.relayout_raw(e.raw);
-        self.cursor.row = e.cursor_row.min(self.last_row());
-        self.set_col(e.cursor_col);
-        self.scroll = e.scroll.min(self.max_scroll());
+        // The layout may differ from when the entry was made (resize,
+        // sidebar width): place the cursor by its source byte, at the same
+        // screen row.
+        let old = super::Cursor {
+            row: e.cursor_row,
+            col: e.cursor_col,
+        };
+        match self.reanchor(old, e.anchor) {
+            Some(c) if c != old => {
+                self.cursor = c;
+                self.want_col = c.col;
+                let screen_row = e.cursor_row.saturating_sub(e.scroll);
+                self.scroll = c.row.saturating_sub(screen_row).min(self.max_scroll());
+            }
+            _ => {
+                self.cursor.row = e.cursor_row.min(self.last_row());
+                self.set_col(e.cursor_col);
+                self.scroll = e.scroll.min(self.max_scroll());
+            }
+        }
         self.keep_visible();
         Ok(())
     }

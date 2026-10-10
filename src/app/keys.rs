@@ -10,8 +10,9 @@ use super::launch::{LeaderMatch, match_leader};
 use super::sidebar::{self, SidebarAction};
 use super::{App, Focus, Mode};
 
-/// Cap on a typed count, so `n as isize` never wraps negative.
-const MAX_COUNT: usize = 1_000_000;
+/// Cap on a typed count (and an operator's count product), so `n as
+/// isize` never wraps negative and counted motions stay bounded.
+pub(super) const MAX_COUNT: usize = 1_000_000;
 
 /// Everything a key can do. `Option<usize>` is the typed count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,7 +391,9 @@ impl App {
             A::SearchCommit => self.search_commit(),
             A::SearchCancel => self.search_cancel(),
             A::SetMark(c) => self.set_mark(c),
-            A::GotoMark(c) => self.goto_mark(c),
+            A::GotoMark(c) => {
+                self.goto_mark(c);
+            }
             A::Visual(a) => self.visual_action(a),
             A::Launch(i) => self.launch_index(i),
             A::NoMapping => self.set_status("No mapping"),

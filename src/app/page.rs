@@ -10,6 +10,10 @@ use super::{App, Cursor, Mode, Page};
 use crate::doc::{self, Document};
 use crate::render::{self, RenderedPage, SrcMap};
 
+/// A layout-independent position: a source byte and whether it was taken
+/// from a nearby row because the position was on a blank one.
+pub(super) type Anchor = (usize, bool);
+
 impl App {
     /// Load and render `path`, cursor to the top. An I/O error is returned;
     /// a binary file leaves the current page unchanged and sets the status.
@@ -102,40 +106,70 @@ impl App {
         };
     }
 
-    /// Where the cursor is, as a source byte: `(byte, fallback)` where
-    /// `fallback` means the cursor was on a blank row and `byte` comes from
-    /// the nearest row with text.
-    pub(super) fn cursor_anchor(&self) -> Option<(usize, bool)> {
+    /// Where the cursor is, as a source byte (see [`App::anchor_at`]).
+    pub(super) fn cursor_anchor(&self) -> Option<Anchor> {
+        self.anchor_at(self.cursor)
+    }
+
+    /// Where `c` is, as a source byte: `(byte, fallback)` where `fallback`
+    /// means `c` was on a blank row and `byte` comes from the nearest row
+    /// with text.
+    pub(super) fn anchor_at(&self, c: Cursor) -> Option<Anchor> {
         let p = self.page.as_ref()?;
         let map = &p.rendered.srcmap;
-        if let Some(b) = map.source_at(self.cursor.row, self.cursor.col) {
+        if let Some(b) = map.source_at(c.row, c.col) {
             return Some((b, false));
         }
         let n = p.rendered.lines.len();
-        (0..self.cursor.row)
+        (0..c.row)
             .rev()
-            .chain(self.cursor.row + 1..n)
+            .chain(c.row + 1..n)
             .find_map(|r| map.source_at(r, 0))
             .map(|b| (b, true))
     }
 
+    /// Row and (unsnapped) column of an anchor on the current layout.
+    fn anchor_row_col(&self, (byte, fallback): Anchor) -> Option<(usize, usize)> {
+        let map = &self.page.as_ref()?.rendered.srcmap;
+        let row = map.row_for(byte)?;
+        Some((row, if fallback { 0 } else { col_for(map, byte) }))
+    }
+
+    /// The position of an anchor from [`App::anchor_at`] on the current
+    /// layout, on a grapheme boundary.
+    pub(super) fn anchor_cursor(&self, anchor: Anchor) -> Option<Cursor> {
+        let (row, col) = self.anchor_row_col(anchor)?;
+        Some(Cursor {
+            row,
+            col: self.snap_col(row, col),
+        })
+    }
+
+    /// Where `old`, which was at `anchor` before a re-layout, is now:
+    /// `old` itself when it still maps to `anchor` (the layout did not move
+    /// it; exact on blank rows too), else the anchor's new position.
+    pub(super) fn reanchor(&self, old: Cursor, anchor: Option<Anchor>) -> Option<Cursor> {
+        let a = anchor?;
+        if self.anchor_at(old) == Some(a) {
+            return Some(old);
+        }
+        self.anchor_cursor(a)
+    }
+
     /// Put the cursor back on an anchor from [`App::cursor_anchor`].
-    pub(super) fn restore_anchor(&mut self, anchor: Option<(usize, bool)>) {
-        if let (Some((byte, fallback)), Some(p)) = (anchor, &self.page) {
-            let map = &p.rendered.srcmap;
-            if let Some(row) = map.row_for(byte) {
-                let col = if fallback { 0 } else { col_for(map, byte) };
-                self.cursor.row = row;
-                self.want_col = col;
-            }
+    pub(super) fn restore_anchor(&mut self, anchor: Option<Anchor>) {
+        if let Some((row, col)) = anchor.and_then(|a| self.anchor_row_col(a)) {
+            self.cursor.row = row;
+            self.want_col = col;
         }
         self.set_col(self.want_col);
     }
 
-    /// Re-render for a new terminal size, keeping the cursor on the same
-    /// source byte.
+    /// Re-render for a new terminal size, keeping the cursor and the visual
+    /// selections (active and `gv`) on the same source bytes.
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let anchor = self.cursor_anchor();
+        let visual = self.visual_anchors();
         self.size = (cols, rows);
         if let Some(p) = &self.page {
             let rendered = self.render_page(&p.doc, p.raw, p.fm_expanded);
@@ -146,6 +180,7 @@ impl App {
         self.rebuild_rows();
         self.refresh_search();
         self.restore_anchor(anchor);
+        self.restore_visual_anchors(visual);
         self.keep_visible();
     }
 }
