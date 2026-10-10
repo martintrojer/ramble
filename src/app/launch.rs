@@ -167,17 +167,6 @@ impl App {
         }
     }
 
-    /// The command launcher `i` would run, or why it is unavailable.
-    pub fn launch_command(&self, name: &str) -> Result<LaunchCommand, String> {
-        let l = self
-            .config
-            .launch
-            .iter()
-            .find(|l| l.name == name)
-            .ok_or_else(|| format!("No launcher named {name}"))?;
-        self.build_launch(l)
-    }
-
     fn build_launch(&self, l: &Launcher) -> Result<LaunchCommand, String> {
         let vars = self.launch_vars();
         let unavailable = |why: &str| format!("{}: unavailable: {why}", l.name);

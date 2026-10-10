@@ -620,12 +620,7 @@ impl App {
     /// launcher runner (TUI suspended), and return what it leaves. `Err`
     /// says why nothing came back.
     pub(super) fn edit_in_editor(&mut self, initial: &str) -> Result<String, String> {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let file =
-            std::env::temp_dir().join(format!("ramble-comment-{}-{nanos}.md", std::process::id()));
-        std::fs::write(&file, initial).map_err(|e| e.to_string())?;
+        let file = write_private_temp(initial).map_err(|e| e.to_string())?;
         let mut argv = editor_words(self.env.as_ref());
         argv.push(file.display().to_string());
         let cwd = self
@@ -644,6 +639,40 @@ impl App {
             Ok(Exit::Code(n)) => Err(format!("exited with status {n}")),
             Ok(Exit::Signal(n)) => Err(format!("killed by signal {n}")),
             Err(e) => Err(format!("{e:#}")),
+        }
+    }
+}
+
+/// Create a fresh `ramble-comment-*.md` in the temp dir holding `text`:
+/// exclusively (never follows or reuses an existing file) and, on unix,
+/// readable by the owner only.
+fn write_private_temp(text: &str) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let mut attempt = 0u32;
+    loop {
+        let file = std::env::temp_dir().join(format!(
+            "ramble-comment-{}-{nanos}-{attempt}.md",
+            std::process::id()
+        ));
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+        match opts.open(&file) {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(text.as_bytes()) {
+                    let _ = std::fs::remove_file(&file);
+                    return Err(e);
+                }
+                return Ok(file);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 100 => {
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
         }
     }
 }

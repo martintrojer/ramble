@@ -19,8 +19,8 @@ const SEL_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 /// Draw the open picker; returns its box and item list.
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     let p = app.picker()?;
-    let width = area.width.saturating_sub(4).clamp(1, 80);
-    let height = area.height.saturating_sub(2).clamp(1, 20);
+    let width = area.width.saturating_sub(4).clamp(1, 80).min(area.width);
+    let height = area.height.saturating_sub(2).clamp(1, 20).min(area.height);
     let rect = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,

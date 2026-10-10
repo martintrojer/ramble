@@ -116,7 +116,13 @@ impl App {
             "q" | "qa" | "quit" => self.quit_checked(),
             "e" | "edit" | "Refresh" if arg.is_empty() => self.refresh(),
             "e" | "edit" => {
-                let path = self.link_dir().join(arg);
+                let path = match arg.strip_prefix("~/") {
+                    Some(rest) => match (self.env)("HOME") {
+                        Some(home) => std::path::PathBuf::from(home).join(rest),
+                        None => self.link_dir().join(arg),
+                    },
+                    None => self.link_dir().join(arg),
+                };
                 self.open_path_at(&path, None);
             }
             "Notes" => self.open_op(Op::Notes, None),

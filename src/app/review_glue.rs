@@ -271,10 +271,6 @@ impl App {
         }
     }
 
-    pub fn review_markers(&self) -> &Markers {
-        &self.review.markers
-    }
-
     fn current_marks(&self) -> Option<&FileMarks> {
         let path = self.page.as_ref()?.path.as_deref()?;
         self.review.markers.get(path)
@@ -422,11 +418,6 @@ impl App {
         rows.sort_unstable();
         rows.dedup();
         rows
-    }
-
-    /// Whether the gutter marks rendered `row`.
-    pub fn review_row_marked(&self, row: usize) -> bool {
-        self.review_marked_rows().binary_search(&row).is_ok()
     }
 
     /// Rows `]r` / `[r` stop on: the first row of each comment, in order.
