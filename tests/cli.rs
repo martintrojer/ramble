@@ -374,12 +374,13 @@ fn file_arg_beats_stdin_end_to_end() {
         .spawn()
         .unwrap();
     use std::io::Write;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"# from stdin\n")
-        .unwrap();
+    // ramble never reads stdin when a file is given, so it may exit before
+    // this write lands: tolerate BrokenPipe, still assert on the output.
+    match child.stdin.take().unwrap().write_all(b"# from stdin\n") {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(e) => panic!("write to stdin: {e}"),
+    }
     let out = child.wait_with_output().unwrap();
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("from file") && !s.contains("from stdin"), "{s}");

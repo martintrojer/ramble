@@ -100,9 +100,19 @@ fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
     // The pages have no zk/marksman marker, so mdroots serves them: its
     // cache goes to a temp dir, never the user's.
     let cache = tempfile::tempdir().unwrap();
+    // XDG_* point into the temp home too, so the user's real
+    // `$XDG_CONFIG_HOME/ramble/config.toml` can't leak into the run.
+    let xdg = |name: &str| {
+        let d = home.join(name.to_lowercase());
+        std::fs::create_dir_all(&d).unwrap();
+        quote(&d)
+    };
     let shell_cmd = format!(
-        "env HOME={} MDROOTS_CACHE_DIR={} {} {}",
+        "env HOME={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {}",
         quote(&home),
+        xdg("XDG_CONFIG_HOME"),
+        xdg("XDG_DATA_HOME"),
+        xdg("XDG_CACHE_HOME"),
         quote(cache.path()),
         quote(Path::new(env!("CARGO_BIN_EXE_ramble"))),
         quote(doc)
