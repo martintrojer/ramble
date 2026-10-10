@@ -290,3 +290,69 @@ fn gv_over_greek_and_ascii_keeps_its_source_text_when_widened() {
     keys(&mut app, "gvy");
     assert_eq!(clip.last().as_deref(), Some("iota kappa lambda"));
 }
+
+#[test]
+fn active_selection_with_its_cursor_on_a_blank_row_keeps_its_source_text_across_a_resize() {
+    // (keys, what `y` copies): cursor on the blank separator below "tau"
+    // (anchor on "tau"), and above "Tail." (anchor on "T", after `o`).
+    for (k, sel) in [("/tau\nvj", "tau"), ("/Tail\nkvjo", "T")] {
+        {
+            let (_d, mut app, clip) = app(&src(), 30);
+            keys(&mut app, k);
+            keys(&mut app, "y");
+            assert_eq!(clip.last().as_deref(), Some(sel), "control {k:?}");
+        }
+        for (from, to) in WIDTHS.into_iter().chain([(30, 30)]) {
+            let (_d, mut app, clip) = app(&src(), from);
+            keys(&mut app, k);
+            app.resize(to, ROWS);
+            keys(&mut app, "y");
+            assert_eq!(clip.last().as_deref(), Some(sel), "{k:?} {from} -> {to}");
+        }
+    }
+}
+
+/// [`MIXED`] with a tab, which a paragraph draws as one space.
+fn mixed_tab_src() -> String {
+    mixed_src().replace("テキスト alpha", "テキスト\talpha")
+}
+
+#[test]
+fn selections_after_a_collapsed_tab_keep_their_source_text_across_a_resize() {
+    for (to_word, _, sel) in MIXED_CASES {
+        let sel = sel.replace("テキスト alpha", "テキスト\talpha");
+        for (from, to) in WIDTHS {
+            {
+                let (_d, mut app, clip) = app(&mixed_tab_src(), from);
+                keys(&mut app, to_word);
+                keys(&mut app, "veee");
+                app.resize(to, ROWS);
+                keys(&mut app, "y");
+                assert_eq!(clip.last(), Some(sel.clone()), "active {from} -> {to}");
+            }
+            let (_d, mut app, clip) = app(&mixed_tab_src(), from);
+            keys(&mut app, to_word);
+            keys(&mut app, "veee");
+            app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            app.resize(to, ROWS);
+            keys(&mut app, "gggvy");
+            assert_eq!(clip.last(), Some(sel.clone()), "gv {from} -> {to}");
+        }
+    }
+}
+
+#[test]
+fn cursor_after_a_collapsed_tab_stays_on_its_grapheme_across_a_resize() {
+    for (to_word, word, _) in MIXED_CASES {
+        for (from, to) in WIDTHS {
+            let (_d, mut app, clip) = app(&mixed_tab_src(), from);
+            keys(&mut app, to_word);
+            keys(&mut app, "vey");
+            assert_eq!(clip.last().as_deref(), Some(word), "before {from}");
+            keys(&mut app, to_word);
+            app.resize(to, ROWS);
+            keys(&mut app, "vey");
+            assert_eq!(clip.last().as_deref(), Some(word), "{from} -> {to}");
+        }
+    }
+}

@@ -1,5 +1,6 @@
 //! Loading documents and laying them out at the current width.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -210,51 +211,62 @@ pub(super) fn row_segments(map: &SrcMap, row: usize) -> &[Segment] {
     &map.segments[lo..hi]
 }
 
-/// Columns a source grapheme takes when drawn as text (see
-/// `render::push_grapheme`): a tab four, other control characters one.
-fn drawn_width(g: &str) -> usize {
-    if g == "\t" {
-        4
-    } else if g.chars().any(char::is_control) {
-        1
-    } else {
-        g.width()
-    }
+/// One source grapheme of a segment and the columns it is drawn on.
+pub(super) struct Drawn {
+    pub(super) src: Range<usize>,
+    pub(super) col: usize,
+    pub(super) w: usize,
 }
 
-/// Start byte and column of each source grapheme of `s`, when they add
-/// up to its drawn width (the text is drawn as is); `None` when the drawn
-/// text differs from the source (escapes, entities, math).
-fn grapheme_cols(s: &Segment, source: &str) -> Option<Vec<(usize, usize)>> {
-    let text = source.get(s.src.clone())?;
-    let mut col = s.span.col_start;
-    let mut out = Vec::new();
-    for (i, g) in text.grapheme_indices(true) {
-        let w = drawn_width(g);
-        if w > 0 {
-            out.push((s.src.start + i, col));
+/// The source graphemes of `seg` with their columns, when the segment
+/// draws its source one grapheme per cell as the renderer does: verbatim
+/// (tabs as four columns, control characters as one) or as prose, where
+/// each whitespace grapheme is collapsed to one space. `None` when neither
+/// adds up to the span (converted math, markers): callers then scale.
+pub(super) fn drawn_graphemes(src: &str, seg: &Segment) -> Option<Vec<Drawn>> {
+    let text = src.get(seg.src.clone())?;
+    let layout = |collapsed: bool| {
+        let mut col = seg.span.col_start;
+        let mut out = Vec::new();
+        for (i, g) in text.grapheme_indices(true) {
+            let w = if collapsed && g.chars().all(char::is_whitespace) {
+                1
+            } else if g == "\t" {
+                4
+            } else if g.chars().any(char::is_control) {
+                1
+            } else {
+                g.width()
+            };
+            let start = seg.src.start + i;
+            out.push(Drawn {
+                src: start..start + g.len(),
+                col,
+                w,
+            });
+            col += w;
         }
-        col += w;
-    }
-    (col == s.span.col_end).then_some(out)
+        (col == seg.span.col_end).then_some(out)
+    };
+    layout(false).or_else(|| layout(true))
 }
 
 /// The source byte drawn at (`row`, `col`): exactly the grapheme there
-/// when the segment's graphemes add up to its width, else
-/// [`SrcMap::source_at`]'s scaled estimate.
+/// when the segment draws its source grapheme by grapheme (see
+/// [`drawn_graphemes`]), else [`SrcMap::source_at`]'s scaled estimate.
 fn source_at(map: &SrcMap, source: &str, row: usize, col: usize) -> Option<usize> {
     let exact = row_segments(map, row)
         .iter()
         .find(|s| (s.span.col_start..s.span.col_end).contains(&col))
-        .and_then(|s| grapheme_cols(s, source))
-        .and_then(|gs| gs.into_iter().rev().find(|&(_, c)| c <= col))
-        .map(|(b, _)| b);
+        .and_then(|s| drawn_graphemes(source, s))
+        .and_then(|gs| gs.into_iter().find(|g| (g.col..g.col + g.w).contains(&col)))
+        .map(|g| g.src.start);
     exact.or_else(|| map.source_at(row, col))
 }
 
 /// Screen column of `byte` on the first segment drawn at or after it:
-/// the column of the grapheme holding it, exactly when the segment's
-/// graphemes add up to its width, else scaled.
+/// the column of the grapheme holding it, exactly when the segment draws
+/// its source grapheme by grapheme, else scaled.
 fn col_for(map: &SrcMap, source: &str, byte: usize) -> usize {
     let Some(s) = map.segments.iter().find(|s| s.src.end > byte) else {
         return 0;
@@ -262,12 +274,12 @@ fn col_for(map: &SrcMap, source: &str, byte: usize) -> usize {
     if byte <= s.src.start {
         return s.span.col_start;
     }
-    if let Some(gs) = grapheme_cols(s, source) {
+    if let Some(gs) = drawn_graphemes(source, s) {
         return gs
             .iter()
             .rev()
-            .find(|&&(b, _)| b <= byte)
-            .map_or(s.span.col_start, |&(_, c)| c);
+            .find(|g| g.w > 0 && g.src.start <= byte)
+            .map_or(s.span.col_start, |g| g.col);
     }
     let cols = s.span.col_end - s.span.col_start;
     let len = (s.src.end - s.src.start).max(1);

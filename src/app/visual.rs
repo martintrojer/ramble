@@ -79,10 +79,13 @@ struct SelectionAnchors {
 }
 
 /// The visual selections as source anchors: the active selection's anchor
-/// (the cursor is anchored by the caller) and the `gv` selection.
+/// and cursor (with the cursor's position before the re-layout: the
+/// caller's normal-mode restore moves it off a blank row) and the `gv`
+/// selection.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct VisualAnchors {
     active: Option<Anchor>,
+    cursor: Option<(Cursor, Option<Anchor>)>,
     last: Option<SelectionAnchors>,
 }
 
@@ -366,6 +369,9 @@ impl App {
             active: self
                 .visual_kind()
                 .and_then(|_| self.anchor_at(self.visual.anchor)),
+            cursor: self
+                .visual_kind()
+                .map(|_| (self.cursor, self.anchor_at(self.cursor))),
             last: self.visual.last.map(|s| SelectionAnchors {
                 kind: s.kind,
                 anchor: self.anchor_at(s.anchor),
@@ -387,6 +393,10 @@ impl App {
         };
         if self.visual_kind().is_some() {
             self.visual.anchor = place(self, self.visual.anchor, a.active);
+            if let Some((old, anchor)) = a.cursor {
+                self.cursor = place(self, old, anchor);
+                self.want_col = self.cursor.col;
+            }
         }
         if let (Some(s), Some(sa)) = (self.visual.last, a.last) {
             self.visual.last = Some(Selection {
