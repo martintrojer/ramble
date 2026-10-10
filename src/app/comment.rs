@@ -5,7 +5,8 @@
 //! the body: Enter saves, `C-j` / `Alt-Enter` insert a newline, Esc
 //! cancels, `C-e` moves it into the editor, Tab / S-Tab pick the kind
 //! from `[review] kinds`, readline keys edit it (see [`super::textbox`]),
-//! PageUp / PageDown and the wheel scroll the page behind it. The rows
+//! PageUp / PageDown and the wheel scroll the page behind it (the box
+//! then places itself for that view, see [`App::comment_fit`]). The rows
 //! stay highlighted while typing. Comments go to the
 //! debrief-review batch for the page's repo root.
 
@@ -47,6 +48,8 @@ pub enum CommentAction {
     Kind(bool),
     /// `C-j`, `Alt-Enter`: a line break at the cursor.
     Newline,
+    /// PageDown (true) / PageUp: scroll the page behind the box a page.
+    Page(bool),
 }
 
 /// A comment being typed: where it goes, frozen at `c`.
@@ -65,6 +68,9 @@ pub(super) struct Draft {
     /// The view's scroll when the box last fitted it (tells which way the
     /// user scrolls).
     view: usize,
+    /// The user scrolled the page since the box opened: the view stays
+    /// where they put it ([`App::comment_fit`]).
+    scrolled: bool,
 }
 
 /// The comment box as drawn: where, its border titles, the visible text
@@ -106,9 +112,10 @@ fn wrap_width(w: u16) -> usize {
 /// screen rows `lo..=hi` (relative to the pane's top, may lie outside it)
 /// in a pane `ph` rows high: below the rows, else above them, else on the
 /// roomier side, shrunk to fit (at least one text row), else at the
-/// bottom ([`fit_scroll`] scrolls the view so this only happens in a pane
-/// too short for the box and a row). Rows scrolled off pin the box to that
-/// edge.
+/// bottom ([`fit_scroll`] scrolls the view so before the user scrolls
+/// this only happens in a pane too short for the box and a row; after,
+/// also when the selection leaves no room). Rows scrolled off pin the box
+/// to that edge.
 pub(super) fn place(lo: i64, hi: i64, h: u16, ph: u16) -> (u16, u16) {
     let (h, ph64) = (h.min(ph), i64::from(ph));
     let hh = i64::from(h);
@@ -144,8 +151,8 @@ fn fits(lo: i64, hi: i64, h: u16, ph: u16) -> bool {
     got >= h.min(ph.saturating_sub(1)) && !covers
 }
 
-/// The scroll (at most `max`) for a box `h` rows high and the selected
-/// rows `lo..=hi` in a pane `ph` high: `s` when the box fits there
+/// Until the user scrolls, the scroll (at most `max`) for a box `h` rows
+/// high and the selected rows `lo..=hi` in a pane `ph` high: `s` when the box fits there
 /// ([`fits`]; rows scrolled off fit); after a scroll by the user, the
 /// next scroll that way (`dir` above 0 down, below 0 up) where it does
 /// with the last selected row on screen; else the nearest such. A selection
@@ -182,6 +189,61 @@ pub(super) fn fit_scroll(
     })
 }
 
+/// The scroll after the user scrolled the view to `s` (at most `max`,
+/// `dir` above 0 down, below 0 up; `n` rows in all): `s` when [`place`]
+/// puts the box off the selected rows on screen (beside them, or shrunk
+/// into the rows that are not selected) with a row left beside it for
+/// the cursor, or the selection fills the pane (the box then at the
+/// bottom over it); else (a selection edge 1-2 rows from the pane's edge
+/// leaving no room for a box, or the box over the last rows of a view
+/// scrolled past the end) the nearest scroll that way where one of
+/// those holds (the other way at the end).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn user_scroll(
+    lo: usize,
+    hi: usize,
+    h: u16,
+    ph: u16,
+    s: usize,
+    max: usize,
+    dir: i8,
+    n: usize,
+) -> usize {
+    let ok = |t: usize| {
+        let fills = lo <= t && hi + 1 >= t + usize::from(ph);
+        let shown = usize::from(ph).min(n.saturating_sub(t));
+        let (lo, hi) = (lo as i64 - t as i64, hi as i64 - t as i64);
+        let (y, got) = place(lo, hi, h, ph);
+        let free = off_the_box(0, y, got, shown).is_some_and(|r| r < shown);
+        let (y, end) = (i64::from(y), i64::from(y) + i64::from(got));
+        fills || (free && !(lo.max(0) < end && y <= hi.min(i64::from(ph) - 1)))
+    };
+    let reach = usize::from(ph);
+    let down = || (s..=max.min(s + reach)).find(|&t| ok(t));
+    let up = || (s.saturating_sub(reach)..=s).rev().find(|&t| ok(t));
+    let found = if dir < 0 {
+        up().or_else(down)
+    } else {
+        down().or_else(up)
+    };
+    found.unwrap_or(s)
+}
+
+/// The row nearest screen row `row` (of the `n` holding rows) outside the
+/// box at rows `y..y + h`, above it on a tie; `None` when there is none.
+fn off_the_box(row: usize, y: u16, h: u16, n: usize) -> Option<usize> {
+    let (y, end) = (usize::from(y), usize::from(y) + usize::from(h));
+    if row < y || row >= end {
+        return Some(row);
+    }
+    let above = y.checked_sub(1);
+    let below = (end < n).then_some(end);
+    match (above, below) {
+        (Some(a), Some(b)) => Some(if row - a <= b - row { a } else { b }),
+        (a, b) => a.or(b),
+    }
+}
+
 /// Pasted text for the box: CRLF and CR as LF, a tab as a space, other
 /// control characters dropped.
 fn paste_text(text: &str) -> String {
@@ -203,8 +265,8 @@ pub(super) fn comment_keymap(keys: &[KeyEvent]) -> KeyResult {
         return KeyResult::None;
     };
     match key.code {
-        KeyCode::PageDown => return KeyResult::Action(Action::PageDown),
-        KeyCode::PageUp => return KeyResult::Action(Action::PageUp),
+        KeyCode::PageDown => return KeyResult::Action(Action::Comment(CommentAction::Page(true))),
+        KeyCode::PageUp => return KeyResult::Action(Action::Comment(CommentAction::Page(false))),
         _ => {}
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -344,8 +406,13 @@ impl App {
         }
     }
 
-    /// Scroll the page so the box covers none of the commented rows on
-    /// screen ([`fit_scroll`]), keeping the cursor in the view.
+    /// Until the user scrolls, scroll the page so the box covers none of
+    /// the commented rows on screen ([`fit_scroll`]). After PageUp /
+    /// PageDown or the wheel the view stays where the user put it
+    /// ([`user_scroll`]) and [`place`] puts the box beside the rows on
+    /// screen, or in the unselected rows, or (the selection filling the
+    /// pane) at the bottom over the rows. The cursor stays in the view,
+    /// off the box.
     pub(super) fn comment_fit(&mut self) {
         let (w, ph) = (self.comment_pane_width(), self.viewport_height() as u16);
         let Some((lo, hi)) = self.comment_rows() else {
@@ -358,12 +425,28 @@ impl App {
         }
         let h = box_height(d, w);
         let dir = self.scroll.cmp(&d.view) as i8;
-        let s = fit_scroll(lo, hi, h, ph, self.scroll, max, dir);
+        let n = self.rows.len();
+        let s = if d.scrolled {
+            user_scroll(lo, hi, h, ph, self.scroll, max, dir, n)
+        } else {
+            fit_scroll(lo, hi, h, ph, self.scroll, max, dir)
+        };
         d.view = s;
-        if s != self.scroll {
-            self.scroll = s;
-            let row = self.cursor.row.clamp(s, s + usize::from(ph) - 1);
+        self.scroll = s;
+        let (y, bh) = place(lo as i64 - s as i64, hi as i64 - s as i64, h, ph);
+        let on = self.cursor.row.clamp(s, s + usize::from(ph) - 1) - s;
+        let shown = usize::from(ph).min(n.saturating_sub(s));
+        let row = s + off_the_box(on, y, bh, shown).unwrap_or(on);
+        if row != self.cursor.row {
             self.move_to_row(row);
+        }
+    }
+
+    /// The user scrolled the page behind the box (PageUp / PageDown, the
+    /// wheel): from now on the view stays where they put it.
+    pub(super) fn comment_scrolled(&mut self) {
+        if let Some(d) = &mut self.comment {
+            d.scrolled = true;
         }
     }
 
@@ -411,6 +494,14 @@ impl App {
                 }
             }
             CommentAction::Kind(forward) => self.comment_cycle_kind(forward),
+            CommentAction::Page(down) => {
+                if down {
+                    self.page_down();
+                } else {
+                    self.page_up();
+                }
+                self.comment_scrolled();
+            }
             CommentAction::Cancel => {
                 self.comment_end();
             }
@@ -475,6 +566,7 @@ impl App {
             kind: None,
             scroll: Cell::new(0),
             view: self.scroll,
+            scrolled: false,
         });
         self.status.clear();
         self.mode = Mode::Comment;
@@ -518,6 +610,7 @@ impl App {
                 kind,
                 scroll: Cell::new(0),
                 view: 0,
+                scrolled: false,
             }),
             Err(e) => self.set_status(format!("editor: {e}; comment not saved")),
         }
@@ -557,7 +650,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_scroll, paste_text, place};
+    use super::{fit_scroll, off_the_box, paste_text, place, user_scroll};
 
     #[test]
     fn place_below_else_above_never_over_the_rows() {
@@ -595,6 +688,39 @@ mod tests {
         assert_eq!(fit_scroll(7, 7, 3, 3, 6, 90, 0), 7);
         // Scrolled off: the box pins to the edge, the view stays.
         assert_eq!(fit_scroll(7, 7, 3, 5, 9, 90, 1), 9);
+    }
+
+    #[test]
+    fn a_user_scroll_stays_unless_the_box_has_no_room() {
+        // Rows 0..=49 at scroll 10 in an 11-row pane: they fill it.
+        assert_eq!(user_scroll(0, 49, 3, 11, 10, 90, -1, 100), 10);
+        // Rows 20..=59 at scroll 15: the box above them, the scroll kept.
+        assert_eq!(user_scroll(20, 59, 3, 11, 15, 90, -1, 100), 15);
+        // Rows 20..=59 at scroll 51: 2 free rows below, too few. Down
+        // opens a third; up, the rows fill the pane at 49.
+        assert_eq!(user_scroll(20, 59, 3, 11, 51, 90, 1, 100), 52);
+        assert_eq!(user_scroll(20, 59, 3, 11, 51, 90, -1, 100), 49);
+        // A 6-row box shrinks into the 3 free rows (a text row).
+        assert_eq!(user_scroll(20, 59, 6, 11, 51, 90, 1, 100), 52);
+        // At the end of the diff, back the other way.
+        assert_eq!(user_scroll(20, 59, 3, 11, 51, 51, 1, 100), 49);
+        // Scrolled off: pinned to the edge, kept.
+        assert_eq!(user_scroll(20, 29, 3, 11, 40, 90, 1, 100), 40);
+        // Past the end, the box over all 3 rows still shown: back one,
+        // a row left for the cursor.
+        assert_eq!(user_scroll(20, 29, 3, 11, 97, 97, 1, 100), 96);
+    }
+
+    #[test]
+    fn the_cursor_moves_off_the_box_to_the_nearest_free_row() {
+        assert_eq!(off_the_box(2, 5, 3, 10), Some(2), "not under it");
+        assert_eq!(off_the_box(5, 5, 3, 10), Some(4), "above");
+        assert_eq!(off_the_box(7, 5, 3, 10), Some(8), "below");
+        assert_eq!(off_the_box(6, 5, 3, 10), Some(4), "a tie: above");
+        assert_eq!(off_the_box(9, 7, 3, 10), Some(6), "box at the bottom");
+        assert_eq!(off_the_box(0, 0, 3, 10), Some(3), "box at the top");
+        assert_eq!(off_the_box(1, 0, 3, 3), None, "box fills the pane");
+        assert_eq!(off_the_box(8, 7, 3, 9), Some(6), "no row below it");
     }
 
     #[test]

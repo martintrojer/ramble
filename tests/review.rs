@@ -1631,3 +1631,91 @@ fn an_overlay_sidebar_after_a_narrow_resize_leaves_the_box_drawn() {
     assert!(body.contains("│draft"), "draft drawn: {body}");
     assert_eq!(cur, (bx.rect.x + 6, bx.rect.y + 1), "cursor in the box");
 }
+
+/// The box after a scroll, at `w`x`h`: off every selected row on screen
+/// unless rows `lo..=hi` fill the pane (then at its bottom); the cursor
+/// on screen and off the box. The scroll.
+fn check_after_scroll(app: &App, w: u16, h: u16, lo: usize, hi: usize) -> usize {
+    let (_, bx, _) = draw_box(app, w, h);
+    let bx = bx.unwrap();
+    let (s, ph) = (app.scroll(), usize::from(h - 1));
+    if lo <= s && hi + 1 >= s + ph {
+        assert_eq!(bx.rect.bottom(), h - 1, "filled: at the bottom");
+    } else {
+        assert!(
+            off_the_rows(app, &bx, lo, hi),
+            "scroll {s}: {:?} over rows {lo}..={hi}",
+            bx.rect
+        );
+    }
+    let cur = app.cursor().row;
+    assert!((s..s + ph).contains(&cur), "cursor {cur} on screen at {s}");
+    let y = (cur - s) as u16;
+    assert!(
+        y < bx.rect.y || y >= bx.rect.bottom(),
+        "cursor {cur} under {:?} at {s}",
+        bx.rect
+    );
+    s
+}
+
+#[test]
+fn page_up_and_the_wheel_scroll_a_selection_taller_than_the_screen() {
+    let repo = Repo::new();
+    // 47 and 50 rows at 100x24 (the reviewer's PageUp cases), 21 rows
+    // at 100x24 and 40 at 60x12 for the wheel.
+    for (w, h, lo, hi, wheel) in [
+        (100, 24, 40, 86, false),
+        (100, 24, 40, 89, false),
+        (100, 24, 40, 60, true),
+        (100, 24, 40, 89, true),
+        (60, 12, 20, 59, true),
+    ] {
+        let mut app = raw_lines(&repo, 100, w, h);
+        keys(&mut app, &format!("{}GV{}Gc", lo + 1, hi + 1));
+        assert_eq!(app.mode(), Mode::Comment, "{}", app.status());
+        assert_eq!(app.comment_rows(), Some((lo, hi)));
+        let up = |app: &mut App| {
+            if wheel {
+                let m = MouseEvent {
+                    kind: MouseEventKind::ScrollUp,
+                    column: 40,
+                    row: 1,
+                    modifiers: KeyModifiers::NONE,
+                };
+                app.event(AppEvent::Mouse(m, Instant::now()));
+            } else {
+                send(app, key(KeyCode::PageUp));
+            }
+        };
+        let mut s = check_after_scroll(&app, w, h, lo, hi);
+        // Up to the top of the page: every step moves the view.
+        while s > 0 {
+            up(&mut app);
+            let t = check_after_scroll(&app, w, h, lo, hi);
+            assert!(t < s, "{w}x{h} {lo}..={hi} wheel {wheel}: {s} -> {t}");
+            s = t;
+        }
+        assert_eq!(app.mode(), Mode::Comment);
+    }
+}
+
+#[test]
+fn page_down_walks_a_tall_selection_back_with_the_box_off_its_rows() {
+    let repo = Repo::new();
+    for h in [6, 8, 12] {
+        for (lo, hi) in [(0, 99), (20, 59), (10, 30)] {
+            let mut app = raw_lines(&repo, 100, 60, h);
+            keys(&mut app, &format!("{}GV{}Gc", lo + 1, hi + 1));
+            let mut seen = vec![check_after_scroll(&app, 60, h, lo, hi)];
+            let pages = std::iter::repeat_n(KeyCode::PageUp, 24);
+            for k in pages.chain(std::iter::repeat_n(KeyCode::PageDown, 48)) {
+                send(&mut app, key(k));
+                seen.push(check_after_scroll(&app, 60, h, lo, hi));
+            }
+            assert_eq!(seen[24], 0, "h {h} rows {lo}..={hi}: {seen:?}");
+            let end = *seen.last().unwrap();
+            assert!(end >= seen[0], "h {h} rows {lo}..={hi}: {seen:?}");
+        }
+    }
+}

@@ -286,6 +286,7 @@ impl App {
                             self.line_up();
                         }
                     }
+                    self.comment_scrolled();
                     self.keep_visible();
                 }
             }
