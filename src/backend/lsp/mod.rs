@@ -360,8 +360,8 @@ impl Client {
         }))
     }
 
-    /// `textDocument/didOpen` with `languageId = "markdown"`. To reload, call
-    /// again with a higher `version`.
+    /// `textDocument/didOpen` with `languageId = "markdown"`. To reload,
+    /// [`Client::did_close`] first, then call again with a higher `version`.
     pub fn did_open(&self, path: &Path, text: &str, version: i32) -> anyhow::Result<()> {
         self.notify(
             "textDocument/didOpen",
@@ -371,6 +371,14 @@ impl Client {
                 "version": version,
                 "text": text,
             }}),
+        )
+    }
+
+    /// `textDocument/didClose`, balancing an earlier [`Client::did_open`].
+    pub fn did_close(&self, path: &Path) -> anyhow::Result<()> {
+        self.notify(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": canonical_uri(path)}}),
         )
     }
 

@@ -3,7 +3,8 @@
 //!
 //! Connects [`crate::lsp::Client`] to the app (docs/design.md § Backends): one client
 //! per (server, server root), started lazily off the UI thread; `didOpen` +
-//! `documentLink` on every open and reload; link targets, broken links
+//! `documentLink` on every open and reload, `didClose` on leaving the page
+//! (reload included); link targets, broken links
 //! (diagnostics), `gd` via documentLink / definition, and `K` hover.
 //!
 //! Every request carries a tag `(page_id << 32) | version`; a reply for
@@ -160,6 +161,9 @@ pub(super) struct LspState {
     versions: HashMap<PathBuf, i32>,
     /// Bumped on every page shown (open, follow, back/forward, reload).
     page_id: u64,
+    /// The document `didOpen` was last sent for and not closed yet: instance
+    /// name and the path sent. At most one document is open at a time.
+    open: Option<(String, PathBuf)>,
     // Per page, reset by `lsp_page_changed`.
     /// Instance name and kind for the current page.
     instance: Option<(String, Kind)>,
@@ -192,6 +196,7 @@ impl LspState {
             rx,
             versions: HashMap::new(),
             page_id: 0,
+            open: None,
             instance: None,
             version: None,
             targets: HashMap::new(),
@@ -266,14 +271,21 @@ fn definition_path(v: &Value) -> Option<PathBuf> {
 }
 
 impl App {
-    /// Called by `set_page` for every page shown: a new page id, fresh
-    /// per-page LSP state, then `didOpen` + `documentLink` (starting the
+    /// Called by `set_page` for every page shown: `didClose` for the page
+    /// left, a new page id, fresh per-page LSP state, then `didOpen` + `documentLink` (starting the
     /// server first if needed). A page no configured server selects (no
     /// root marker found) goes to mdroots instead; a selected server that
     /// is dead or missing does not fall back. Stdin pages get neither.
     pub(super) fn lsp_page_changed(&mut self) {
         self.mdroots_reset();
         let l = &mut self.lsp;
+        // Close the page being left (a reload closes and reopens it): LSP
+        // 3.17 forbids a second didOpen for a document already open.
+        if let Some((name, path)) = l.open.take()
+            && let Some(Instance::Running(client)) = l.instances.get(&name)
+        {
+            let _ = client.did_close(&path);
+        }
         l.page_id += 1;
         l.instance = None;
         l.version = None;
@@ -302,7 +314,8 @@ impl App {
     }
 
     /// Send `didOpen` (next version) and `documentLink` for the current page,
-    /// if its server is running.
+    /// if its server is running. `lsp_page_changed` sends the matching
+    /// `didClose` when the page goes.
     fn lsp_open_current(&mut self) {
         let Some(page) = &self.page else { return };
         let Some(path) = &page.path else { return };
@@ -322,6 +335,10 @@ impl App {
         );
         l.versions.insert(key, version);
         l.version = Some(version);
+        l.open = l
+            .instance
+            .as_ref()
+            .map(|(name, _)| (name.clone(), path.clone()));
         if let Ok(id) = sent {
             l.requests.push(Request {
                 id,

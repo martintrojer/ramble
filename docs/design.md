@@ -135,7 +135,7 @@ client, one process per (server, root), started lazily with the root as its
 working directory. `kind` is `zk`, `marksman` or `generic` (standard
 requests only).
 - Messages: `initialize`, `initialized`, `didOpen` (`languageId =
-  "markdown"`; resent with a new version on reload), `didClose`,
+  "markdown"`), `didClose` (on leaving a page; reload closes, then reopens),
   `documentLink`, `definition`, `hover`, `references`, `executeCommand`,
   `publishDiagnostics`, `shutdown`.
 - zk gets `zk.index` with its root after `initialized`, because it indexes
