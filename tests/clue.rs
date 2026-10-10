@@ -1,4 +1,4 @@
-//! The key clue (spec `2026-10-07-key-clue.md`): rows, timing, rendering
+//! The key clue (docs/design.md § Keys): rows, timing, rendering
 //! and the `[keys] clue` setting.
 
 use std::path::Path;

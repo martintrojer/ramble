@@ -1,4 +1,4 @@
-//! Byte offset <-> LSP position conversion, per negotiated encoding (spec R4).
+//! Byte offset <-> LSP position conversion, per negotiated encoding.
 //!
 //! Every conversion between source byte offsets and LSP positions goes
 //! through these functions. Lines are split on `'\n'` only: a trailing `'\r'`

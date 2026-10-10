@@ -1,4 +1,4 @@
-//! Launchers (spec § Launchers): `<leader>` key sequences from config that
+//! Launchers (docs/design.md § Launchers): `<leader>` key sequences from config that
 //! run a command with the TUI suspended, then reload the page.
 
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use super::{App, Effect};
 use crate::config::Launcher;
 
 /// Files or folders whose presence marks a VCS root.
-const VCS_MARKERS: [&str; 4] = [".git", ".jj", ".hg", ".sl"];
+pub const VCS_MARKERS: [&str; 4] = [".git", ".jj", ".hg", ".sl"];
 
 /// The nearest ancestor of `path` (a file or folder) holding a VCS marker.
 pub fn vcs_root(path: &Path) -> Option<PathBuf> {

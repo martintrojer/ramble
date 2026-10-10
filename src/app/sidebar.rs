@@ -1,4 +1,4 @@
-//! The sidebar (spec § Sidebar, docs/specs/2026-10-07-sidebar-layout.md):
+//! The sidebar (docs/design.md § Sidebar):
 //! visibility (`<leader>e`, narrow auto-hide), modes files / outline /
 //! split (`<leader>E`), the lazily walked file tree, the outline of the
 //! current page, focus moves (`C-w h/l/w/W/j/k/p`), the per-pane `/`
@@ -75,9 +75,9 @@ pub enum SidebarAction {
     /// `l`: expand the directory.
     Expand,
     /// `-` (and `h` on a top-level row): re-root the tree at the parent
-    /// of its root (D10).
+    /// of its root.
     RootUp,
-    /// `.` on a folder row: make that folder the tree root (D10).
+    /// `.` on a folder row: make that folder the tree root.
     RootHere,
     /// `o` / `Enter`: open a file, toggle a directory, jump to a heading.
     Open,
@@ -108,20 +108,20 @@ pub(super) struct Sidebar {
     /// The user picked a mode this session (`<leader>E`, `:Sidebar`),
     /// which stops the `auto` switching.
     manual: bool,
-    /// The user's visibility flag (D3 step 4); starts at `sidebar.show`.
-    /// With `show = "auto"` it means pinned (D11).
+    /// The user's visibility flag; starts at `sidebar.show`.
+    /// With `show = "auto"` it means pinned.
     shown: bool,
-    /// `show = "auto"`: an unpinned peek is open (D11).
+    /// `show = "auto"`: an unpinned peek is open.
     peeked: bool,
     /// Where the open peek is drawn: over the page (true) or beside it.
-    /// Decided when the peek opens and on a terminal resize (D11, P9).
+    /// Decided when the peek opens and on a terminal resize.
     overlay: bool,
     /// A visibility choice made while the terminal was narrower than
-    /// `auto_hide_below` (D3 step 2); cleared by a terminal resize.
+    /// `auto_hide_below`; cleared by a terminal resize.
     narrow_override: Option<bool>,
     /// `set_page` is laying out a page: count it as loaded.
     loading: bool,
-    /// The auto width (D5), not counting the border; see
+    /// The auto width, not counting the border; see
     /// [`App::sidebar_refit`].
     width: u16,
     focus: Focus,
@@ -156,7 +156,7 @@ impl Sidebar {
             reading,
             side: config.side,
             manual: false,
-            // `auto` starts hidden and unpinned (D11).
+            // `auto` starts hidden and unpinned.
             shown: config.show == SidebarShow::Always,
             peeked: false,
             overlay: false,
@@ -230,7 +230,7 @@ struct Node {
 /// The file tree under a root. Directories are read one level at a time,
 /// when expanded, so a root of `$HOME` costs one directory read at start.
 ///
-/// The root is a browsing view (D10): `-` and `.` move it, while
+/// The root is a browsing view: `-` and `.` move it, while
 /// `App::tree_root` (review discovery, notebook root, `yF`) never moves.
 #[derive(Debug, Clone)]
 pub struct Tree {
@@ -242,7 +242,7 @@ pub struct Tree {
     selected: Option<PathBuf>,
     /// The followed file when it lies outside the root.
     outside: Option<PathBuf>,
-    /// The deepest root left with `-` (D10). It and its ancestors are
+    /// The deepest root left with `-`. It and its ancestors are
     /// listed even when the walk would skip them (dotfiles, ignored,
     /// no markdown), so you can see where you came from.
     origin: Option<PathBuf>,
@@ -294,7 +294,7 @@ impl Tree {
         &self.root
     }
 
-    /// Re-root the tree at `root` (D10). Expansion is kept (absolute
+    /// Re-root the tree at `root`. Expansion is kept (absolute
     /// paths), the filter and selection are cleared. An
     /// [`Tree::outside`] file that the new root covers is shown and
     /// selected. Moving the root away from the followed file does not make
@@ -387,7 +387,7 @@ impl Tree {
         Some(std::borrow::Cow::Owned(nodes))
     }
 
-    /// `path` is the origin or one of its ancestors (D10).
+    /// `path` is the origin or one of its ancestors.
     fn on_origin_path(&self, path: &Path) -> bool {
         self.origin.as_ref().is_some_and(|o| o.starts_with(path))
     }
@@ -590,7 +590,7 @@ fn act(a: SidebarAction) -> KeyResult {
 
 /// `C-w h l w W j k p` (the second key with or without Ctrl). `h` and `l`
 /// follow the screen: the one pointing at the sidebar's `side` focuses
-/// it, the other the content (D9).
+/// it, the other the content.
 pub(super) fn window_keymap(keys: &[KeyEvent], side: SidebarSide) -> Option<KeyResult> {
     let (first, rest) = keys.split_first()?;
     if !is_ctrl(first, 'w') {
@@ -718,7 +718,7 @@ impl App {
     /// A mode picked by the user (`<leader>E`, `:Sidebar`): stops the
     /// `auto` switching for the rest of the session, and shows the sidebar.
     /// With `show = "auto"` it opens a peek (not a pin) and focuses the
-    /// first pane (D11, P7).
+    /// first pane.
     pub(super) fn pick_sidebar_mode(&mut self, mode: SidebarMode) {
         self.sidebar.manual = true;
         self.sidebar.mode = mode;
@@ -738,7 +738,7 @@ impl App {
         }
     }
 
-    /// `sidebar.show` is `auto` (peek, D11).
+    /// `sidebar.show` is `auto` (peek).
     pub(crate) fn show_is_auto(&self) -> bool {
         self.config.sidebar.show == SidebarShow::Auto
     }
@@ -750,14 +750,14 @@ impl App {
     }
 
     /// Focus can move into the sidebar now, or a peek would open for it:
-    /// the `avail` of the `C-w` help rows (P3).
+    /// the `avail` of the `C-w` help rows.
     pub(crate) fn can_focus_or_peek(&self) -> bool {
         self.can_focus_sidebar() || self.peek_could_open()
     }
 
     /// Set the `auto` pin and peek, then lay out again: the page is
     /// re-laid out only when the columns beside it changed (an overlay
-    /// never resizes it, P10).
+    /// never resizes it).
     fn set_auto_visibility(&mut self, pinned: bool, peeked: bool) {
         let before = self.sidebar_cols();
         let opening = peeked && !self.sidebar.peeked && !pinned;
@@ -777,7 +777,7 @@ impl App {
 
     /// A peek goes beside the page when the page keeps its full
     /// `render.max_width` next to it: `w + 1 <= cols - review gutter -
-    /// max_width` (P9). A narrow terminal overlays regardless; that is
+    /// max_width`. A narrow terminal overlays regardless; that is
     /// [`App::sidebar_overlay`].
     fn peek_fits_beside(&self) -> bool {
         let room = self
@@ -788,21 +788,21 @@ impl App {
         self.sidebar_width_cols() < room
     }
 
-    /// Open an unpinned peek (D11): `auto` only, while hidden.
+    /// Open an unpinned peek: `auto` only, while hidden.
     fn sidebar_peek_open(&mut self) {
         if self.peek_could_open() {
             self.set_auto_visibility(false, true);
         }
     }
 
-    /// Close an unpinned peek (D11). Focus is left to the caller.
+    /// Close an unpinned peek. Focus is left to the caller.
     fn sidebar_peek_close(&mut self) {
         if self.show_is_auto() && self.sidebar.peeked {
             self.set_auto_visibility(self.sidebar.shown, false);
         }
     }
 
-    /// The user's focus went back to the content: close a peek (D11).
+    /// The user's focus went back to the content: close a peek.
     fn focus_returned(&mut self) {
         if self.sidebar.focus == Focus::Content {
             self.sidebar_peek_close();
@@ -811,8 +811,8 @@ impl App {
 
     /// A visibility choice by the user (`<leader>e`, `<leader>E`,
     /// `:Sidebar`). While the terminal is narrow it holds until the next
-    /// resize (D3 step 2).
-    /// With `show = "auto"` showing pins and hiding unpins (D11); the
+    /// resize.
+    /// With `show = "auto"` showing pins and hiding unpins; the
     /// narrow override is never set there.
     pub(super) fn show_sidebar(&mut self, show: bool) {
         if self.show_is_auto() {
@@ -845,7 +845,7 @@ impl App {
         self.sidebar_fit();
     }
 
-    /// Recompute the auto width (D5) for the rows shown now. `widen_only`
+    /// Recompute the auto width for the rows shown now. `widen_only`
     /// (a folder expanded, a filter changed) never narrows it, so the
     /// sidebar doesn't shift while you browse; it narrows at the next page
     /// change. True when the width changed; the caller re-lays out.
@@ -881,7 +881,7 @@ impl App {
     }
 
     /// The columns each row of the shown panes needs, titles included,
-    /// measured as drawn (D5 inputs).
+    /// measured as drawn.
     fn sidebar_need(&self) -> Vec<u16> {
         let mut need = Vec::new();
         for pane in self.sidebar_panes() {
@@ -889,7 +889,7 @@ impl App {
                 Focus::Files => {
                     let Some(t) = self.tree() else { continue };
                     // The root in the title is clipped from the left to
-                    // fit (D10), so only `Files` counts, not the path.
+                    // fit, so only `Files` counts, not the path.
                     let title = match t.outside() {
                         Some(_) => self.sidebar_title(),
                         None => FILES_TITLE.into(),
@@ -927,17 +927,17 @@ impl App {
         below > 0 && self.size.0 < below
     }
 
-    /// No page is loaded or being laid out (D3 step 1).
+    /// No page is loaded or being laid out.
     fn no_page(&self) -> bool {
         self.page.is_none() && !self.sidebar.loading
     }
 
-    /// Whether the sidebar should be drawn, in the order of D3: no page
+    /// Whether the sidebar should be drawn, in this order: no page
     /// (always), a choice made while narrow, narrow auto-hide, then the
     /// user's flag. The `MIN_CONTENT` guard is applied by
     /// [`App::sidebar_cols`], not here.
     ///
-    /// With `show = "auto"`: no page, pinned, or peeked (D11, P11).
+    /// With `show = "auto"`: no page, pinned, or peeked.
     pub fn sidebar_visible(&self) -> bool {
         if self.no_page() {
             return true;
@@ -961,7 +961,7 @@ impl App {
     /// With `show = "auto"` the first page hides the sidebar here, before
     /// the first render: `loading` ends the no-page rule, and with no pin
     /// and no peek (none can open while the tree is all there is) the page
-    /// is laid out at its reading width (D11, P6).
+    /// is laid out at its reading width.
     pub(super) fn sidebar_page_loading(&mut self) -> bool {
         self.sidebar.loading = true;
         self.page.is_none()
@@ -1007,13 +1007,13 @@ impl App {
     }
 
     /// Columns the sidebar takes, its border included; 0 when it is hidden
-    /// or does not fit. The width is the auto width (D5) or the fixed
+    /// or does not fit. The width is the auto width or the fixed
     /// `sidebar.width`, cut so the page keeps `MIN_CONTENT` columns; when
     /// that leaves less than `min_width` (or the fixed width, if smaller)
     /// the sidebar is dropped. With no page the tree is all there is to
     /// show, so it skips the guard and only clamps to the terminal.
     ///
-    /// These are the layout columns: 0 for an overlay (D11), which is drawn
+    /// These are the layout columns: 0 for an overlay, which is drawn
     /// over the page; [`App::sidebar_drawn_cols`] is what is drawn.
     pub fn sidebar_cols(&self) -> u16 {
         if !self.sidebar_visible() || self.sidebar_panes().is_empty() || self.sidebar_overlay() {
@@ -1042,7 +1042,7 @@ impl App {
         }
     }
 
-    /// The sidebar is drawn over the page instead of beside it (D11): a
+    /// The sidebar is drawn over the page instead of beside it: a
     /// peek without spare room, or anything shown in `auto` while the
     /// terminal is narrow. Never with no page.
     pub fn sidebar_overlay(&self) -> bool {
@@ -1054,7 +1054,7 @@ impl App {
 
     /// Columns the sidebar is drawn in, border included, beside the page
     /// or over it. An overlay is `min(width, cols - 1)` plus the border;
-    /// neither `MIN_CONTENT` nor the `min_width` drop applies (P11).
+    /// neither `MIN_CONTENT` nor the `min_width` drop applies.
     pub fn sidebar_drawn_cols(&self) -> u16 {
         if !self.sidebar_overlay() || self.sidebar_panes().is_empty() {
             return self.sidebar_cols();
@@ -1117,7 +1117,7 @@ impl App {
             .then_some(self.sidebar.outline_sel)
     }
 
-    /// Title of the files pane: `Files <root>` (D10), or the current
+    /// Title of the files pane: `Files <root>`, or the current
     /// file's path when it lies outside the tree root.
     pub fn sidebar_title(&self) -> String {
         match (
@@ -1145,7 +1145,7 @@ impl App {
     }
 
     /// The current page's file, canonical like the tree's paths: the
-    /// files pane marks its row (D8).
+    /// files pane marks its row.
     pub fn sidebar_current_file(&self) -> Option<PathBuf> {
         self.page.as_ref()?.path.as_deref().map(canonical)
     }
@@ -1241,7 +1241,7 @@ impl App {
         match a {
             S::Toggle if self.no_page() => self.set_status(TREE_STAYS_MESSAGE),
             // In `auto` a visible unpinned peek hides and stays unpinned
-            // (P8); a hidden sidebar is pinned (`show_sidebar`).
+            //; a hidden sidebar is pinned (`show_sidebar`).
             S::Toggle => self.show_sidebar(!self.sidebar_visible()),
             S::Cycle => self.pick_sidebar_mode(self.sidebar.next_mode()),
             S::FocusSidebar
@@ -1371,7 +1371,7 @@ impl App {
                 self.mode = Mode::Normal;
                 self.set_pane_filter(None);
             }
-            // The second Esc (no filter left) closes a peek (D11, P13).
+            // The second Esc (no filter left) closes a peek.
             S::FilterClear if self.pane_filter().is_none() && self.sidebar.peeked => {
                 self.focus_pane(Focus::Content);
                 self.focus_returned();
@@ -1381,7 +1381,7 @@ impl App {
     }
 
     /// Whether focus action `a` would land in a sidebar pane, from a
-    /// hidden sidebar (focus on the content): a peek opens for it (P2).
+    /// hidden sidebar (focus on the content): a peek opens for it.
     fn focus_enters_sidebar(&self, a: SidebarAction) -> bool {
         use SidebarAction as S;
         let panes = self.sidebar_panes();
@@ -1622,7 +1622,7 @@ impl App {
                 if let Some(o) = self.outline().get(self.sidebar.outline_sel) {
                     let row = o.row;
                     // Close a peek first, so a beside peek's re-layout
-                    // doesn't move the row jumped to (D11, P4).
+                    // doesn't move the row jumped to.
                     self.sidebar_peek_close();
                     self.jump_to_row(row);
                     self.set_focus(Focus::Content);
@@ -1640,7 +1640,7 @@ impl App {
         };
         let here = self.entry();
         // Close a peek before the page is laid out, so a beside peek
-        // doesn't lay it out twice (D11, P5); a page that can't be shown
+        // doesn't lay it out twice; a page that can't be shown
         // brings it back.
         let peeked = self.sidebar.peeked;
         self.sidebar_peek_close();

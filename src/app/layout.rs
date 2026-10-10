@@ -1,6 +1,6 @@
 //! Where the last frame drew each pane and popup, so mouse events can be
-//! mapped back to what is under the pointer (docs/specs/2026-10-08-mouse.md
-//! § D2). `ui::draw` records a [`Layout`] at the end of every frame.
+//! mapped back to what is under the pointer (docs/design.md
+//! § Mouse). `ui::draw` records a [`Layout`] at the end of every frame.
 
 use ratatui::layout::{Position, Rect};
 
@@ -30,7 +30,7 @@ impl ListArea {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Layout {
     /// The whole sidebar, its border included (on the side facing the
-    /// content): beside the page, or the overlay rect over it (D11).
+    /// content): beside the page, or the overlay rect over it.
     pub sidebar: Option<Rect>,
     pub files: Option<ListArea>,
     pub outline: Option<ListArea>,
@@ -128,7 +128,7 @@ impl App {
             return Hit::Border;
         }
         // The sidebar comes before the hover popup: an overlay sidebar is
-        // drawn above it (D11), and beside the page they never overlap.
+        // drawn above it, and beside the page they never overlap.
         if inside(l.hover, p) {
             return Hit::Hover;
         }

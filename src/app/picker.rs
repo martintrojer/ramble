@@ -1,4 +1,4 @@
-//! The picker overlay (spec § Keymap notes, § Notebook operations): opens
+//! The picker overlay (docs/design.md § Keys, § Notebook operations): opens
 //! a notebook operation, fuzzy-filters its items with nucleo, `C-n`/`C-p`
 //! move, `Enter` opens, `Esc` closes. `search` first prompts for a query.
 //!

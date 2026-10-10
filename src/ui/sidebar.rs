@@ -22,7 +22,7 @@ const SELECTED_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 const PROMPT_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
 /// Columns a name or heading keeps at least before indenting stops.
 const MIN_NAME: usize = 8;
-/// The current-row marker (D8), drawn in the left gutter.
+/// The current-row marker, drawn in the left gutter.
 const CURRENT: &str = "▎";
 
 /// Where a row of nesting `depth` starts in a pane `width` wide whose rows
@@ -182,7 +182,7 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
 }
 
 /// The files pane title in `width` columns: `Files <root>` with the root
-/// clipped from the left (D10); an outside file's path is clipped in the
+/// clipped from the left; an outside file's path is clipped in the
 /// middle as before.
 fn files_title(app: &App, tree: &Tree, width: usize) -> String {
     let (None, Some(root)) = (tree.outside(), app.sidebar_root_label()) else {

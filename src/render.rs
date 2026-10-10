@@ -1,8 +1,5 @@
 //! Layout of a [`Document`](crate::doc::Document) for one width into
 //! styled lines plus a source map.
-//!
-//! Interface fixed by the orchestrator before parallel units start; the
-//! `render` unit (t03) implements [`render`] and the [`SrcMap`] methods.
 
 use std::ops::Range;
 use std::sync::OnceLock;

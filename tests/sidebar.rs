@@ -1,4 +1,4 @@
-//! Sidebar (spec § Sidebar): tree building, modes, focus, opening files,
+//! Sidebar (docs/design.md § Sidebar): tree building, modes, focus, opening files,
 //! outline, history, and a split-mode screen snapshot. Temp dirs only.
 
 use std::path::{Path, PathBuf};
@@ -1262,7 +1262,7 @@ fn long_file_name_keeps_its_extension_and_deep_trees_cap_the_indent() {
     assert!(name.contains('…'), "{name:?}");
     // Depth 9 would indent 18 columns; the name keeps 8 instead:
     // 20 - 1 (gutter) - 2 (icon) - 8 = 9, so 8 columns of indent at most.
-    // The open file is marked in the gutter (D8).
+    // The open file is marked in the gutter.
     let n = rows.iter().find(|r| r.ends_with("n.md")).unwrap();
     assert_eq!(n.as_str(), format!("▎{}  n.md", " ".repeat(8)));
     let col = |r: &str| r.chars().position(|c| c == '▾');
@@ -1371,7 +1371,7 @@ fn colon_opens_the_command_line_from_the_tree() {
     assert_eq!(app.mode(), ramble::app::Mode::Command);
 }
 
-// Each width hook (D5) has a test: delete the hook and its test fails.
+// Each width hook has a test: delete the hook and its test fails.
 
 const LONG_NAME: &str = "2026-10-07-a-really-long-ramble-design-spec.md";
 
@@ -1583,7 +1583,7 @@ fn right_side_still_auto_hides_on_a_narrow_terminal() {
     );
 }
 
-// D10: moving the tree root.
+// Moving the tree root.
 
 /// The fixture opened as a directory at `root/rel`, files pane focused,
 /// `$HOME` set to the fixture root.

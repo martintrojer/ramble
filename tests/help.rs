@@ -1,4 +1,4 @@
-//! The `g?` help overlay (spec § Keymap) and the status-line hint.
+//! The `g?` help overlay (docs/design.md § Keys) and the status-line hint.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Focus, HelpLine, Mode, StartOptions, StartTarget};

@@ -1,5 +1,5 @@
-//! Live reload with the real `notify` watcher (spec § Testing "live
-//! reload, real watcher"): write to a temp file and wait up to 2s.
+//! Live reload with the real `notify` watcher: write to a temp file and
+//! wait up to 2s.
 
 use std::path::PathBuf;
 use std::sync::mpsc;

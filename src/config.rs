@@ -47,7 +47,7 @@ pub struct RenderConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SidebarConfig {
-    /// `always`, `never` or `auto` (peek, D11). A start with no page shows
+    /// `always`, `never` or `auto` (peek). A start with no page shows
     /// the tree regardless.
     pub show: SidebarShow,
     pub default: SidebarMode,
@@ -66,11 +66,11 @@ pub struct SidebarConfig {
     /// Hide the sidebar while the terminal is narrower than this many
     /// columns (0 disables).
     pub auto_hide_below: u16,
-    /// Which edge of the screen the sidebar is drawn at (D9).
+    /// Which edge of the screen the sidebar is drawn at.
     pub side: SidebarSide,
 }
 
-/// `sidebar.show` (D11): whether the sidebar is drawn while a page is
+/// `sidebar.show`: whether the sidebar is drawn while a page is
 /// shown. No other spellings are accepted: anything else, the old
 /// `true`/`false` included, is an error naming the key and the three values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -127,7 +127,7 @@ pub enum SidebarSide {
     Right,
 }
 
-/// `sidebar.width`: `"auto"` fits the rows (spec D5), a number is used as
+/// `sidebar.width`: `"auto"` fits the rows, a number is used as
 /// given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarWidth {

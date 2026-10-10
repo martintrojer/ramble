@@ -1,9 +1,5 @@
 //! Markdown parsing into a [`Document`] with byte ranges for blocks,
 //! headings and links. No rendering.
-//!
-//! Interface fixed by the orchestrator before parallel units start; the
-//! `doc` unit (t02) implements [`parse`] and may add private helpers, but
-//! must keep these public names and field types.
 
 use std::borrow::Cow;
 use std::cell::RefCell;

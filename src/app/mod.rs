@@ -64,7 +64,9 @@ pub use effect::{Clipboard, Effect, osc52};
 pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
 pub use keys::{Action, KeyResult};
-pub use launch::{Exit, LaunchCommand, LaunchVars, expand, parse_key, system_run, vcs_root};
+pub use launch::{
+    Exit, LaunchCommand, LaunchVars, VCS_MARKERS, expand, parse_key, system_run, vcs_root,
+};
 pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use mdroots_glue::MdrootsOptions;
@@ -96,7 +98,7 @@ pub enum StartTarget {
 #[derive(Debug, Clone)]
 pub struct StartOptions {
     pub target: StartTarget,
-    /// Tree root per spec § cli (argument dir, else VCS root, else $HOME).
+    /// Tree root per docs/design.md § cli (argument dir, else VCS root, else $HOME).
     pub tree_root: PathBuf,
     pub config: Config,
     /// Where review batches live; `None` means `debrief_review::cache_dir()`.
@@ -501,7 +503,7 @@ impl App {
 
     /// Centered message for the content area when nothing is loaded, with
     /// the keys to reach a file: `Enter` while the tree has focus, else
-    /// the `C-w` key pointing at the sidebar's side first (D9).
+    /// the `C-w` key pointing at the sidebar's side first.
     pub fn placeholder(&self) -> Option<String> {
         let msg = self.placeholder?;
         let to_sidebar = match self.sidebar_side() {

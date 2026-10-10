@@ -1,4 +1,4 @@
-//! Front matter in the normal view (docs/specs/2026-10-08-front-matter.md):
+//! Front matter in the normal view (docs/design.md § render):
 //! the folded marker, the expanded table, `za` / `Enter`, reload, yank.
 
 use std::cell::RefCell;

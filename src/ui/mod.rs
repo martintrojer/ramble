@@ -53,7 +53,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     hits.hover = hover::draw(frame, app, content);
     hints::draw(frame, app, content);
     // A peek without room beside the page is drawn over its sidebar-side
-    // edge, above the text, gutter, hover and hints (D11).
+    // edge, above the text, gutter, hover and hints.
     if app.sidebar_overlay() {
         let w = app.sidebar_drawn_cols().min(main.width);
         let x = match app.sidebar_side() {

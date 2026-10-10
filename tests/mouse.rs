@@ -1,4 +1,4 @@
-//! Mouse (docs/specs/2026-10-08-mouse.md): clicks, double and triple
+//! Mouse (docs/design.md § Mouse): clicks, double and triple
 //! clicks, drag-to-copy, the wheel, popups. Every test draws once into a
 //! TestBackend so the recorded layout is real, then injects synthetic
 //! `MouseEvent`s with their `Instant`s. Temp dirs only.
@@ -1014,7 +1014,7 @@ fn focusing_the_outline_selects_the_current_heading_when_it_is_drawn() {
     assert_eq!(t.app.outline_selected(), Some(cur));
 }
 
-/// The sidebar on the right (D9): split mode, fixed width.
+/// The sidebar on the right: split mode, fixed width.
 fn right() -> T {
     setup_with(SidebarMode::Split, |c| {
         c.sidebar.side = ramble::config::SidebarSide::Right;

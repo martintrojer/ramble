@@ -9,14 +9,11 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 
-use crate::app::{MdrootsOptions, StartOptions, StartTarget};
+use crate::app::{MdrootsOptions, StartOptions, StartTarget, VCS_MARKERS};
 use crate::config::Config;
 
 /// Label used for a document read from stdin.
 pub const STDIN_LABEL: &str = "[stdin]";
-
-/// Directory markers that make a directory a VCS root.
-const VCS_MARKERS: [&str; 3] = [".git", ".jj", ".sl"];
 
 #[derive(Debug, Parser)]
 #[command(name = "ramble", version, about)]
@@ -162,8 +159,8 @@ pub fn plan(args: &Args, env: &mut Env, config: &Config) -> Plan {
 }
 
 /// Tree root: a file argument's parent dir; a dir argument itself; with no
-/// path argument, the nearest ancestor of `cwd` holding `.git`, `.jj` or
-/// `.sl`, else `home`. Paths are canonicalized when possible.
+/// path argument, the nearest ancestor of `cwd` holding a VCS marker
+/// ([`VCS_MARKERS`]), else `home`. Paths are canonicalized when possible.
 pub fn tree_root(arg: Option<&Path>, cwd: &Path, home: &Path) -> PathBuf {
     let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     match arg {

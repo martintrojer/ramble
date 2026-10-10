@@ -1,4 +1,4 @@
-//! Launchers (spec § Launchers, § Testing "launchers"): a recording runner
+//! Launchers (docs/design.md § Launchers): a recording runner
 //! stands in for the terminal; no real editor is spawned.
 
 use std::cell::RefCell;
@@ -316,7 +316,7 @@ fn reload_on_return_and_watcher_event_is_suppressed() {
     );
 }
 
-/// spec § Testing app: `<leader>o` runs a fake editor (a script set as
+/// `<leader>o` runs a fake editor (a script set as
 /// `$VISUAL` that appends a line), then the page shows the new line.
 #[cfg(unix)]
 #[test]

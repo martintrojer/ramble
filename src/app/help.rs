@@ -1,4 +1,4 @@
-//! The `g?` help overlay (spec § Keymap): every binding that works right
+//! The `g?` help overlay (docs/design.md § Keys): every binding that works right
 //! now, grouped, scrollable and filterable.
 //!
 //! Dispatch stays in the `match`-based keymaps; [`BINDINGS`] describes
@@ -410,7 +410,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
         App::has_review_batch,
     ),
     // Sidebar.
-    // One row per `show` kind (D11): `desc` is static.
+    // One row per `show` kind: `desc` is static.
     b(
         "<leader>e",
         Any,
@@ -432,7 +432,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
         "cycle sidebar: outline, files, split",
         always,
     ),
-    // `C-w h` / `C-w l` follow the screen (D9): one row pair per side.
+    // `C-w h` / `C-w l` follow the screen: one row pair per side.
     b("C-w h", Any, G::Sidebar, "to the sidebar", sidebar_on_left),
     b("C-w l", S, G::Sidebar, "to the content", side_left),
     b("C-w l", Any, G::Sidebar, "to the sidebar", sidebar_on_right),
@@ -1118,7 +1118,7 @@ mod tests {
     }
 
     /// On either side, every `C-w` row shown resolves, and the
-    /// direction rows run the action their description names (D9).
+    /// direction rows run the action their description names.
     #[test]
     fn ctrl_w_rows_resolve_and_match_the_side() {
         use super::super::sidebar::SidebarAction as SA;

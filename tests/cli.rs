@@ -288,6 +288,11 @@ fn tree_root_no_arg_finds_sl_root() {
 }
 
 #[test]
+fn tree_root_no_arg_finds_hg_root() {
+    assert_marker_is_root(".hg");
+}
+
+#[test]
 fn tree_root_no_arg_no_vcs_is_home() {
     let tmp = TempDir::new().unwrap();
     let cwd = canon(tmp.path()).join("x/y");
@@ -297,7 +302,7 @@ fn tree_root_no_arg_no_vcs_is_home() {
     // Skip if the temp dir itself sits under a VCS checkout.
     if cwd
         .ancestors()
-        .any(|d| [".git", ".jj", ".sl"].iter().any(|m| d.join(m).exists()))
+        .any(|d| ramble::app::VCS_MARKERS.iter().any(|m| d.join(m).exists()))
     {
         eprintln!("skipped: temp dir is inside a VCS checkout");
         return;

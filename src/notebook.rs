@@ -1,5 +1,5 @@
 //! Notebook operations (notes, search, tags, backlinks, links) over the zk
-//! adapter, standard LSP, or local fallbacks (spec § Notebook operations).
+//! adapter, standard LSP, or local fallbacks (docs/design.md § Notebook operations).
 //! A page mdroots serves gets its items from `app::mdroots_glue` instead;
 //! [`available`] knows that through [`Sources::mdroots`]. The zk adapter and
 //! the LSP-only helpers live with the optional backend, in

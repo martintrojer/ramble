@@ -254,7 +254,7 @@ fn sidebar_show_takes_always_never_auto() {
 
 #[test]
 fn legacy_sidebar_spellings_are_errors() {
-    // D11: no compatibility shims.
+    // No compatibility shims.
     let show = r#"sidebar.show: expected "always", "never" or "auto""#;
     for (src, got) in [
         ("[sidebar]\nshow = true\n", "got true"),

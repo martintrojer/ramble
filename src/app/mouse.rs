@@ -1,4 +1,4 @@
-//! The mouse (docs/specs/2026-10-08-mouse.md): click to focus, select and
+//! The mouse (docs/design.md § Mouse): click to focus, select and
 //! place the cursor; double and triple clicks; drag to select and copy;
 //! the wheel scrolls the pane under the pointer. Hit-testing is in
 //! `layout`. Effects reuse the key actions where one exists.
@@ -111,7 +111,7 @@ impl App {
         }
         let n = self.click_count(col, row, now);
         // Only clicks that act drop a half-typed key sequence and count;
-        // status, clue, gutter and border clicks leave them (D3, D7).
+        // status, clue, gutter and border clicks leave them.
         if matches!(hit, Hit::Text { .. } | Hit::Files { .. } | Hit::Outline(_)) {
             self.pending.clear();
             self.count = None;
@@ -162,7 +162,7 @@ impl App {
     fn click_text(&mut self, row: usize, col: usize, n: u8) {
         self.visual_leave();
         // FocusContent also closes a peek, even with the focus already on
-        // the content (D11, P8).
+        // the content.
         self.sidebar_action(SidebarAction::FocusContent);
         self.cursor.row = row.min(self.last_row());
         self.set_col(col);

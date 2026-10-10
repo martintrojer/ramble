@@ -1,5 +1,5 @@
-//! `sidebar.show = "auto"`: the peek (docs/specs/2026-10-07-sidebar-layout.md
-//! D11). Hidden while you read, shown while you use it, drawn over the page
+//! `sidebar.show = "auto"`: the peek (docs/design.md § Sidebar).
+//! Hidden while you read, shown while you use it, drawn over the page
 //! when there is no spare room. Temp dirs only; no LSP, no review.
 
 use std::path::{Path, PathBuf};

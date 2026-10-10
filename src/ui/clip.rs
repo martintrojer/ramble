@@ -1,5 +1,5 @@
 //! Clipping text to a display width with `…`, by grapheme, so CJK and
-//! emoji never split (docs/specs/2026-10-07-sidebar-layout.md D7).
+//! emoji never split.
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -47,7 +47,7 @@ pub fn clip_end(s: &str, width: usize) -> String {
 }
 
 /// `s` in at most `width` columns, cut at the start with `…` when it
-/// does not fit, keeping the end: `…/notes/sub` (D10).
+/// does not fit, keeping the end: `…/notes/sub`.
 pub fn clip_start(s: &str, width: usize) -> String {
     if s.width() <= width {
         return s.to_string();

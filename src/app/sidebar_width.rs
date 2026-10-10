@@ -1,4 +1,4 @@
-//! The auto sidebar width (docs/specs/2026-10-07-sidebar-layout.md D5): a
+//! The auto sidebar width (docs/design.md § Sidebar): a
 //! pure function over row widths, plus the row measurement it is fed.
 
 use unicode_width::UnicodeWidthStr;
@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 /// Columns the content keeps at least before the sidebar is dropped.
 pub(crate) const MIN_CONTENT: u16 = 10;
 
-/// The current-row marker gutter at the left edge of each pane (D8).
+/// The current-row marker gutter at the left edge of each pane.
 pub(crate) const GUTTER_COLS: usize = 1;
 /// Columns of a tree row before the name: the folder arrow or file
 /// spacer (`▸ `).

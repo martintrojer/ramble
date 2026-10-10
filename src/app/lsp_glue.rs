@@ -1,7 +1,7 @@
 //! The optional language-server backend's glue ([`crate::backend::lsp`]);
 //! the built-in backend's is `mdroots_glue`.
 //!
-//! Connects [`crate::lsp::Client`] to the app (spec § Data flow): one client
+//! Connects [`crate::lsp::Client`] to the app (docs/design.md § Backends): one client
 //! per (server, server root), started lazily off the UI thread; `didOpen` +
 //! `documentLink` on every open and reload; link targets, broken links
 //! (diagnostics), `gd` via documentLink / definition, and `K` hover.

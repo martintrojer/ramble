@@ -1,6 +1,6 @@
 //! ramble: a read-only TUI markdown reader backed by markdown language servers.
 //!
-//! Module layout follows `docs/specs/2026-10-07-ramble.md` § Architecture.
+//! Module layout follows `docs/design.md` § Architecture.
 
 pub mod app;
 pub mod backend;

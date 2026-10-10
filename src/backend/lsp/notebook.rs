@@ -1,6 +1,6 @@
 //! The zk adapter and the LSP-only notebook helpers: request parameters
 //! for zk's commands and backlinks `textDocument/references`, and the
-//! picker [`Item`]s from their replies (spec § Notebook operations).
+//! picker [`Item`]s from their replies (docs/design.md § Notebook operations).
 
 use std::path::{Path, PathBuf};
 

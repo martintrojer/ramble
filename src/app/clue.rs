@@ -1,4 +1,4 @@
-//! The key clue (spec `2026-10-07-key-clue.md`): after a pause in a
+//! The key clue (docs/design.md § Keys): after a pause in a
 //! pending key sequence, a box lists the keys that can come next. The rows
 //! come from `help::BINDINGS` and the launchers, so they never drift from
 //! the keymap.

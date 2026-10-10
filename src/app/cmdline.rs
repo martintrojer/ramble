@@ -1,4 +1,4 @@
-//! The `:` command line (spec § Keymap notes): `:e <path>`, `:q`,
+//! The `:` command line (docs/design.md § Keys): `:e <path>`, `:q`,
 //! `:Notes`, `:Search <query>`, `:Tags`, `:Backlinks`, `:Links`,
 //! `:Launch <name>`, `:Sidebar <files|outline|split|toggle|show|hide>`,
 //! `:Sidebar left|right` (the screen edge), `:Raw`, and
