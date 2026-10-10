@@ -186,8 +186,6 @@ fn partial_tab_in_list_fence_keeps_code_indent() {
     assert_eq!(rows(&p), ["• item", "    first", "    second"]);
     let second = d.source.find("second").unwrap();
     assert_eq!(p.srcmap.source_at(2, 4), Some(second));
-    // The synthesized columns map to the tab they come from.
-    assert_eq!(p.srcmap.source_at(2, 2), Some(second - 1));
 }
 
 #[test]
@@ -214,4 +212,35 @@ fn partial_tab_fences_print_with_code_indent() {
     assert_eq!(quote, "│   first\n│   second\n");
     let crlf_list = strip_sgr(&print(crlf(TAB_LIST_FENCE).as_bytes()));
     assert_eq!(crlf_list, "• item\n    first\n    second\n");
+}
+
+/// Asserts the `pad` synthesized blanks before `text` on `row` (drawn
+/// after a `prefix`-column container prefix) map to the tab before
+/// `text`, and the first text column maps to `text`.
+fn assert_pads_map_to_tab(src: &str, row: usize, prefix: usize, pad: usize, text: &str) {
+    let (d, p) = page(src);
+    let at = d.source.find(text).unwrap();
+    assert_eq!(&d.source[at - 1..at], "\t");
+    for col in prefix..prefix + pad {
+        assert_eq!(p.srcmap.source_at(row, col), Some(at - 1), "pad col {col}");
+    }
+    assert_eq!(p.srcmap.source_at(row, prefix + pad), Some(at), "text col");
+}
+
+#[test]
+fn partial_tab_pad2_maps_to_tab() {
+    // List content starts at column 2; the tab reaches column 4.
+    assert_pads_map_to_tab(TAB_LIST_FENCE, 2, 2, 2, "second");
+}
+
+#[test]
+fn partial_tab_pad3_maps_to_tab() {
+    // A one-space fence indent: the tab after it leaves three columns.
+    assert_pads_map_to_tab(" ```text\n\tfirst\n ```\n", 0, 0, 3, "first");
+}
+
+#[test]
+fn partial_tab_pad_before_multibyte_maps_to_tab() {
+    let src = "> ```text\n>\téééééééééé\n> ```\n";
+    assert_pads_map_to_tab(src, 0, 2, 2, "é");
 }

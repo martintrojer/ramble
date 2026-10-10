@@ -765,13 +765,19 @@ impl<'a> Renderer<'a> {
             }
             text.push_str(&c.text);
             if let Some(src) = c.src.filter(|s| !s.is_empty() && c.w > 0) {
+                // A segment drawn wider than its bytes (a tab, code pads)
+                // takes no following text: `source_at` scales columns over
+                // the whole segment, which would map its blanks into the text.
                 match self.segments.last_mut() {
                     Some(last)
                         if last.span.row == row
                             && last.span.col_end == col
                             && last.link == c.link
                             && src.start >= last.src.start
-                            && src.start <= last.src.end =>
+                            && (src.start < last.src.end
+                                || (src.start == last.src.end
+                                    && last.span.col_end - last.span.col_start
+                                        <= last.src.end - last.src.start)) =>
                     {
                         last.src.end = last.src.end.max(src.end);
                         last.span.col_end += c.w;
