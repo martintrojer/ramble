@@ -45,6 +45,9 @@ pub struct Document {
     /// The front-matter block at `front_matter`, as [`mdroots::syntax`]
     /// read it: entries, their source lines, the bytes between the fences.
     pub fm: Option<md::Frontmatter>,
+    /// The entries of `fm` as written, with their source lines (empty
+    /// without front matter).
+    pub fm_fields: Vec<md::Field>,
     /// True when the input had invalid UTF-8 that was replaced with U+FFFD.
     pub lossy: bool,
 }
@@ -260,6 +263,11 @@ pub fn parse(mut source: String) -> Document {
         .frontmatter()
         .filter(|f| matches!(f.format, FrontmatterFormat::Yaml | FrontmatterFormat::Toml))
         .cloned();
+    let fm_fields = if fm.is_some() {
+        md_doc.frontmatter_fields().to_vec()
+    } else {
+        Vec::new()
+    };
     // pulldown-cmark emits no metadata block for a blank one.
     let blank = fm
         .as_ref()
@@ -285,6 +293,7 @@ pub fn parse(mut source: String) -> Document {
         front_matter,
         front_matter_kind,
         fm,
+        fm_fields,
         lossy: false,
     }
 }
@@ -915,13 +924,13 @@ fn semantic(doc: &md::Document) -> (Vec<Heading>, Vec<Link>) {
         .headings()
         .map(|h| Heading {
             level: h.level,
-            text: h.text.clone(),
+            text: h.text.to_string(),
             // An explicit `{#id}` is the slug as written; text slugs are
             // deduplicated against it.
-            slug: match &h.id {
+            slug: match h.id() {
                 Some(id) => {
-                    used.insert(id.clone());
-                    id.clone()
+                    used.insert(id.to_string());
+                    id.to_string()
                 }
                 None => slug::unique(&slug::github(&h.text), &mut used),
             },
@@ -946,7 +955,7 @@ fn semantic(doc: &md::Document) -> (Vec<Heading>, Vec<Link>) {
             };
             Some(Link {
                 kind,
-                dest: l.target.raw.clone(),
+                dest: l.target().raw().to_string(),
                 range: l.range.clone(),
                 text_range: l.text_range.clone(),
                 resolved: None,

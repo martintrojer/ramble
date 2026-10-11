@@ -143,18 +143,18 @@ pub fn render_page(doc: &Document, width: u16, theme: &Theme, expanded: bool) ->
     let mut r = Renderer::new(doc, width, &inlines);
     r.math = theme.math;
     if let Some(fm) = &doc.fm {
-        r.front_matter(fm, expanded);
+        r.front_matter(fm, &doc.fm_fields, expanded);
     }
     r.blocks(&doc.blocks, true);
     r.finish()
 }
 
 /// Text of the folded front-matter marker row.
-pub fn front_matter_marker(fm: &Frontmatter, expanded: bool) -> String {
+pub fn front_matter_marker(fm: &Frontmatter, fields: &[Field], expanded: bool) -> String {
     if expanded {
         return "▾ front matter".into();
     }
-    match fm.fields().len() {
+    match fields.len() {
         _ if !fm.parsed() => "▸ front matter · unparsed".into(),
         1 => "▸ front matter · 1 key".into(),
         n => format!("▸ front matter · {n} keys"),
@@ -594,12 +594,12 @@ impl<'a> Renderer<'a> {
     /// one row per entry (or the raw lines when nothing was extracted),
     /// then a blank row. Every row maps to source
     /// bytes, so the cursor and yank work on them.
-    fn front_matter(&mut self, fm: &Frontmatter, expanded: bool) {
+    fn front_matter(&mut self, fm: &Frontmatter, fields: &[Field], expanded: bool) {
         let dim = Style::new().fg(palette::OVERLAY);
         let range = &fm.range;
         let body = fm.inner();
         let text = self.slice(&body);
-        let marker = front_matter_marker(fm, expanded);
+        let marker = front_matter_marker(fm, fields, expanded);
         // Folded, the marker stands for the whole block; expanded, for
         // the opening fence, so entry bytes resolve to their own rows.
         let src = Some(if expanded {
@@ -616,7 +616,7 @@ impl<'a> Renderer<'a> {
             .collect();
         self.emit(cells, Some(range.start));
         if expanded {
-            if fm.fields().is_empty() {
+            if fields.is_empty() {
                 let mut at = body.start;
                 for line in text.split_inclusive('\n') {
                     let r = at..at + line.trim_end_matches(['\n', '\r']).len();
@@ -625,7 +625,7 @@ impl<'a> Renderer<'a> {
                     self.emit(cells, Some(r.start));
                 }
             } else {
-                self.front_matter_entries(fm.fields());
+                self.front_matter_entries(fields);
             }
         }
         self.blank();

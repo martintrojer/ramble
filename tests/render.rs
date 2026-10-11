@@ -38,6 +38,7 @@ fn doc(source: &str, blocks: Vec<Block>, links: Vec<Link>) -> Document {
         front_matter: None,
         front_matter_kind: Default::default(),
         fm: None,
+        fm_fields: Vec::new(),
         lossy: false,
     }
 }

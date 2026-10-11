@@ -499,9 +499,9 @@ dependencies = [
 
 [[package]]
 name = "debrief-review"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f3f9965be5648b4063e3226d5c982e96f3756ef40c2c13bb5caed315d5ee43a"
+checksum = "542c4cb7e737fb68662a6d1be8727f5fb41eda9764b5c93631023183d2b2efab"
 dependencies = [
  "blake3",
  "dirs",
@@ -1275,9 +1275,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc20ca5a0761bb0641bfdf07faf7a4d3876296da3da790de40db1bd541d54841"
+checksum = "6f62cee670d3f35810e1267c9fd872ba098831626ec25aa59ff1d15db6cc5c1a"
 dependencies = [
  "mdroots-core",
  "mdroots-index",
@@ -1290,9 +1290,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-core"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21881d435d5ca3ea68267af2e1c259bcef4df8b4e7b51f7123acdd5cb2580499"
+checksum = "a5310cd374ce15401ed080464953aeefb8bf0e1808598c9be7b5864751a5c1a2"
 dependencies = [
  "mdroots-resolve",
  "mdroots-syntax",
@@ -1300,9 +1300,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-index"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5656dd7757b404e6102d26874e4255a763957d4c1b22c9d75d1fbedf6116a595"
+checksum = "221e3a25384cf200fcf5adae335df7dd788bfc9e2d2251156f5290e11a9c56c5"
 dependencies = [
  "mdroots-core",
  "mdroots-roots",
@@ -1312,9 +1312,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-resolve"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4472f5f6e1a41b1f999b3579887401ed6d1ba7b637fbbad4d2f658f1b5a0bdce"
+checksum = "7689fdc1d86753ffb3c47e54997d2a3b3986e9f934a5bd5facfc45c52e0b7d27"
 dependencies = [
  "mdroots-syntax",
  "serde_json",
@@ -1324,9 +1324,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-roots"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63efe2b8e2e241df7758c5561fb4814c5156fb7e3d5be4b83a2380bf9ff3239f"
+checksum = "a62e29923b1f425ddf5f062dbb0353275a3fcf9b634880cea8f684e04107d2e5"
 dependencies = [
  "ignore",
  "mdroots-core",
@@ -1335,9 +1335,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-syntax"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb5e749ef31b5b35efe3016e9f2f4db1c1838e89ee706dcc3b9be93aafe32bb1"
+checksum = "a890c7b357db85f1aa915c194946f5578b9717a2ce01cf73cd04f8e91c5fe8c3"
 dependencies = [
  "pulldown-cmark",
  "saphyr",
