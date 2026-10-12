@@ -34,7 +34,7 @@ nucleo = "0.5"
 latex-to-unicode = "0.1"
 term-maths = "1"
 mdroots = "0.3.0"
-debrief-review = "0.4.0"
+debrief-review = "0.4.3"
 
 # Scripted fake language server for tests/lsp.rs. Not a test target itself.
 [[bin]]
