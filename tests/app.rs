@@ -2962,3 +2962,15 @@ fn a_paste_in_normal_mode_does_nothing() {
     assert!(!app.should_quit());
     assert_eq!(app.cmdline_prompt(), None);
 }
+
+#[test]
+fn goto_source_line_puts_the_cursor_on_that_line_at_the_top() {
+    let (_d, mut app) = app();
+    // Source line 3 + 2(i-1) is paragraph i: line 21 is paragraph 10.
+    app.goto_source_line(21);
+    assert_eq!(app.cursor().row, para_row(10));
+    assert_eq!(app.scroll(), para_row(10));
+    // Past the end: the last row.
+    app.goto_source_line(10_000);
+    assert_eq!(app.cursor().row, total(&app) - 1);
+}

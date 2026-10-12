@@ -89,8 +89,28 @@ fn g_then_gg_in_tmux() {
     }
 }
 
+#[test]
+fn line_flag_opens_at_that_source_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("long.md");
+    // "line N" is on source line 2N - 1.
+    let body: String = (1..=120).map(|i| format!("line {i:03}\n\n")).collect();
+    std::fs::write(&doc, body).unwrap();
+    let Some(tmux) = start_with(dir.path(), &doc, "--line 99") else {
+        return;
+    };
+    let screen = tmux.wait_for("line 50 on top", |s| first_line(s) == "line 050");
+    assert!(!screen.contains("line 001"), "{screen}");
+    tmux.cmd(&["send-keys", "-t", "e2e", "q"]);
+}
+
 /// Start the real binary on `doc` in a fresh isolated tmux server.
 fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
+    start_with(dir, doc, "")
+}
+
+/// [`start`] with extra `flags` before the file.
+fn start_with(dir: &Path, doc: &Path, flags: &str) -> Option<Tmux> {
     if Command::new("tmux").arg("-V").output().is_err() {
         eprintln!("skipping tui_e2e: tmux not found on PATH");
         return None;
@@ -108,7 +128,7 @@ fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
         quote(&d)
     };
     let shell_cmd = format!(
-        "env HOME={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {}",
+        "env HOME={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {flags} {}",
         quote(&home),
         xdg("XDG_CONFIG_HOME"),
         xdg("XDG_DATA_HOME"),

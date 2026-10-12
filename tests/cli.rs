@@ -491,3 +491,13 @@ fn print_respects_render_math_config() {
     assert!(run("").contains("A x² b"));
     assert!(run("[render]\nmath = false\n").contains("A $x^2$ b"));
 }
+
+#[test]
+fn line_is_a_positive_number() {
+    assert_eq!(args(&["--line", "12", "f.md"]).line, Some(12));
+    assert_eq!(args(&["f.md"]).line, None);
+    let parse =
+        |a: &[&str]| Args::try_parse_from(std::iter::once("ramble").chain(a.iter().copied()));
+    assert!(parse(&["--line", "0", "f.md"]).is_err());
+    assert!(parse(&["--line", "x", "f.md"]).is_err());
+}

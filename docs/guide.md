@@ -9,6 +9,7 @@ Every config option, with its default, is in
 
 ```sh
 ramble notes/index.md        # read a file
+ramble --line 42 notes/a.md  # open with the cursor on source line 42
 ramble notes/                # browse a folder
 cat README.md | ramble       # read stdin (keys come from the terminal)
 ramble --print doc.md        # render once to stdout

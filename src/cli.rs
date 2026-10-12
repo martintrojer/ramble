@@ -23,6 +23,9 @@ pub struct Args {
     /// Render once to stdout and exit (automatic when stdout is not a terminal).
     #[arg(long)]
     pub print: bool,
+    /// Open the file with the cursor on this 1-based source line.
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
+    pub line: Option<u32>,
     /// Render width in print mode.
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..))]
     pub width: Option<u16>,

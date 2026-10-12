@@ -71,7 +71,7 @@ fn main() -> ExitCode {
             if let Some(dir) = std::env::var_os("MDROOTS_CACHE_DIR") {
                 opts.mdroots = app::MdrootsOptions::cache_dir(dir.into());
             }
-            match app::run(*opts) {
+            match app::run(*opts, args.line.map(|l| l as usize)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => fail(format!("ramble: {e:#}"), 1),
             }

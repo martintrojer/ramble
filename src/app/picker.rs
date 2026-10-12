@@ -711,11 +711,18 @@ impl App {
         if self.page_id() == before {
             return; // Not opened (missing, binary, or handed to the editor).
         }
-        let Some(line) = line else { return };
-        let Some(p) = &self.page else { return };
-        if let Some(row) = p.rendered.source_lines.iter().position(|&l| l >= line) {
-            self.jump_to_row(row);
+        if let Some(line) = line {
+            self.goto_source_line(line);
         }
+    }
+
+    /// Cursor to the first row of 1-based source `line` (or the last row
+    /// past the end), scrolled to the top of the view: `--line`, the
+    /// pickers and `:e`.
+    pub fn goto_source_line(&mut self, line: usize) {
+        let Some(p) = &self.page else { return };
+        let row = p.rendered.source_lines.iter().position(|&l| l >= line);
+        self.jump_to_row(row.unwrap_or(usize::MAX));
     }
 }
 

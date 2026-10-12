@@ -17,10 +17,15 @@ use crate::ui;
 const POLL: Duration = Duration::from_millis(100);
 
 /// Run the interactive TUI until the user quits.
-pub fn run(opts: StartOptions) -> anyhow::Result<()> {
+/// Run the TUI; `line` (`--line`) puts the cursor on that source line of
+/// the opened file.
+pub fn run(opts: StartOptions, line: Option<usize>) -> anyhow::Result<()> {
     let size = crossterm::terminal::size().context("reading terminal size")?;
     let mouse = opts.config.mouse.enabled;
     let mut app = App::new(opts, size)?;
+    if let Some(line) = line {
+        app.goto_source_line(line);
+    }
     push_title();
     // Installs a panic hook that restores the terminal before unwinding.
     let mut terminal = ratatui::try_init().context("initialising terminal")?;
