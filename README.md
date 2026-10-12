@@ -36,12 +36,15 @@ notebook: backlinks, full-text search and tags with no setup.
 
 ## Install
 
-Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64) are on the
-[releases page](https://github.com/martintrojer/ramble/releases), or:
+From [crates.io](https://crates.io/crates/ramble):
 
 ```sh
-cargo install --path . --bin ramble
+cargo install ramble
 ```
+
+Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64) are on the
+[releases page](https://github.com/martintrojer/ramble/releases). From a
+checkout: `cargo install --path . --bin ramble`.
 
 ## Use
 

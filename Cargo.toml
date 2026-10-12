@@ -5,6 +5,11 @@ edition = "2024"
 rust-version = "1.90"
 description = "A read-only TUI markdown reader with a built-in notebook index"
 license = "MIT"
+repository = "https://github.com/martintrojer/ramble"
+readme = "README.md"
+keywords = ["markdown", "tui", "terminal", "notes", "zettelkasten"]
+categories = ["command-line-utilities", "text-processing"]
+exclude = ["/tests/", "/docs/images/", "/.github/"]
 authors = ["Martin Trojer <martin.trojer@gmail.com>"]
 default-run = "ramble"
 
