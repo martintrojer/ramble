@@ -43,7 +43,8 @@ cargo install ramble
 ```
 
 Prebuilt binaries for macOS (Apple silicon) and Linux (x86_64) are on the
-[releases page](https://github.com/martintrojer/ramble/releases). From a
+[releases page](https://github.com/martintrojer/ramble/releases), or with
+[mise](https://mise.jdx.dev): `mise use -g github:martintrojer/ramble`. From a
 checkout: `cargo install --path . --bin ramble`.
 
 ## Use
