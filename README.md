@@ -53,6 +53,7 @@ checkout: `cargo install --path . --bin ramble`.
 ramble notes/            # browse a folder
 ramble notes/index.md    # read a file
 cat README.md | ramble   # read stdin
+tmux split-window -h ramble README.md  # live preview beside your editor, re-rendered on save
 ```
 
 No config needed. `ramble --init-config` writes every option, commented out.
