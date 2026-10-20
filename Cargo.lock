@@ -499,9 +499,9 @@ dependencies = [
 
 [[package]]
 name = "debrief-review"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f154da77cd0b84fc37670a7f3b91f734c95c510eb77a01c0772f3d6c126ca36f"
+checksum = "c06ad51fb035185605b6bd72e66df92315fe7474d3ef4e6849691bc1bba6a52b"
 dependencies = [
  "blake3",
  "dirs",

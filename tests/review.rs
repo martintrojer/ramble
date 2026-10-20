@@ -480,6 +480,7 @@ fn a_diff_comment_counts_nowhere() {
         commit: "abc".into(),
         change: None,
         summary: None,
+        branch: None,
     };
     repo.review()
         .add(Comment::on_diff(
@@ -942,6 +943,7 @@ fn diff_comment(path: &str, commit: &str, body: &str) -> Comment {
         commit: commit.into(),
         change: None,
         summary: None,
+        branch: None,
     };
     Comment::on_diff(path, rev, Side::New, 2..=3, "x", body)
 }
