@@ -437,6 +437,10 @@ fn default_file_banners_have_the_layout() {
             "a blank line after {l}"
         );
         assert!(
+            lines.get(i + 2).is_some_and(|n| !n.is_empty()),
+            "exactly one blank line after {l}"
+        );
+        assert!(
             i < 3 || !lines[i - 3].is_empty(),
             "exactly two blank lines before {l}"
         );
