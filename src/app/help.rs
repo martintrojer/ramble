@@ -1085,25 +1085,35 @@ mod tests {
     #[test]
     fn every_row_resolves_in_its_context_and_has_a_description() {
         let dir = tempfile::tempdir().unwrap();
+        // `keymap` takes `&self`, so one App per context serves every
+        // row; only an operator alt, which calls `handle_key`, gets a
+        // fresh one.
+        let mut built: Vec<(Ctx, Vec<App>)> = Vec::new();
         for b in BINDINGS {
             assert!(!b.desc.trim().is_empty(), "{} has no description", b.keys);
+            if !built.iter().any(|(c, _)| *c == b.context) {
+                built.push((b.context, contexts(dir.path(), b.context)));
+            }
+            let shared = &built.iter().find(|(c, _)| *c == b.context).unwrap().1;
             for alt in alts(b.keys) {
-                for mut app in contexts(dir.path(), b.context) {
-                    let all = parse(alt, app.config.keys.leader);
+                for (i, base) in shared.iter().enumerate() {
+                    let all = parse(alt, base.config.keys.leader);
                     // An operator key (`y`) is an action that enters
                     // operator-pending mode; the rest resolves there.
-                    let (keys, op) = match all.split_first() {
+                    let mut fresh;
+                    let (app, keys, op) = match all.split_first() {
                         Some((first, rest))
                             if !rest.is_empty()
-                                && app.keymap(std::slice::from_ref(first))
+                                && base.keymap(std::slice::from_ref(first))
                                     == KeyResult::Action(Action::Visual(
                                         VisualAction::OpStart(None),
                                     )) =>
                         {
-                            app.handle_key(*first);
-                            (rest.to_vec(), true)
+                            fresh = contexts(dir.path(), b.context).swap_remove(i);
+                            fresh.handle_key(*first);
+                            (&fresh, rest.to_vec(), true)
                         }
-                        _ => (all.clone(), false),
+                        _ => (base, all.clone(), false),
                     };
                     assert!(!op || app.mode() == Mode::OpPending);
                     let r = app.keymap(&keys);

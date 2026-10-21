@@ -54,7 +54,11 @@ fn write(root: &Path, rel: &str, body: &str) -> PathBuf {
 ///   docs/guide.md, docs/deep/x.md
 ///   img/logo.png
 fn fixture() -> (TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+    fixture_in(&std::env::temp_dir())
+}
+
+fn fixture_in(parent: &Path) -> (TempDir, PathBuf) {
+    let dir = tempfile::tempdir_in(parent).unwrap();
     let root = dir.path().canonicalize().unwrap();
     write(&root, ".gitignore", "build/\n");
     write(&root, ".hidden.md", "# H\n");
@@ -1694,7 +1698,9 @@ fn root_moves_only_in_the_tree_and_dash_is_files_pane_only() {
 
 #[test]
 fn going_up_stops_at_the_filesystem_root() {
-    let (_d, root) = fixture();
+    // The walk lists every ancestor, and macOS $TMPDIR can hold
+    // thousands of entries, so keep the fixture under target/.
+    let (_d, root) = fixture_in(Path::new(env!("CARGO_TARGET_TMPDIR")));
     let mut app = tree_at(&root, "");
     for _ in 0..root.components().count() - 1 {
         keys(&mut app, "-");

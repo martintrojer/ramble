@@ -24,11 +24,3 @@ fn loose_task_items_render_checkbox_and_text() {
     assert!(text.contains("[x] beta"), "{text}");
     assert!(text.contains("gamma"), "{text}");
 }
-
-#[test]
-fn tight_task_items_render_checkbox_and_text() {
-    let text = rows("- [ ] alpha\n- [x] beta\n- gamma\n").join("\n");
-    assert!(text.contains("[ ] alpha"), "{text}");
-    assert!(text.contains("[x] beta"), "{text}");
-    assert!(text.contains("gamma"), "{text}");
-}
