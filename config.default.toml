@@ -50,23 +50,60 @@
 #   cursor_bg = "#585b70"
 
 # [theme.colors]
+
+# Main background; popups, the : prompt, and dark text on coloured badges.
 # bg = "#1e1e2e"
+
+# Status line and the sidebar's filter prompt.
 # bg_dark = "#181825"
+
+# Subtle highlight.
 # surface0 = "#313244"
+
+# Stronger highlight.
 # surface1 = "#45475a"
+
+# Strongest highlight.
 # surface2 = "#585b70"
+
+# Borders, hints and dim text.
 # muted = "#6c7086"
+
+# Text.
 # text = "#cdd6f4"
+
+# Accent.
 # red = "#f38ba8"
+
+# Accent.
 # orange = "#fab387"
+
+# Accent.
 # yellow = "#f9e2af"
+
+# Accent.
 # green = "#a6e3a1"
+
+# Accent.
 # cyan = "#94e2d5"
+
+# Accent.
 # sky = "#89dceb"
+
+# Accent.
 # blue = "#89b4fa"
+
+# Accent.
 # purple = "#cba6f7"
+
+# Accent.
 # pink = "#f5c2e7"
+
+# Cursor row (content, sidebar, picker). Unset, it follows surface0.
 # cursor_bg = "#313244"
+
+# Visual selection and the rows of a comment being typed. Unset, it follows
+# surface1.
 # selection_bg = "#45475a"
 
 

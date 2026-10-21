@@ -499,11 +499,6 @@ impl Theme {
             fill: r.fill,
         }
     }
-
-    /// Resolve `cfg` (see [`ThemeConfig::resolve`]) into a theme.
-    pub fn resolve(cfg: &ThemeConfig) -> Result<Self, ThemeError> {
-        cfg.resolve().map(|r| Self::new(&r))
-    }
 }
 
 impl Default for Theme {

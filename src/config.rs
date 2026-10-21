@@ -31,6 +31,31 @@ pub struct Config {
     /// Problems the file had that didn't stop it loading (dropped comment
     /// kinds); the app shows them in the status line at start.
     pub warnings: Vec<String>,
+    /// The theme as validated at load; see [`Config::resolve_theme`].
+    pub(crate) theme_cache: ThemeCache,
+}
+
+/// A successful resolution of `[theme]` with the settings it came from.
+/// Never part of `Config` equality.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ThemeCache(Option<(ThemeConfig, theme::Resolved)>);
+
+impl PartialEq for ThemeCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Config {
+    /// The resolved theme. Reuses the resolution `load` validated (an
+    /// external scheme file is not read again) while `theme` is unchanged
+    /// since; any change to it resolves afresh.
+    pub fn resolve_theme(&self) -> Result<theme::Resolved, theme::ThemeError> {
+        match &self.theme_cache.0 {
+            Some((snapshot, resolved)) if *snapshot == self.theme => Ok(resolved.clone()),
+            _ => self.theme.resolve(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -318,6 +343,7 @@ impl Default for Config {
             send: SendConfig::default(),
             mouse: MouseConfig { enabled: true },
             warnings: Vec::new(),
+            theme_cache: ThemeCache::default(),
         }
     }
 }
@@ -359,7 +385,7 @@ struct RawTheme {
     name: Option<toml::Spanned<String>>,
     syntax: Option<toml::Spanned<String>>,
     fill: Option<bool>,
-    colors: Option<std::collections::BTreeMap<String, toml::Spanned<String>>>,
+    colors: Option<std::collections::BTreeMap<String, toml::Spanned<toml::Value>>>,
 }
 
 #[derive(Deserialize)]
@@ -516,16 +542,9 @@ impl Config {
                 .map(Path::to_path_buf);
             for (key, v) in t.colors.unwrap_or_default() {
                 let at = v.span().start;
-                let hex = theme::parse_hex(v.get_ref()).ok_or_else(|| {
-                    (
-                        Some(at),
-                        format!(
-                            "theme.colors.{key}: bad colour {:?} (expected \"#rrggbb\")",
-                            v.get_ref()
-                        ),
-                    )
-                })?;
-                if !c.theme.colors.set(&key, hex) {
+                // Key membership first, so an unknown key is rejected
+                // whatever its value.
+                if !theme::KEYS.contains(&key.as_str()) {
                     return Err((
                         Some(at),
                         format!(
@@ -534,12 +553,26 @@ impl Config {
                         ),
                     ));
                 }
+                let bad = |what: String| {
+                    (
+                        Some(at),
+                        format!("theme.colors.{key}: bad colour {what} (expected \"#rrggbb\")"),
+                    )
+                };
+                let Some(text) = v.get_ref().as_str() else {
+                    return Err(bad(format!("of type {}", v.get_ref().type_str())));
+                };
+                let hex = theme::parse_hex(text).ok_or_else(|| bad(format!("{text:?}")))?;
+                c.theme.colors.set(&key, hex);
             }
-            // Resolve once now so a bad name or syntax is a config error
-            // here; the app resolves again at start.
-            if let Err(e) = c.theme.resolve() {
-                let at = if e.key == "name" { name_at } else { syntax_at };
-                return Err((at, format!("[theme] {}: {}", e.key, e.msg)));
+            // Resolve once, here: a bad name or syntax is a config error,
+            // and the app reuses this result (see `resolve_theme`).
+            match c.theme.resolve() {
+                Ok(r) => c.theme_cache = ThemeCache(Some((c.theme.clone(), r))),
+                Err(e) => {
+                    let at = if e.key == "name" { name_at } else { syntax_at };
+                    return Err((at, format!("[theme] {}: {}", e.key, e.msg)));
+                }
             }
         }
         if let Some(s) = raw.sidebar {

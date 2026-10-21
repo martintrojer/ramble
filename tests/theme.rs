@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, MdrootsOptions, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
 use ramble::theme::{self, MOCHA, Palette};
@@ -73,7 +74,7 @@ fn every_builtin_loads_and_mocha_is_the_default() {
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(Some(r.palette), theme::builtin(name), "{name}");
         // Building the syntect theme works for the built-in's syntax name.
-        theme::Theme::resolve(&cfg.theme).unwrap();
+        theme::Theme::new(&cfg.resolve_theme().unwrap());
     }
     assert_eq!(theme::builtin("catppuccin-mocha"), Some(MOCHA));
     assert_eq!(palette_of(""), MOCHA);
@@ -289,6 +290,34 @@ fn a_scheme_file_missing_a_slot_or_with_a_bad_colour_is_an_error() {
 }
 
 #[test]
+fn non_string_colours_name_their_key_and_line() {
+    for (value, ty) in [
+        ("123", "integer"),
+        ("true", "boolean"),
+        ("[1]", "array"),
+        ("{ a = 1 }", "table"),
+        ("1.5", "float"),
+    ] {
+        let e = err(&format!("[theme.colors]\nblue = {value}\n"));
+        assert!(
+            e.contains("theme.colors.blue") && e.contains("line 2") && e.contains(ty),
+            "{value}: {e}"
+        );
+    }
+}
+
+#[test]
+fn unknown_colour_keys_are_rejected_whatever_the_value() {
+    for value in ["\"#123456\"", "\"nope\"", "123", "true", "[1]", "{ a = 1 }"] {
+        let e = err(&format!("[theme.colors]\nbrown = {value}\n"));
+        assert!(
+            e.contains("unknown key `brown`") && e.contains("line 2") && e.contains("cursor_bg"),
+            "{value}: {e}"
+        );
+    }
+}
+
+#[test]
 fn bad_values_give_errors_naming_the_key_or_value() {
     let e = err("[theme.colors]\nblue = \"#12345\"\n");
     assert!(
@@ -319,8 +348,7 @@ fn syntax_is_matched_without_regard_to_case_and_overrides_the_default() {
     let cfg = load("[theme]\nname = \"gruvbox-dark\"\nsyntax = \"dRaCuLa\"\n").unwrap();
     assert_eq!(cfg.theme.resolve().unwrap().syntax, "Dracula");
     assert_eq!(
-        theme::Theme::resolve(&cfg.theme)
-            .unwrap()
+        theme::Theme::new(&cfg.resolve_theme().unwrap())
             .syntax
             .name
             .as_deref(),
@@ -369,16 +397,12 @@ fn the_default_file_has_a_theme_section_with_every_key() {
 
 const SIZE: (u16, u16) = (40, 8);
 
-fn app_with_theme(dir: &Path, theme_toml: &str, sidebar: bool) -> App {
+fn app_with_theme(dir: &Path, theme_toml: &str, show: SidebarShow) -> App {
     let path = dir.join("doc.md");
     std::fs::write(&path, "# Title\n\nbody\n").unwrap();
     let mut config = load_in(dir, theme_toml).unwrap();
     config.sidebar.auto_hide_below = 0;
-    config.sidebar.show = if sidebar {
-        SidebarShow::Always
-    } else {
-        SidebarShow::Never
-    };
+    config.sidebar.show = show;
     App::new(
         StartOptions {
             target: StartTarget::File(path),
@@ -404,7 +428,7 @@ fn fill_paints_bg_under_the_content_and_the_sidebar() {
     let app = app_with_theme(
         dir.path(),
         "[theme]\nname = \"solarized-light\"\nfill = true\n",
-        true,
+        SidebarShow::Always,
     );
     let p = theme::builtin("solarized-light").unwrap();
     let buf = draw(&app);
@@ -422,20 +446,164 @@ fn fill_paints_bg_under_the_content_and_the_sidebar() {
 #[test]
 fn without_fill_blank_cells_have_no_background() {
     let dir = tempfile::tempdir().unwrap();
-    let app = app_with_theme(dir.path(), "[theme]\nname = \"solarized-light\"\n", true);
+    let app = app_with_theme(
+        dir.path(),
+        "[theme]\nname = \"solarized-light\"\n",
+        SidebarShow::Always,
+    );
     let buf = draw(&app);
     assert_eq!(buf[(SIZE.0 - 1, 5)].bg, Color::Reset);
     assert_eq!(buf[(0, 5)].bg, Color::Reset);
 }
 
+/// An Auto sidebar opened with `C-w h` at a width too narrow to sit beside
+/// the page: drawn over the text, after a `Clear`.
+fn open_overlay(dir: &Path, theme_toml: &str) -> App {
+    let mut app = app_with_theme(dir, theme_toml, SidebarShow::Auto);
+    app.handle_key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    assert!(app.sidebar_overlay(), "the sidebar is an overlay");
+    app
+}
+
+#[test]
+fn fill_repaints_the_auto_sidebar_overlay_after_its_clear() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = open_overlay(
+        dir.path(),
+        "[theme]\nname = \"solarized-light\"\nfill = true\n",
+    );
+    let p = theme::builtin("solarized-light").unwrap();
+    let buf = draw(&app);
+    let side = app.layout().sidebar.expect("the overlay is laid out");
+    assert!(side.width > 0 && side.width < SIZE.0, "{side:?}");
+    // A blank row of the cleared area: its background and text colour are
+    // the theme's, not the terminal's.
+    let y = SIZE.1 - 2;
+    for x in side.x..side.right() {
+        assert_eq!(buf[(x, y)].bg, p.bg, "x={x}");
+    }
+    // The border column (the page side of a left sidebar) is `muted`.
+    let border = side.right() - 1;
+    for x in side.x..border {
+        assert_eq!(buf[(x, y)].fg, p.text, "x={x}");
+    }
+    assert_eq!(buf[(border, y)].fg, p.muted);
+}
+
+#[test]
+fn without_fill_the_auto_sidebar_overlay_has_no_background() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = open_overlay(dir.path(), "[theme]\nname = \"solarized-light\"\n");
+    let buf = draw(&app);
+    let side = app.layout().sidebar.expect("the overlay is laid out");
+    let y = SIZE.1 - 2;
+    for x in side.x..side.right() {
+        assert_eq!(buf[(x, y)].bg, Color::Reset, "x={x}");
+    }
+}
+
 #[test]
 fn a_theme_changes_what_the_page_is_drawn_in() {
     let dir = tempfile::tempdir().unwrap();
-    let app = app_with_theme(dir.path(), "[theme]\nname = \"gruvbox-dark\"\n", false);
+    let app = app_with_theme(
+        dir.path(),
+        "[theme]\nname = \"gruvbox-dark\"\n",
+        SidebarShow::Never,
+    );
     let p = theme::builtin("gruvbox-dark").unwrap();
     let buf = draw(&app);
     // The heading's first letter is in the heading colour (purple).
     assert_eq!(buf[(0, 0)].fg, p.purple);
     // The status line is on bg_dark.
     assert_eq!(buf[(0, SIZE.1 - 1)].bg, p.bg_dark);
+}
+
+/// Load a config whose `name` is a scheme file, then remove or change the
+/// file: the validated resolution is still what is used.
+#[test]
+fn a_loaded_scheme_file_is_not_read_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let scheme = dir.path().join("t.yaml");
+    std::fs::write(&scheme, BASE16).unwrap();
+    let toml = "[theme]\nname = \"t.yaml\"\n";
+    let cfg = load_in(dir.path(), toml).unwrap();
+    let want = cfg.resolve_theme().unwrap();
+    assert_eq!(want.palette.bg, c(0x101010));
+
+    std::fs::write(&scheme, BASE16.replace("#101010", "#202020")).unwrap();
+    assert_eq!(cfg.resolve_theme().unwrap(), want, "changed file");
+    std::fs::remove_file(&scheme).unwrap();
+    assert_eq!(cfg.resolve_theme().unwrap(), want, "deleted file");
+
+    // The app starts with the validated palette too.
+    let doc = dir.path().join("doc.md");
+    std::fs::write(&doc, "# Title\n").unwrap();
+    let app = App::new(
+        StartOptions {
+            target: StartTarget::File(doc),
+            tree_root: dir.path().to_path_buf(),
+            config: cfg.clone(),
+            review_cache: None,
+            mdroots: MdrootsOptions::memory(),
+        },
+        SIZE,
+    )
+    .unwrap();
+    assert_eq!(app.theme().palette, want.palette);
+    // The cache is invisible to equality.
+    assert_eq!(
+        cfg,
+        load_in(dir.path(), "[theme]\nname = \"catppuccin-mocha\"\n")
+            .map(|mut o| {
+                o.theme = cfg.theme.clone();
+                o
+            })
+            .unwrap()
+    );
+}
+
+/// Every programmatic change to `theme` after load is resolved afresh.
+#[test]
+fn changing_the_theme_after_load_invalidates_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("t.yaml"), BASE16).unwrap();
+    let base = load_in(dir.path(), "[theme]\nname = \"t.yaml\"\n").unwrap();
+    assert_eq!(base.resolve_theme().unwrap().palette.bg, c(0x101010));
+
+    let mut cfg = base.clone();
+    cfg.theme.name = Some("gruvbox-dark".into());
+    assert_eq!(cfg.resolve_theme().unwrap().palette.bg, c(0x282828), "name");
+
+    let mut cfg = base.clone();
+    cfg.theme.syntax = Some("Dracula".into());
+    assert_eq!(cfg.resolve_theme().unwrap().syntax, "Dracula", "syntax");
+
+    let mut cfg = base.clone();
+    cfg.theme.fill = Some(true);
+    assert!(cfg.resolve_theme().unwrap().fill, "fill");
+
+    let mut cfg = base.clone();
+    cfg.theme.colors.set("bg", [1, 2, 3]);
+    assert_eq!(
+        cfg.resolve_theme().unwrap().palette.bg,
+        c(0x010203),
+        "colors"
+    );
+
+    // `dir` changes where a relative scheme path is found.
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(
+        other.path().join("t.yaml"),
+        BASE16.replace("#101010", "#303030"),
+    )
+    .unwrap();
+    let mut cfg = base.clone();
+    cfg.theme.dir = Some(other.path().to_path_buf());
+    assert_eq!(cfg.resolve_theme().unwrap().palette.bg, c(0x303030), "dir");
+
+    // A change that no longer resolves is an error, not the stale cache.
+    let mut cfg = base;
+    cfg.theme.name = Some("nope".into());
+    assert!(cfg.resolve_theme().is_err());
 }

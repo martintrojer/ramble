@@ -282,7 +282,10 @@ impl App {
         let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
         let sidebar = sidebar::Sidebar::new(&opts.config.sidebar, &opts.target);
         let lsp = lsp_glue::LspState::new(&opts.config.lsp.server);
-        let theme = theme::Theme::resolve(&opts.config.theme)
+        let theme = opts
+            .config
+            .resolve_theme()
+            .map(|r| theme::Theme::new(&r))
             .map_err(|e| anyhow::anyhow!("[theme] {}: {}", e.key, e.msg))?;
         let theme = Theme::new(opts.config.render.math, theme);
         let mut app = App {

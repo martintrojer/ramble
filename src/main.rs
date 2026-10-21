@@ -50,8 +50,8 @@ fn main() -> ExitCode {
             let Some(document) = doc::from_bytes(&bytes) else {
                 return fail(format!("ramble: {label} looks binary"), 1);
             };
-            let theme = match theme::Theme::resolve(&config.theme) {
-                Ok(t) => render::Theme::new(config.render.math, t),
+            let theme = match config.resolve_theme() {
+                Ok(r) => render::Theme::new(config.render.math, theme::Theme::new(&r)),
                 Err(e) => return fail(format!("ramble: [theme] {}: {}", e.key, e.msg), 1),
             };
             let page = render::render(&document, width, &theme);
