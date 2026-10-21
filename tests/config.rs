@@ -341,23 +341,61 @@ fn default_file() -> String {
         .unwrap()
 }
 
+/// A value line is `# <key> = <value>`, `# [table]` or `# [[table]]`; prose
+/// and indented examples never match.
+fn is_value_line(l: &str) -> bool {
+    let Some(rest) = l.strip_prefix("# ") else {
+        return false;
+    };
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    if let Some(table) = rest.strip_prefix('[') {
+        let table = table.strip_prefix('[').unwrap_or(table);
+        let name = table.trim_end_matches(']');
+        return table.ends_with(']')
+            && !name.is_empty()
+            && name.chars().all(|c| ident(c) || c == '.');
+    }
+    match rest.split_once(" = ") {
+        Some((key, _)) => !key.is_empty() && key.chars().all(ident),
+        None => false,
+    }
+}
+
+/// The file with `# ` removed from every value line and from the
+/// continuation lines of a multi-line value.
+fn uncomment(src: &str) -> String {
+    let mut open = false;
+    src.lines()
+        .map(|l| {
+            let value = open || is_value_line(l);
+            if !value {
+                return l;
+            }
+            let rest = &l[2..];
+            if !open && (rest.ends_with('[') || rest.ends_with('{')) {
+                open = true;
+            } else if open && rest.trim() == "]" {
+                open = false;
+            }
+            rest
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn commented_default_file_loads_as_defaults() {
     assert_eq!(config::DEFAULT_TOML, default_file());
     assert_eq!(load_str(&default_file()).unwrap(), Config::default());
+    assert!(
+        !default_file().lines().any(|l| l.starts_with("##")),
+        "one comment style: no line starts with ##"
+    );
 }
 
 #[test]
 fn uncommented_default_file_equals_defaults() {
-    let src = default_file();
-    let uncommented: String = src
-        .lines()
-        .map(|l| match l.strip_prefix("# ") {
-            Some(rest) if !l.starts_with("##") => rest,
-            _ => l,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let uncommented = uncomment(&default_file());
     // Guard against a vacuous pass: every section must really be present.
     for header in [
         "[render]",
@@ -377,6 +415,33 @@ fn uncommented_default_file_equals_defaults() {
     // The server examples are documentation only: no server by default.
     assert!(!uncommented.lines().any(|l| l == "[[lsp.server]]"));
     assert_eq!(load_str(&uncommented).unwrap(), Config::default());
+}
+
+#[test]
+fn default_file_banners_have_the_layout() {
+    let src = default_file();
+    let lines: Vec<&str> = src.lines().collect();
+    let mut banners = 0;
+    for (i, l) in lines.iter().enumerate() {
+        if !l.starts_with("# ── ") {
+            continue;
+        }
+        banners += 1;
+        assert_eq!(l.chars().count(), 78, "banner width: {l}");
+        assert!(
+            i >= 2 && lines[i - 1].is_empty() && lines[i - 2].is_empty(),
+            "two blank lines before {l}"
+        );
+        assert!(
+            lines.get(i + 1).is_some_and(|n| n.is_empty()),
+            "a blank line after {l}"
+        );
+        assert!(
+            i < 3 || !lines[i - 3].is_empty(),
+            "exactly two blank lines before {l}"
+        );
+    }
+    assert!(banners >= 8, "banners found: {banners}");
 }
 
 #[test]
