@@ -88,23 +88,6 @@ fn src() -> String {
 }
 
 #[test]
-fn active_selection_keeps_its_source_text_across_a_resize() {
-    for (from, to) in [(30, 60), (60, 30), (30, 100)] {
-        let (_d, mut app, clip) = app(&src(), from);
-        keys(&mut app, "/iota\n");
-        keys(&mut app, "veee");
-        assert!(matches!(app.mode(), Mode::Visual(_)));
-        app.resize(to, ROWS);
-        keys(&mut app, "y");
-        assert_eq!(
-            clip.last().as_deref(),
-            Some("iota kappa lambda"),
-            "{from} -> {to}"
-        );
-    }
-}
-
-#[test]
 fn backward_selection_keeps_its_source_text_across_a_resize() {
     let (_d, mut app, clip) = app(&src(), 30);
     keys(&mut app, "/lambda\n");
@@ -217,6 +200,10 @@ const MIXED_CASES: [(&str, &str, &str); 3] = [
     ("/αβγ\n2wl", "本語", "本語 テキスト alpha"),
 ];
 
+/// Also covers the ASCII case: the "iota" row selects "iota kappa
+/// lambda" over every WIDTHS pair. The ASCII LONG paragraph is also
+/// resized under a selection by backward_selection_keeps_its_source_text_across_a_resize
+/// and gv_reselects_the_same_source_text_after_a_resize.
 #[test]
 fn selections_on_multibyte_and_wide_text_keep_their_source_text_across_a_resize() {
     for (to_word, _, sel) in MIXED_CASES {
@@ -225,6 +212,7 @@ fn selections_on_multibyte_and_wide_text_keep_their_source_text_across_a_resize(
                 let (_d, mut app, clip) = app(&mixed_src(), from);
                 keys(&mut app, to_word);
                 keys(&mut app, "veee");
+                assert!(matches!(app.mode(), Mode::Visual(_)));
                 app.resize(to, ROWS);
                 keys(&mut app, "y");
                 assert_eq!(clip.last().as_deref(), Some(sel), "active {from} -> {to}");
