@@ -14,12 +14,8 @@ use crate::app::sidebar::{FILES_TITLE, OUTLINE_TITLE, Tree};
 use crate::app::sidebar_width::{GUTTER_COLS, ICON_COLS as ICON};
 use crate::app::{App, Focus, ListArea};
 use crate::config::SidebarSide;
-use crate::render::palette;
+use crate::theme::Palette;
 
-/// Background of the selected row (Catppuccin Mocha surface0).
-const SELECTED_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
-/// Background of the filter prompt (Catppuccin Mocha mantle).
-const PROMPT_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
 /// Columns a name or heading keeps at least before indenting stops.
 const MIN_NAME: usize = 8;
 /// The current-row marker, drawn in the left gutter.
@@ -46,9 +42,9 @@ pub fn arrow_col(depth: usize, width: u16) -> u16 {
 }
 
 /// The marker gutter of a row: `▎` in peach on the current row.
-fn gutter(current: bool) -> Span<'static> {
+fn gutter(p: Palette, current: bool) -> Span<'static> {
     if current {
-        Span::styled(CURRENT, Style::new().fg(palette::PEACH))
+        Span::styled(CURRENT, Style::new().fg(p.orange))
     } else {
         Span::raw(" ".repeat(GUTTER_COLS))
     }
@@ -64,9 +60,10 @@ pub(super) fn draw(
         SidebarSide::Left => Borders::RIGHT,
         SidebarSide::Right => Borders::LEFT,
     };
+    let p = app.theme().palette;
     let block = Block::new()
         .borders(border)
-        .border_style(Style::new().fg(palette::OVERLAY));
+        .border_style(Style::new().fg(p.muted));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let files = app.tree().is_some();
@@ -85,10 +82,10 @@ pub(super) fn draw(
     }
 }
 
-fn title(text: String, focused: bool) -> Line<'static> {
-    let mut style = Style::new().fg(palette::BLUE).add_modifier(Modifier::BOLD);
+fn title(p: Palette, text: String, focused: bool) -> Line<'static> {
+    let mut style = Style::new().fg(p.blue).add_modifier(Modifier::BOLD);
     if !focused {
-        style = style.fg(palette::OVERLAY);
+        style = style.fg(p.muted);
     }
     Line::from(Span::styled(text, style))
 }
@@ -116,6 +113,7 @@ fn draw_list(
     area: Rect,
     head: Line,
     rows: Vec<Line>,
+    cursor_bg: Color,
     (selected, prev): (Option<usize>, usize),
 ) -> ListArea {
     if area.height == 0 {
@@ -138,7 +136,7 @@ fn draw_list(
         let y = area.y + 1 + (s - skip) as u16;
         frame.buffer_mut().set_style(
             Rect::new(area.x, y, area.width, 1),
-            Style::new().bg(SELECTED_BG),
+            Style::new().bg(cursor_bg),
         );
     }
     list
@@ -147,6 +145,7 @@ fn draw_list(
 fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     let tree = app.tree()?;
     let items = tree.visible_items();
+    let p = app.theme().palette;
     let width = area.width as usize;
     let open = app.sidebar_current_file();
     let rows = items
@@ -154,26 +153,27 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
         .map(|i| {
             let (indent, arrow_col) = row_prefix(i.depth, width, ICON);
             let (icon, style) = match (i.is_dir, i.expanded, i.markdown) {
-                (true, true, _) => ("▾ ", Style::new().fg(palette::BLUE)),
-                (true, false, _) => ("▸ ", Style::new().fg(palette::BLUE)),
-                (false, _, true) => ("  ", Style::new().fg(palette::TEXT)),
-                (false, _, false) => ("  ", Style::new().fg(palette::OVERLAY)),
+                (true, true, _) => ("▾ ", Style::new().fg(p.blue)),
+                (true, false, _) => ("▸ ", Style::new().fg(p.blue)),
+                (false, _, true) => ("  ", Style::new().fg(p.text)),
+                (false, _, false) => ("  ", Style::new().fg(p.muted)),
             };
             let lead = arrow_col + ICON;
             let name_w = Span::raw(i.name.as_str()).width();
-            let mark = review_mark(app, &i.path, width.saturating_sub(lead), name_w);
+            let mark = review_mark(p, app, &i.path, width.saturating_sub(lead), name_w);
             let room = width.saturating_sub(lead + mark.width());
             let text = format!("{}{icon}{}", " ".repeat(indent), clip_middle(&i.name, room));
             let current = open.as_deref() == Some(i.path.as_path());
-            Line::from(vec![gutter(current), Span::styled(text, style), mark])
+            Line::from(vec![gutter(p, current), Span::styled(text, style), mark])
         })
         .collect();
     let focused = app.focus() == Focus::Files;
     Some(draw_list(
         frame,
         area,
-        title(files_title(app, tree, width), focused),
+        title(p, files_title(app, tree, width), focused),
         rows,
+        p.cursor_bg,
         (
             tree.selected_index(&items),
             app.sidebar_list_top(Focus::Files),
@@ -198,24 +198,31 @@ fn files_title(app: &App, tree: &Tree, width: usize) -> String {
 /// and icon, for a name `name_w` wide: `●`, plus the comment count when
 /// the name fits beside it or keeps `MIN_NAME` columns; dim on folders.
 /// Never clipped: the name gives way.
-fn review_mark(app: &App, path: &std::path::Path, room: usize, name_w: usize) -> Span<'static> {
+fn review_mark(
+    p: Palette,
+    app: &App,
+    path: &std::path::Path,
+    room: usize,
+    name_w: usize,
+) -> Span<'static> {
     match app.file_marker(path) {
         Some((c, Some(n))) => {
             let full = format!(" {c} {n}");
             let full_w = Span::raw(full.as_str()).width();
             let fits = name_w + full_w <= room || room >= full_w + MIN_NAME;
             let text = if fits { full } else { format!(" {c}") };
-            Span::styled(text, Style::new().fg(palette::PEACH))
+            Span::styled(text, Style::new().fg(p.orange))
         }
         Some((c, None)) => Span::styled(
             format!(" {c}"),
-            Style::new().fg(palette::PEACH).add_modifier(Modifier::DIM),
+            Style::new().fg(p.orange).add_modifier(Modifier::DIM),
         ),
         None => Span::raw(""),
     }
 }
 
 fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
+    let p = app.theme().palette;
     let width = area.width as usize;
     let rows = app
         .outline()
@@ -224,10 +231,10 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
             let (indent, text_col) = row_prefix(o.level.saturating_sub(1).into(), width, 0);
             let room = width.saturating_sub(text_col);
             Line::from(vec![
-                gutter(o.current),
+                gutter(p, o.current),
                 Span::styled(
                     format!("{}{}", " ".repeat(indent), clip_end(&o.text, room)),
-                    Style::new().fg(palette::TEXT),
+                    Style::new().fg(p.text),
                 ),
             ])
         })
@@ -236,8 +243,9 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     Some(draw_list(
         frame,
         area,
-        title(clip_end(OUTLINE_TITLE, width), focused),
+        title(p, clip_end(OUTLINE_TITLE, width), focused),
         rows,
+        p.cursor_bg,
         (app.outline_selected(), app.sidebar_list_top(Focus::Outline)),
     ))
 }
@@ -247,9 +255,10 @@ pub(super) fn draw_prompt(frame: &mut Frame, app: &App, area: Rect) {
     let Some(prompt) = app.filter_prompt() else {
         return;
     };
+    let p = app.theme().palette;
     let x = area.x + Span::raw(prompt.as_str()).width() as u16;
     frame.render_widget(
-        Paragraph::new(prompt).style(Style::new().fg(palette::TEXT).bg(PROMPT_BG)),
+        Paragraph::new(prompt).style(Style::new().fg(p.text).bg(p.bg_dark)),
         area,
     );
     frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));

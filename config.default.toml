@@ -11,12 +11,63 @@
 # Upper bound on the reflow width, in columns.
 # max_width = 100
 
-# The colour theme. Catppuccin Mocha is the only one; any other value is a
-# config error.
-# theme = "catppuccin-mocha"
+# Deprecated: use `name` in [theme]. `theme = "catppuccin-mocha"` still
+# loads, with a warning; any other value is a config error.
 
 # Draw LaTeX math ($…$, $$…$$, ```math) as Unicode; false shows the source.
 # math = true
+
+
+# ── Theme ───────────────────────────────────────────────────────────────────
+
+# [theme]
+
+# The colour scheme: a built-in (catppuccin-mocha, catppuccin-macchiato,
+# catppuccin-frappe, catppuccin-latte, solarized-dark, solarized-light,
+# gruvbox-dark, gruvbox-light), or the path to a base16 or base24 scheme
+# file (tinted-theming YAML). A name with a "/" or ending in .yaml or .yml
+# is a path: "~" is your home directory, and a relative path is relative to
+# this file's directory.
+# name = "catppuccin-mocha"
+
+# The code-highlighting theme, a two-face theme name matched without regard
+# to case (for example "Nord", "Dracula", "gruvbox-dark"). Unset, it
+# follows `name`.
+# syntax = "Catppuccin Mocha"
+
+# Paint the theme background behind everything and draw text in the theme's
+# text colour. Needed for a light scheme on a dark terminal, or the
+# reverse. false leaves the terminal's own background.
+# fill = false
+
+# Overrides: any subset of the keys below, each replacing one colour of
+# whatever `name` selected. Values are "#rrggbb" or "rrggbb". The role
+# keys (cursor_bg, selection_bg) follow the palette when unset; their
+# values here are Mocha's. The keys add_bg, del_bg and hunk_bg are accepted
+# and ignored, so a block can be shared with debrief.
+# For example, Mocha with a stronger cursor row:
+#   [theme.colors]
+#   cursor_bg = "#585b70"
+
+# [theme.colors]
+# bg = "#1e1e2e"
+# bg_dark = "#181825"
+# surface0 = "#313244"
+# surface1 = "#45475a"
+# surface2 = "#585b70"
+# muted = "#6c7086"
+# text = "#cdd6f4"
+# red = "#f38ba8"
+# orange = "#fab387"
+# yellow = "#f9e2af"
+# green = "#a6e3a1"
+# cyan = "#94e2d5"
+# sky = "#89dceb"
+# blue = "#89b4fa"
+# purple = "#cba6f7"
+# pink = "#f5c2e7"
+# cursor_bg = "#313244"
+# selection_bg = "#45475a"
 
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────

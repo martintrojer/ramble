@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ramble::app::{App, Clipboard, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
 use ramble::doc::{FmKind, parse};
-use ramble::render::{Theme, palette, render, render_page, to_ansi};
+use ramble::render::{Theme, render, render_page, to_ansi};
 use tempfile::TempDir;
 
 const SRC: &str = "---\ntitle: \"Hello\"\ndate: 2024-01-05\ntags: [rust, tui]\n\
@@ -40,7 +40,7 @@ fn folded_marker_with_key_count() {
     assert_eq!(one[0], "▸ front matter · 1 key");
     let page = render_page(&parse(SRC.into()), 40, &Theme::catppuccin_mocha(), false);
     let dim = page.lines[0].spans[0].style.fg;
-    assert_eq!(dim, Some(palette::OVERLAY), "the marker is dim");
+    assert_eq!(dim, Some(ramble::theme::MOCHA.muted), "the marker is dim");
 }
 
 #[test]
@@ -75,8 +75,15 @@ fn expanded_rows_in_source_order_padded_and_clipped() {
     assert!(unicode_width::UnicodeWidthStr::width(r[7].as_str()) <= 40);
     let page = render_page(&parse(SRC.into()), 40, &Theme::catppuccin_mocha(), true);
     let row = &page.lines[1].spans;
-    assert_eq!(row[0].style.fg, Some(palette::OVERLAY), "keys are dim");
-    assert_eq!(row.last().unwrap().style.fg, Some(palette::TEXT));
+    assert_eq!(
+        row[0].style.fg,
+        Some(ramble::theme::MOCHA.muted),
+        "keys are dim"
+    );
+    assert_eq!(
+        row.last().unwrap().style.fg,
+        Some(ramble::theme::MOCHA.text)
+    );
 }
 
 #[test]

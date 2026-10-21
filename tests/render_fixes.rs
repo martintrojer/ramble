@@ -117,10 +117,13 @@ fn load(src: &str) -> anyhow::Result<Config> {
 
 #[test]
 fn theme_catppuccin_mocha_is_accepted() {
+    let mut c = load("[render]\ntheme = \"catppuccin-mocha\"\n").unwrap();
     assert_eq!(
-        load("[render]\ntheme = \"catppuccin-mocha\"\n").unwrap(),
-        Config::default()
+        c.warnings,
+        ["[render] theme is deprecated; use [theme] name"]
     );
+    c.warnings.clear();
+    assert_eq!(c, Config::default());
 }
 
 #[test]

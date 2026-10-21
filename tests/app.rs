@@ -1144,7 +1144,6 @@ fn hit_across_a_wrap_highlights_both_rows() {
 
 #[test]
 fn hits_stay_visible_on_the_cursor_row_and_the_current_hit_stands_out() {
-    use ramble::render::palette;
     let (_d, mut app) = app();
     // "Para 1 has ...": hits at cols 1 and 3 of every paragraph row.
     type_search(&mut app, '/', "a");
@@ -1159,20 +1158,24 @@ fn hits_stay_visible_on_the_cursor_row_and_the_current_hit_stands_out() {
     let current = buf[(1, y)].clone();
     let other_on_cursor_row = buf[(3, y)].clone();
     let plain_on_cursor_row = buf[(2, y)].clone();
-    assert_eq!(other_row.bg, palette::YELLOW, "hit off the cursor row");
+    assert_eq!(
+        other_row.bg,
+        ramble::theme::MOCHA.yellow,
+        "hit off the cursor row"
+    );
     assert_eq!(
         other_on_cursor_row.bg,
-        palette::YELLOW,
+        ramble::theme::MOCHA.yellow,
         "hit on the cursor row"
     );
     assert_ne!(other_on_cursor_row.fg, other_on_cursor_row.bg);
     assert_ne!(
         plain_on_cursor_row.bg,
-        palette::YELLOW,
+        ramble::theme::MOCHA.yellow,
         "cursorline between hits"
     );
     // The current hit: its own colour, drawn reversed under the cursor.
-    assert_eq!(current.bg, palette::PEACH, "current hit");
+    assert_eq!(current.bg, ramble::theme::MOCHA.orange, "current hit");
     assert_ne!(current.fg, current.bg);
     assert!(
         current
@@ -1476,9 +1479,9 @@ fn diagnostics_mark_covered_links_broken_and_muted() {
     let b = &buf[(9, row)];
     assert_eq!(gone.symbol(), "g");
     assert_eq!(b.symbol(), "b");
-    assert_eq!(gone.fg, ramble::render::palette::OVERLAY);
+    assert_eq!(gone.fg, ramble::theme::MOCHA.muted);
     assert!(gone.modifier.contains(ratatui::style::Modifier::DIM));
-    assert_ne!(b.fg, ramble::render::palette::OVERLAY);
+    assert_ne!(b.fg, ramble::theme::MOCHA.muted);
 }
 
 #[test]

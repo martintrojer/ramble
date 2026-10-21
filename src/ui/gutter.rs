@@ -6,7 +6,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 
 use crate::app::{App, REVIEW_MARKER};
-use crate::render::palette;
 
 /// Split `area` into the gutter (empty when the app reserves none) and the
 /// content.
@@ -22,13 +21,14 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     if area.width == 0 || app.page().is_none() {
         return;
     }
+    let p = app.theme().palette;
     let marked = app.review_marked_rows();
     let buf = frame.buffer_mut();
     for y in 0..area.height {
         if marked.binary_search(&(app.scroll() + y as usize)).is_ok() {
             buf[(area.x, area.y + y)]
                 .set_char(REVIEW_MARKER)
-                .set_style(Style::new().fg(palette::PEACH));
+                .set_style(Style::new().fg(p.orange));
         }
     }
 }

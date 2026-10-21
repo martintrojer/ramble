@@ -4,23 +4,20 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::clip::clip_end;
 use crate::app::App;
-use crate::render::palette;
 
 /// The key that opens the help overlay, shown dimmed left of the right
 /// group while it fits.
 pub const HELP_HINT: &str = "g? help";
 
-/// Background of the status line (Catppuccin Mocha mantle).
-const STATUS_BG: Color = Color::Rgb(0x18, 0x18, 0x25);
-
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
-    let base = Style::new().fg(palette::TEXT).bg(STATUS_BG);
+    let p = app.theme().palette;
+    let base = Style::new().fg(p.text).bg(p.bg_dark);
     if let Some(prompt) = app.search_prompt() {
         let x = area.x + Span::raw(prompt.as_str()).width() as u16;
         frame.render_widget(Paragraph::new(prompt).style(base), area);
@@ -43,15 +40,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         app.position_label(),
         app.history_depth()
     );
-    let mut spans = vec![Span::styled(
-        format!(" {}", app.title()),
-        base.fg(palette::BLUE),
-    )];
+    let mut spans = vec![Span::styled(format!(" {}", app.title()), base.fg(p.blue))];
     let right_w = Span::raw(right.as_str()).width();
     if !app.status().is_empty() {
         spans.push(Span::styled(
             format!("  {}", app.status()),
-            base.fg(palette::YELLOW),
+            base.fg(p.yellow),
         ));
     } else if let Some(preview) = app.review_preview() {
         // The comment on the cursor line, cut to the room left.
@@ -59,7 +53,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let room = (area.width as usize).saturating_sub(title_w + right_w + 2);
         spans.push(Span::styled(
             format!("  {}", clip_end(&preview, room)),
-            base.fg(palette::YELLOW),
+            base.fg(p.yellow),
         ));
     }
     let left_w: usize = spans.iter().map(Span::width).sum();
@@ -69,7 +63,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let pad = (area.width as usize).saturating_sub(used);
     spans.push(Span::styled(" ".repeat(pad), base));
     if hint {
-        spans.push(Span::styled(HELP_HINT, base.fg(palette::OVERLAY)));
+        spans.push(Span::styled(HELP_HINT, base.fg(p.muted)));
     }
     spans.push(Span::styled(right, base));
     frame.render_widget(Paragraph::new(Line::from(spans)).style(base), area);

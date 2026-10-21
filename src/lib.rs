@@ -11,6 +11,7 @@ pub mod doc;
 pub mod nav;
 pub mod notebook;
 pub mod render;
+pub mod theme;
 pub mod ui;
 
 // The optional LSP backend, also at the crate root so `ramble::lsp::…` paths

@@ -4,17 +4,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
 
 use crate::app::{App, ListArea};
-use crate::render::palette;
-
-/// Background of the overlay (Catppuccin Mocha base).
-const BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
-/// Background of the selected row (Catppuccin Mocha surface0).
-const SEL_BG: Color = Color::Rgb(0x31, 0x32, 0x44);
 
 /// Draw the open picker; returns its box and item list.
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
@@ -28,10 +22,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
         height,
     );
     frame.render_widget(Clear, rect);
-    let base = Style::new().fg(palette::TEXT).bg(BG);
+    let pal = app.theme().palette;
+    let base = Style::new().fg(pal.text).bg(pal.bg);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(palette::OVERLAY))
+        .border_style(Style::new().fg(pal.muted))
         .title(format!(" {} ", p.title))
         .style(base);
     let inner = block.inner(rect);
@@ -44,12 +39,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
     ])
     .areas(inner);
     if let Some(f) = p.footer {
-        frame.render_widget(Paragraph::new(f).style(base.fg(palette::OVERLAY)), footer);
+        frame.render_widget(Paragraph::new(f).style(base.fg(pal.muted)), footer);
     }
     let prefix = if p.prompting { "query: " } else { "> " };
     let q = format!("{prefix}{}", p.input);
     let x = query.x + Span::raw(q.as_str()).width() as u16;
-    frame.render_widget(Paragraph::new(q).style(base.fg(palette::BLUE)), query);
+    frame.render_widget(Paragraph::new(q).style(base.fg(pal.blue)), query);
     frame.set_cursor_position((x.min(query.right().saturating_sub(1)), query.y));
     let note = if p.loading {
         Some("Loading…")
@@ -66,7 +61,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
         skip: 0,
     };
     if let Some(note) = note {
-        frame.render_widget(Paragraph::new(note).style(base.fg(palette::OVERLAY)), list);
+        frame.render_widget(Paragraph::new(note).style(base.fg(pal.muted)), list);
         return Some(hit);
     }
     let count = p.items.len();
@@ -76,7 +71,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
         .map(|it| {
             ListItem::new(Line::from(vec![
                 Span::raw(it.label.clone()),
-                Span::styled(format!("  {}", it.detail), base.fg(palette::OVERLAY)),
+                Span::styled(format!("  {}", it.detail), base.fg(pal.muted)),
             ]))
         })
         .collect();
@@ -89,7 +84,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
     frame.render_stateful_widget(
         List::new(rows)
             .style(base)
-            .highlight_style(Style::new().bg(SEL_BG).add_modifier(Modifier::BOLD)),
+            .highlight_style(Style::new().bg(pal.cursor_bg).add_modifier(Modifier::BOLD)),
         list,
         &mut state,
     );
@@ -104,9 +99,10 @@ pub(super) fn draw_cmdline(frame: &mut Frame, app: &App, area: Rect) {
     let Some(prompt) = app.cmdline_prompt() else {
         return;
     };
+    let pal = app.theme().palette;
     let x = area.x + Span::raw(prompt.as_str()).width() as u16;
     frame.render_widget(
-        Paragraph::new(prompt).style(Style::new().fg(palette::TEXT).bg(BG)),
+        Paragraph::new(prompt).style(Style::new().fg(pal.text).bg(pal.bg)),
         area,
     );
     frame.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));

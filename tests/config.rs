@@ -401,6 +401,7 @@ fn uncommented_default_file_equals_defaults() {
         "[render]",
         "[sidebar]",
         "[keys]",
+        "[theme]",
         "[review]",
         "[send]",
         "[mouse]",
@@ -414,7 +415,17 @@ fn uncommented_default_file_equals_defaults() {
     );
     // The server examples are documentation only: no server by default.
     assert!(!uncommented.lines().any(|l| l == "[[lsp.server]]"));
-    assert_eq!(load_str(&uncommented).unwrap(), Config::default());
+    // The theme stays unresolved, so explicit Mocha keys differ from
+    // `None` in the Config: every other field equals the defaults, and
+    // the theme resolves to the same palette, syntax and fill.
+    let mut loaded = load_str(&uncommented).unwrap();
+    assert!(uncommented.lines().any(|l| l == "[theme.colors]"));
+    assert_eq!(
+        loaded.theme.resolve().unwrap(),
+        Config::default().theme.resolve().unwrap()
+    );
+    loaded.theme = Config::default().theme;
+    assert_eq!(loaded, Config::default());
 }
 
 #[test]

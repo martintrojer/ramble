@@ -4,16 +4,13 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, ClueRow};
-use crate::render::palette;
 
-/// Background of the box (Catppuccin Mocha base).
-const BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 /// Columns between a key and its description, and between columns.
 const GAP: usize = 2;
 
@@ -93,10 +90,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     )
     .intersection(area);
     frame.render_widget(Clear, rect);
-    let base = Style::new().fg(palette::TEXT).bg(BG);
+    let p = app.theme().palette;
+    let base = Style::new().fg(p.text).bg(p.bg);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(palette::OVERLAY))
+        .border_style(Style::new().fg(p.muted))
         .title(title)
         .style(base);
     let inner = block.inner(rect);
@@ -109,13 +107,9 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
             .iter()
             .map(|(k, d, group)| {
                 let pad = " ".repeat(col.key_w - k.width() + GAP);
-                let ds = if *group {
-                    base.fg(palette::MAUVE)
-                } else {
-                    base
-                };
+                let ds = if *group { base.fg(p.purple) } else { base };
                 Line::from(vec![
-                    Span::styled(format!("{k}{pad}"), base.fg(palette::BLUE)),
+                    Span::styled(format!("{k}{pad}"), base.fg(p.blue)),
                     Span::styled(d.clone(), ds),
                 ])
             })

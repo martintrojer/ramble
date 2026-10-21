@@ -11,12 +11,16 @@ use anyhow::{anyhow, bail};
 use debrief_review::Kind;
 use serde::Deserialize;
 
+use crate::theme::{self, ThemeConfig};
+
 /// The commented default config written by `--init-config`.
 pub const DEFAULT_TOML: &str = include_str!("../config.default.toml");
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub render: RenderConfig,
+    /// `[theme]`, unresolved: [`ThemeConfig::resolve`] builds the colours.
+    pub theme: ThemeConfig,
     pub sidebar: SidebarConfig,
     pub keys: KeysConfig,
     pub lsp: LspConfig,
@@ -114,7 +118,7 @@ impl<'de> Deserialize<'de> for SidebarShow {
 }
 
 /// The `sidebar.show` error, before what was found.
-/// `[render] theme`: the one accepted value.
+/// `[render] theme`, deprecated: the one value it still accepts.
 const THEME: &str = "catppuccin-mocha";
 
 const SHOW_EXPECTED: &str = "sidebar.show: expected \"always\", \"never\" or \"auto\"";
@@ -282,6 +286,7 @@ impl Default for Config {
                 max_width: 100,
                 math: true,
             },
+            theme: ThemeConfig::default(),
             sidebar: SidebarConfig {
                 show: SidebarShow::Always,
                 default: SidebarMode::Auto,
@@ -323,6 +328,7 @@ impl Default for Config {
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     render: Option<RawRender>,
+    theme: Option<RawTheme>,
     sidebar: Option<RawSidebar>,
     keys: Option<RawKeys>,
     lsp: Option<RawLsp>,
@@ -342,9 +348,18 @@ struct RawMouse {
 #[serde(deny_unknown_fields)]
 struct RawRender {
     max_width: Option<u16>,
-    /// Only [`THEME`] is accepted; the key exists so configs naming it load.
+    /// Deprecated for `[theme] name`; only [`THEME`] is accepted.
     theme: Option<toml::Spanned<String>>,
     math: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTheme {
+    name: Option<toml::Spanned<String>>,
+    syntax: Option<toml::Spanned<String>>,
+    fill: Option<bool>,
+    colors: Option<std::collections::BTreeMap<String, toml::Spanned<String>>>,
 }
 
 #[derive(Deserialize)]
@@ -461,7 +476,7 @@ impl Config {
         }
         let src = std::fs::read_to_string(path)
             .map_err(|e| anyhow!("cannot read config {}: {e}", path.display()))?;
-        Self::parse(&src).map_err(|(at, msg)| {
+        Self::parse(&src, path.parent()).map_err(|(at, msg)| {
             let msg = msg.trim_end();
             match at {
                 Some(at) => anyhow!(
@@ -475,24 +490,57 @@ impl Config {
     }
 
     /// Parse `src` over the defaults. Errors carry a byte offset if known.
-    fn parse(src: &str) -> Result<Self, (Option<usize>, String)> {
+    fn parse(src: &str, dir: Option<&Path>) -> Result<Self, (Option<usize>, String)> {
         let raw: RawConfig =
             toml::from_str(src).map_err(|e| (e.span().map(|s| s.start), e.message().into()))?;
         let mut c = Self::default();
         if let Some(r) = raw.render {
             set(&mut c.render.max_width, r.max_width);
-            if let Some(t) = r.theme
-                && t.get_ref() != THEME
-            {
-                return Err((
-                    Some(t.span().start),
-                    format!(
-                        "unknown theme {:?}: the only theme is {THEME:?}",
-                        t.get_ref()
-                    ),
-                ));
+            if let Some(t) = r.theme {
+                if t.get_ref() != THEME {
+                    return Err((Some(t.span().start), theme::unknown_name(t.get_ref())));
+                }
+                c.warnings
+                    .push("[render] theme is deprecated; use [theme] name".into());
             }
             set(&mut c.render.math, r.math);
+        }
+        if let Some(t) = raw.theme {
+            c.theme.fill = t.fill;
+            let at = |s: &Option<toml::Spanned<String>>| s.as_ref().map(|s| s.span().start);
+            let (name_at, syntax_at) = (at(&t.name), at(&t.syntax));
+            c.theme.name = t.name.map(toml::Spanned::into_inner);
+            c.theme.syntax = t.syntax.map(toml::Spanned::into_inner);
+            c.theme.dir = dir
+                .filter(|_| c.theme.name.as_deref().is_some_and(theme::is_path))
+                .map(Path::to_path_buf);
+            for (key, v) in t.colors.unwrap_or_default() {
+                let at = v.span().start;
+                let hex = theme::parse_hex(v.get_ref()).ok_or_else(|| {
+                    (
+                        Some(at),
+                        format!(
+                            "theme.colors.{key}: bad colour {:?} (expected \"#rrggbb\")",
+                            v.get_ref()
+                        ),
+                    )
+                })?;
+                if !c.theme.colors.set(&key, hex) {
+                    return Err((
+                        Some(at),
+                        format!(
+                            "unknown key `{key}` in [theme.colors]: expected one of {}",
+                            theme::KEYS.join(", ")
+                        ),
+                    ));
+                }
+            }
+            // Resolve once now so a bad name or syntax is a config error
+            // here; the app resolves again at start.
+            if let Err(e) = c.theme.resolve() {
+                let at = if e.key == "name" { name_at } else { syntax_at };
+                return Err((at, format!("[theme] {}: {}", e.key, e.msg)));
+            }
         }
         if let Some(s) = raw.sidebar {
             set(&mut c.sidebar.default, s.default);

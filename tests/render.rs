@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use ramble::doc::{
     AlertKind, Alignment, Block, CodePiece, Document, Inline, InlineStyle, Link, LinkKind, ListItem,
 };
-use ramble::render::{RenderedPage, Theme, palette, render, render_with, to_ansi};
+use ramble::render::{RenderedPage, Theme, render, render_with, to_ansi};
 use ratatui::style::{Color, Modifier, Style};
 use unicode_width::UnicodeWidthStr;
 
@@ -142,15 +142,15 @@ fn draw(d: &Document, width: u16) -> RenderedPage {
 
 fn color_name(c: Color) -> String {
     let named = [
-        (palette::TEXT, "text"),
-        (palette::MAUVE, "mauve"),
-        (palette::BLUE, "blue"),
-        (palette::GREEN, "green"),
-        (palette::OVERLAY, "overlay"),
-        (palette::RED, "red"),
-        (palette::YELLOW, "yellow"),
-        (palette::PEACH, "peach"),
-        (palette::TEAL, "teal"),
+        (ramble::theme::MOCHA.text, "text"),
+        (ramble::theme::MOCHA.purple, "mauve"),
+        (ramble::theme::MOCHA.blue, "blue"),
+        (ramble::theme::MOCHA.green, "green"),
+        (ramble::theme::MOCHA.muted, "overlay"),
+        (ramble::theme::MOCHA.red, "red"),
+        (ramble::theme::MOCHA.yellow, "yellow"),
+        (ramble::theme::MOCHA.orange, "peach"),
+        (ramble::theme::MOCHA.cyan, "teal"),
     ];
     match named.iter().find(|(n, _)| *n == c) {
         Some((_, name)) => (*name).to_string(),
@@ -790,7 +790,7 @@ proptest! {
 
 fn render_md(src: &str, width: u16, math: bool) -> (Document, RenderedPage) {
     let d = ramble::doc::parse(src.to_string());
-    let theme = Theme { math };
+    let theme = Theme::new(math, ramble::theme::Theme::default());
     let page = render(&d, width, &theme);
     (d, page)
 }
@@ -808,7 +808,7 @@ fn inline_math_renders_unicode_in_math_colour() {
         .iter()
         .find(|s| s.content.contains('∑'))
         .expect("math span");
-    assert_eq!(span.style.fg, Some(palette::TEAL));
+    assert_eq!(span.style.fg, Some(ramble::theme::MOCHA.cyan));
 }
 
 #[test]
@@ -901,7 +901,7 @@ fn math_off_shows_raw_source() {
         .iter()
         .find(|s| s.content.contains("x^2"))
         .expect("math span");
-    assert_eq!(span.style.fg, Some(palette::TEAL));
+    assert_eq!(span.style.fg, Some(ramble::theme::MOCHA.cyan));
     // Raw source maps byte for byte.
     let spans = page.srcmap.spans_for(rng(src, "$x^2$"));
     assert_eq!((spans[0].col_start, spans[0].col_end), (0, 9));

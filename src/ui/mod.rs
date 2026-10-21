@@ -15,6 +15,7 @@ mod status;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
 use ratatui::widgets::Clear;
 
 use crate::app::{App, Layout as Hits};
@@ -24,6 +25,18 @@ use crate::config::SidebarSide;
 /// content or over it), content view, status line.
 /// Records where everything went in the app's layout (for the mouse).
 pub fn draw(frame: &mut Frame, app: &App) {
+    let p = app.theme().palette;
+    // `fill`: the theme background and text colour under everything; what
+    // a widget clears is filled again after its clear.
+    let fill = app.theme().fill;
+    let paint = |frame: &mut Frame, area: Rect| {
+        if fill {
+            frame
+                .buffer_mut()
+                .set_style(area, Style::new().fg(p.text).bg(p.bg));
+        }
+    };
+    paint(frame, frame.area());
     let [main, status] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     let cols = app.sidebar_cols();
@@ -67,6 +80,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         };
         if w > 0 {
             frame.render_widget(Clear, area);
+            paint(frame, area);
             hits.sidebar = Some(area);
             (hits.files, hits.outline) = sidebar::draw(frame, app, area);
         }

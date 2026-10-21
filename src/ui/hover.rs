@@ -2,18 +2,15 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::app::App;
-use crate::render::palette;
-
-/// Background of the popup (Catppuccin Mocha base).
-const POPUP_BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 
 /// Draw the hover popup; returns its rect.
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     let text = app.hover_popup()?;
+    let p = app.theme().palette;
     let width = area.width.saturating_sub(4).clamp(1, 60);
     let inner = width.saturating_sub(2).max(1) as usize;
     let rows: usize = text
@@ -33,12 +30,12 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text.to_string())
-            .style(Style::new().fg(palette::TEXT).bg(POPUP_BG))
+            .style(Style::new().fg(p.text).bg(p.bg))
             .wrap(Wrap { trim: false })
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::new().fg(palette::OVERLAY))
+                    .border_style(Style::new().fg(p.muted))
                     .title(" hover "),
             ),
         rect,

@@ -3,15 +3,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::{App, HelpLine, help_rect};
-use crate::render::palette;
 
-/// Background of the overlay (Catppuccin Mocha base).
-const BG: Color = Color::Rgb(0x1e, 0x1e, 0x2e);
 /// Columns given to the keys column (wider keys push the description).
 const KEYS_W: usize = 18;
 
@@ -23,10 +20,11 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     }
     let rect = help_rect(area);
     frame.render_widget(Clear, rect);
-    let base = Style::new().fg(palette::TEXT).bg(BG);
+    let p = app.theme().palette;
+    let base = Style::new().fg(p.text).bg(p.bg);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(palette::OVERLAY))
+        .border_style(Style::new().fg(p.muted))
         .title(" help ")
         .style(base);
     let inner = block.inner(rect);
@@ -38,9 +36,9 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
         "/ filter   q close".to_string()
     };
     let q_style = if view.filtering || !view.filter.is_empty() {
-        base.fg(palette::BLUE)
+        base.fg(p.blue)
     } else {
-        base.fg(palette::OVERLAY)
+        base.fg(p.muted)
     };
     if view.filtering {
         let x = query.x + Span::raw(q.as_str()).width() as u16;
@@ -48,10 +46,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
     }
     frame.render_widget(Paragraph::new(q).style(q_style), query);
     if view.lines.is_empty() {
-        frame.render_widget(
-            Paragraph::new("No matches").style(base.fg(palette::OVERLAY)),
-            list,
-        );
+        frame.render_widget(Paragraph::new("No matches").style(base.fg(p.muted)), list);
         return Some(rect);
     }
     let lines: Vec<Line> = view
@@ -62,16 +57,16 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
         .map(|l| match l {
             HelpLine::Group(t) => Line::from(Span::styled(
                 t.to_string(),
-                base.fg(palette::MAUVE).add_modifier(Modifier::BOLD),
+                base.fg(p.purple).add_modifier(Modifier::BOLD),
             )),
             HelpLine::Item { keys, desc, dim } => {
                 let pad = KEYS_W
                     .saturating_sub(Span::raw(keys.as_str()).width())
                     .max(1);
                 let (k, d) = if *dim {
-                    (base.fg(palette::OVERLAY), base.fg(palette::OVERLAY))
+                    (base.fg(p.muted), base.fg(p.muted))
                 } else {
-                    (base.fg(palette::BLUE), base)
+                    (base.fg(p.blue), base)
                 };
                 Line::from(vec![
                     Span::styled(format!("  {keys}{}", " ".repeat(pad)), k),

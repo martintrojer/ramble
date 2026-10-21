@@ -55,6 +55,7 @@ use crate::config::Config;
 use crate::doc::Document;
 use crate::nav::History;
 use crate::render::{RenderedPage, Theme};
+use crate::theme;
 
 pub use clue::{CLUE_DELAY, ClueRow};
 pub use cmdline::CmdAction;
@@ -281,11 +282,13 @@ impl App {
         let (leader_bindings, key_errors) = launch::bindings(&opts.config.launch);
         let sidebar = sidebar::Sidebar::new(&opts.config.sidebar, &opts.target);
         let lsp = lsp_glue::LspState::new(&opts.config.lsp.server);
-        let math = opts.config.render.math;
+        let theme = theme::Theme::resolve(&opts.config.theme)
+            .map_err(|e| anyhow::anyhow!("[theme] {}: {}", e.key, e.msg))?;
+        let theme = Theme::new(opts.config.render.math, theme);
         let mut app = App {
             config: opts.config,
             tree_root: opts.tree_root,
-            theme: Theme { math },
+            theme,
             size,
             page: None,
             rows: Vec::new(),
@@ -482,6 +485,11 @@ impl App {
     /// First visible rendered row.
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// The colours and render options of this run.
+    pub fn theme(&self) -> &Theme {
+        &self.theme
     }
 
     pub fn page(&self) -> Option<&Page> {

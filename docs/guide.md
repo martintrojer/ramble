@@ -132,6 +132,28 @@ command = ["lazygit"]
 needs_vcs = true
 ```
 
+## Theme
+
+`[theme] name` picks a built-in scheme (`catppuccin-mocha`, the default,
+`catppuccin-macchiato`, `catppuccin-frappe`, `catppuccin-latte`,
+`solarized-dark`, `solarized-light`, `gruvbox-dark`, `gruvbox-light`) or
+a path to a base16 or base24 scheme file. `[theme.colors]` replaces single
+colours of whatever `name` selected, `syntax` picks the code-highlighting
+theme, and `fill = true` paints the theme background, for a light scheme
+on a dark terminal:
+
+```toml
+[theme]
+name = "gruvbox-dark"
+fill = true
+
+[theme.colors]
+cursor_bg = "#585b70"
+```
+
+The keys are in [config.default.toml](../config.default.toml); the full
+rules are in [the theming spec](specs/2026-10-21-theming.md).
+
 ## Help
 
 - `g?` lists every key that works right now.

@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use ramble::cli::{self, Args, Env, Plan};
 use ramble::config::{self, Config};
-use ramble::{app, doc, render};
+use ramble::{app, doc, render, theme};
 
 fn fail(msg: impl std::fmt::Display, code: u8) -> ExitCode {
     eprintln!("{msg}");
@@ -50,8 +50,9 @@ fn main() -> ExitCode {
             let Some(document) = doc::from_bytes(&bytes) else {
                 return fail(format!("ramble: {label} looks binary"), 1);
             };
-            let theme = render::Theme {
-                math: config.render.math,
+            let theme = match theme::Theme::resolve(&config.theme) {
+                Ok(t) => render::Theme::new(config.render.math, t),
+                Err(e) => return fail(format!("ramble: [theme] {}: {}", e.key, e.msg), 1),
             };
             let page = render::render(&document, width, &theme);
             let mut out = std::io::stdout().lock();

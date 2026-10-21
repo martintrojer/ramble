@@ -2,18 +2,17 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 
 use crate::app::App;
-use crate::render::palette;
-
-/// A hint label (Catppuccin Mocha base on peach, bold).
-const LABEL: Style = Style::new()
-    .fg(Color::Rgb(0x1e, 0x1e, 0x2e))
-    .bg(palette::PEACH)
-    .add_modifier(Modifier::BOLD);
 
 pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
+    // A hint label: bg on orange, bold.
+    let p = app.theme().palette;
+    let label_style = Style::new()
+        .fg(p.bg)
+        .bg(p.orange)
+        .add_modifier(Modifier::BOLD);
     let top = app.scroll();
     let buf = frame.buffer_mut();
     for (label, span) in app.hints() {
@@ -25,6 +24,6 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         }
         let x = area.x + span.col_start as u16;
         let w = (area.right() - x) as usize;
-        buf.set_stringn(x, area.y + dy as u16, label, w, LABEL);
+        buf.set_stringn(x, area.y + dy as u16, label, w, label_style);
     }
 }

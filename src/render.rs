@@ -8,25 +8,42 @@ use mdroots::syntax::{Field, Frontmatter};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
-use syntect::highlighting::FontStyle;
+use syntect::highlighting::{FontStyle, Theme as SyntaxTheme};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::doc::{self, AlertKind, Alignment, Block, CodePiece, Document, Inline, ListItem};
+use crate::theme::Palette;
 
-/// Render options. Colours are always Catppuccin Mocha ([`palette`] and
-/// two-face's embedded code theme); `Theme::catppuccin_mocha()` is the default.
+/// Render options and colours: the palette and the code-highlighting
+/// theme come from the `[theme]` config ([`crate::theme`]).
 #[derive(Debug, Clone)]
 pub struct Theme {
     /// Convert LaTeX math to Unicode (`[render] math`). Off: math shows
     /// as its raw source, delimiters included, in the math colour.
     pub math: bool,
+    pub palette: Palette,
+    /// Highlighting theme of code blocks and the raw view.
+    pub syntax: SyntaxTheme,
+    /// Paint `palette.bg` behind everything (`[theme] fill`).
+    pub fill: bool,
 }
 
 impl Theme {
+    /// `theme`'s colours with the `[render] math` option.
+    pub fn new(math: bool, theme: crate::theme::Theme) -> Self {
+        Self {
+            math,
+            palette: theme.palette,
+            syntax: theme.syntax,
+            fill: theme.fill,
+        }
+    }
+
+    /// The default look: Catppuccin Mocha, math on, no fill.
     pub fn catppuccin_mocha() -> Self {
-        Self { math: true }
+        Self::new(true, crate::theme::Theme::default())
     }
 }
 
@@ -140,8 +157,7 @@ pub fn render(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
 /// folded marker row or (`expanded`) the marker and one row per entry.
 pub fn render_page(doc: &Document, width: u16, theme: &Theme, expanded: bool) -> RenderedPage {
     let inlines = |r| doc::inlines(doc, r);
-    let mut r = Renderer::new(doc, width, &inlines);
-    r.math = theme.math;
+    let mut r = Renderer::new(doc, width, theme, &inlines);
     if let Some(fm) = &doc.fm {
         r.front_matter(fm, &doc.fm_fields, expanded);
     }
@@ -173,9 +189,7 @@ pub fn render_with(
     theme: &Theme,
     inlines: &dyn Fn(Range<usize>) -> Vec<Inline>,
 ) -> RenderedPage {
-    // v1 always uses the embedded Catppuccin Mocha code theme.
-    let mut r = Renderer::new(doc, width, inlines);
-    r.math = theme.math;
+    let mut r = Renderer::new(doc, width, theme, inlines);
     r.blocks(&doc.blocks, true);
     r.finish()
 }
@@ -185,9 +199,8 @@ pub fn render_with(
 /// Markdown syntax. Segments carry the index of the `doc.links` entry
 /// whose full range holds their bytes, so link actions work unchanged.
 pub fn render_raw(doc: &Document, width: u16, theme: &Theme) -> RenderedPage {
-    let _ = theme;
     let none = |_: Range<usize>| Vec::new();
-    let mut r = Renderer::new(doc, width, &none);
+    let mut r = Renderer::new(doc, width, theme, &none);
     r.raw(&doc.links);
     RenderedPage {
         lines: r.lines,
@@ -245,21 +258,6 @@ fn sgr_codes(style: Style) -> Vec<String> {
         }
     }
     codes
-}
-
-/// Catppuccin Mocha palette used by the renderer.
-pub mod palette {
-    use ratatui::style::Color;
-
-    pub const TEXT: Color = Color::Rgb(0xcd, 0xd6, 0xf4);
-    pub const MAUVE: Color = Color::Rgb(0xcb, 0xa6, 0xf7);
-    pub const BLUE: Color = Color::Rgb(0x89, 0xb4, 0xfa);
-    pub const GREEN: Color = Color::Rgb(0xa6, 0xe3, 0xa1);
-    pub const OVERLAY: Color = Color::Rgb(0x6c, 0x70, 0x86);
-    pub const RED: Color = Color::Rgb(0xf3, 0x8b, 0xa8);
-    pub const YELLOW: Color = Color::Rgb(0xf9, 0xe2, 0xaf);
-    pub const PEACH: Color = Color::Rgb(0xfa, 0xb3, 0x87);
-    pub const TEAL: Color = Color::Rgb(0x94, 0xe2, 0xd5);
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +396,7 @@ fn wrap(toks: Vec<Tok>, avail: usize, base: Style) -> Vec<Vec<Cell>> {
 }
 
 /// `cells` cut to `max` columns, ending in `…` when cut.
-fn clip(cells: Vec<Cell>, max: usize) -> Vec<Cell> {
+fn clip(cells: Vec<Cell>, max: usize, base: Style) -> Vec<Cell> {
     if width_of(&cells) <= max {
         return cells;
     }
@@ -415,7 +413,7 @@ fn clip(cells: Vec<Cell>, max: usize) -> Vec<Cell> {
         out.pop();
     }
     if max > 0 {
-        let style = out.last().map_or_else(base_style, |c| c.style);
+        let style = out.last().map_or(base, |c| c.style);
         out.push(Cell::deco("…", style));
     }
     out
@@ -448,28 +446,28 @@ struct Prefix {
     used: bool,
 }
 
-fn base_style() -> Style {
-    Style::new().fg(palette::TEXT)
+fn base_style(p: Palette) -> Style {
+    Style::new().fg(p.text)
 }
 
-fn heading_style(level: u8) -> Style {
+fn heading_style(p: Palette, level: u8) -> Style {
     let fg = match level {
-        1 | 2 => palette::MAUVE,
-        3 => palette::PEACH,
-        4 => palette::YELLOW,
-        5 => palette::GREEN,
-        _ => palette::TEAL,
+        1 | 2 => p.purple,
+        3 => p.orange,
+        4 => p.yellow,
+        5 => p.green,
+        _ => p.cyan,
     };
     Style::new().fg(fg).add_modifier(Modifier::BOLD)
 }
 
-fn alert_info(kind: AlertKind) -> (&'static str, Color) {
+fn alert_info(p: Palette, kind: AlertKind) -> (&'static str, Color) {
     match kind {
-        AlertKind::Note => ("Note", palette::BLUE),
-        AlertKind::Tip => ("Tip", palette::GREEN),
-        AlertKind::Important => ("Important", palette::MAUVE),
-        AlertKind::Warning => ("Warning", palette::YELLOW),
-        AlertKind::Caution => ("Caution", palette::RED),
+        AlertKind::Note => ("Note", p.blue),
+        AlertKind::Tip => ("Tip", p.green),
+        AlertKind::Important => ("Important", p.purple),
+        AlertKind::Warning => ("Warning", p.yellow),
+        AlertKind::Caution => ("Caution", p.red),
     }
 }
 
@@ -519,15 +517,6 @@ fn syntaxes() -> &'static SyntaxSet {
     SET.get_or_init(two_face::syntax::extra_newlines)
 }
 
-fn code_theme() -> &'static syntect::highlighting::Theme {
-    static THEME: OnceLock<syntect::highlighting::Theme> = OnceLock::new();
-    THEME.get_or_init(|| {
-        two_face::theme::extra()
-            .get(two_face::theme::EmbeddedThemeName::CatppuccinMocha)
-            .clone()
-    })
-}
-
 fn syntect_style(st: syntect::highlighting::Style) -> Style {
     let fg = st.foreground;
     let mut style = Style::new().fg(Color::Rgb(fg.r, fg.g, fg.b));
@@ -544,6 +533,8 @@ fn syntect_style(st: syntect::highlighting::Style) -> Style {
 }
 
 struct Renderer<'a> {
+    p: Palette,
+    syntax: &'a SyntaxTheme,
     src: &'a str,
     width: usize,
     inlines: &'a dyn Fn(Range<usize>) -> Vec<Inline>,
@@ -561,17 +552,20 @@ impl<'a> Renderer<'a> {
     fn new(
         doc: &'a Document,
         width: u16,
+        theme: &'a Theme,
         inlines: &'a dyn Fn(Range<usize>) -> Vec<Inline>,
     ) -> Self {
         let src = doc.source.as_str();
         Self {
+            p: theme.palette,
+            syntax: &theme.syntax,
             src,
             width: usize::from(width.max(1)),
             inlines,
             newlines: src.match_indices('\n').map(|(i, _)| i).collect(),
             prefixes: Vec::new(),
             list_depth: 0,
-            math: true,
+            math: theme.math,
             lines: Vec::new(),
             segments: Vec::new(),
             source_lines: Vec::new(),
@@ -595,7 +589,7 @@ impl<'a> Renderer<'a> {
     /// then a blank row. Every row maps to source
     /// bytes, so the cursor and yank work on them.
     fn front_matter(&mut self, fm: &Frontmatter, fields: &[Field], expanded: bool) {
-        let dim = Style::new().fg(palette::OVERLAY);
+        let dim = Style::new().fg(self.p.muted);
         let range = &fm.range;
         let body = fm.inner();
         let text = self.slice(&body);
@@ -634,7 +628,7 @@ impl<'a> Renderer<'a> {
     /// One row per entry: the dim key padded to the widest (at most
     /// [`FM_KEY_MAX`] columns), two spaces, the value clipped with `…`.
     fn front_matter_entries(&mut self, fields: &[Field]) {
-        let dim = Style::new().fg(palette::OVERLAY);
+        let dim = Style::new().fg(self.p.muted);
         let avail = self.avail();
         let key_w = fields
             .iter()
@@ -647,17 +641,17 @@ impl<'a> Renderer<'a> {
             let entry = e.range.clone();
             let line = self.slice(&entry);
             let key = self.mapped(&e.key, line, entry.start, &entry, dim, 0);
-            let mut cells = clip(key, key_w);
+            let mut cells = clip(key, key_w, base_style(self.p));
             let pad = key_w.saturating_sub(width_of(&cells)) + 2;
-            cells.extend((0..pad).map(|_| Cell::deco(" ", base_style())));
+            cells.extend((0..pad).map(|_| Cell::deco(" ", base_style(self.p))));
             let after = line
                 .find(':')
                 .or_else(|| line.find('='))
                 .map_or(0, |i| i + 1);
             let value = e.value.display();
-            let value = self.mapped(&value, line, entry.start, &entry, base_style(), after);
+            let value = self.mapped(&value, line, entry.start, &entry, base_style(self.p), after);
             let room = avail.saturating_sub(width_of(&cells));
-            cells.extend(clip(value, room));
+            cells.extend(clip(value, room, base_style(self.p)));
             self.emit_row(cells, Some(entry.start));
         }
     }
@@ -892,17 +886,17 @@ impl<'a> Renderer<'a> {
                         style = style.add_modifier(Modifier::CROSSED_OUT);
                     }
                     if s.link.is_some() {
-                        style = style.fg(palette::BLUE).add_modifier(Modifier::UNDERLINED);
+                        style = style.fg(self.p.blue).add_modifier(Modifier::UNDERLINED);
                     }
                     (range, style, s.link)
                 }
                 Inline::Code { range, link } => {
-                    let mut style = base.fg(palette::GREEN);
+                    let mut style = base.fg(self.p.green);
                     if link.is_some() {
                         // Code colour stays; the link colour goes on the underline.
                         style = style
                             .add_modifier(Modifier::UNDERLINED)
-                            .underline_color(palette::BLUE);
+                            .underline_color(self.p.blue);
                     }
                     (range, style, link)
                 }
@@ -933,7 +927,7 @@ impl<'a> Renderer<'a> {
                     continue;
                 }
                 Inline::FootnoteRef { label, range } => {
-                    let style = Style::new().fg(palette::PEACH);
+                    let style = Style::new().fg(self.p.orange);
                     word.push(Cell::deco("[", style));
                     let cells = self.text_cells(&range, style, None);
                     if cells.is_empty() {
@@ -980,7 +974,7 @@ impl<'a> Renderer<'a> {
                 range,
                 inline,
             } => {
-                let style = heading_style(*level);
+                let style = heading_style(self.p, *level);
                 let rows = self.wrapped_inline(inline, style, self.avail());
                 if rows.is_empty() {
                     self.emit(Vec::new(), Some(range.start));
@@ -992,9 +986,9 @@ impl<'a> Renderer<'a> {
                     let ch = if *level == 1 { "━" } else { "─" };
                     let rule = ch.repeat(self.avail());
                     let style = Style::new().fg(if *level == 1 {
-                        palette::MAUVE
+                        self.p.purple
                     } else {
-                        palette::OVERLAY
+                        self.p.muted
                     });
                     self.emit(deco_cells(&rule, style), Some(range.start));
                 }
@@ -1003,7 +997,7 @@ impl<'a> Renderer<'a> {
                 if self.standalone_math(range, inline) {
                     return;
                 }
-                for row in self.wrapped_inline(inline, base_style(), self.avail()) {
+                for row in self.wrapped_inline(inline, base_style(self.p), self.avail()) {
                     self.emit(row, Some(range.start));
                 }
             }
@@ -1016,11 +1010,12 @@ impl<'a> Renderer<'a> {
                 alert,
                 children,
             } => {
-                let color = alert.map_or(palette::OVERLAY, |k| alert_info(k).1);
+                let color = alert.map_or(self.p.muted, |k| alert_info(self.p, k).1);
                 let bar = deco_cells("│ ", Style::new().fg(color));
+                let p = self.p;
                 self.with_prefix(bar.clone(), bar, |r| {
                     if let Some(kind) = alert {
-                        let (label, color) = alert_info(*kind);
+                        let (label, color) = alert_info(p, *kind);
                         let style = Style::new().fg(color).add_modifier(Modifier::BOLD);
                         r.emit(deco_cells(label, style), Some(range.start));
                         if !children.is_empty() {
@@ -1040,12 +1035,12 @@ impl<'a> Renderer<'a> {
             Block::Rule { range } => {
                 let rule = "─".repeat(self.avail());
                 self.emit(
-                    deco_cells(&rule, Style::new().fg(palette::OVERLAY)),
+                    deco_cells(&rule, Style::new().fg(self.p.muted)),
                     Some(range.start),
                 );
             }
             Block::Html { range } => {
-                let style = Style::new().fg(palette::OVERLAY);
+                let style = Style::new().fg(self.p.muted);
                 let text = self.slice(range);
                 let mut offset = range.start;
                 for line in text.split_inclusive('\n') {
@@ -1060,7 +1055,7 @@ impl<'a> Renderer<'a> {
                 range,
                 children,
             } => {
-                let style = Style::new().fg(palette::PEACH);
+                let style = Style::new().fg(self.p.orange);
                 let tag = deco_cells(&format!("[{label}]"), style);
                 if width_of(&tag) <= 6 {
                     let mut first = tag;
@@ -1096,12 +1091,12 @@ impl<'a> Renderer<'a> {
             .max()
             .unwrap_or(1);
         for (item, number) in items.iter().zip(numbers) {
-            let mstyle = Style::new().fg(palette::BLUE);
+            let mstyle = Style::new().fg(self.p.blue);
             let pad = marker_w - UnicodeWidthStr::width(number.as_str());
             let mut first = deco_cells(&format!("{}{number} ", " ".repeat(pad)), mstyle);
             match item.task {
-                Some(true) => first.extend(deco_cells("[x] ", Style::new().fg(palette::GREEN))),
-                Some(false) => first.extend(deco_cells("[ ] ", Style::new().fg(palette::OVERLAY))),
+                Some(true) => first.extend(deco_cells("[x] ", Style::new().fg(self.p.green))),
+                Some(false) => first.extend(deco_cells("[ ] ", Style::new().fg(self.p.muted))),
                 None => {}
             }
             let rest = deco_cells(&" ".repeat(width_of(&first)), mstyle);
@@ -1126,8 +1121,8 @@ impl<'a> Renderer<'a> {
         let syntax = lang
             .and_then(find_syntax)
             .unwrap_or_else(|| ss.find_syntax_plain_text());
-        let mut hl = HighlightLines::new(syntax, code_theme());
-        let fallback = Style::new().fg(palette::GREEN);
+        let mut hl = HighlightLines::new(syntax, self.syntax);
+        let fallback = Style::new().fg(self.p.green);
         // Each line: its text and, per segment, (offset in text, source offset).
         let mut lines: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
         let mut cur: (String, Vec<(usize, usize)>) = Default::default();
@@ -1187,7 +1182,7 @@ impl<'a> Renderer<'a> {
         let syntax = ss
             .find_syntax_by_name("Markdown")
             .unwrap_or_else(|| ss.find_syntax_plain_text());
-        let mut hl = HighlightLines::new(syntax, code_theme());
+        let mut hl = HighlightLines::new(syntax, self.syntax);
         let mut offset = 0;
         for line in self.src.split_inclusive('\n') {
             let end = offset + line.len();
@@ -1204,7 +1199,7 @@ impl<'a> Renderer<'a> {
                         .map(|(st, s)| (syntect_style(st), s))
                         .collect::<Vec<_>>()
                 })
-                .unwrap_or_else(|_| vec![(base_style(), line)]);
+                .unwrap_or_else(|_| vec![(base_style(self.p), line)]);
             let mut cells = Vec::new();
             let mut b = offset;
             for (style, piece) in pieces {
@@ -1239,9 +1234,9 @@ impl<'a> Renderer<'a> {
         if ncol == 0 {
             return;
         }
-        let header_style = base_style().add_modifier(Modifier::BOLD);
+        let header_style = base_style(self.p).add_modifier(Modifier::BOLD);
         let all: Vec<(&[Range<usize>], Style)> = std::iter::once((header, header_style))
-            .chain(rows.iter().map(|r| (r.as_slice(), base_style())))
+            .chain(rows.iter().map(|r| (r.as_slice(), base_style(self.p))))
             .collect();
         let mut nat = vec![1; ncol];
         for (cells, style) in &all {
@@ -1269,7 +1264,7 @@ impl<'a> Renderer<'a> {
             }
         }
 
-        let border = Style::new().fg(palette::OVERLAY);
+        let border = Style::new().fg(self.p.muted);
         let rule = |l: &str, m: &str, r: &str| {
             let mid: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
             deco_cells(&format!("{l}{}{r}", mid.join(m)), border)
@@ -1301,9 +1296,12 @@ impl<'a> Renderer<'a> {
                         Some(Alignment::Center) => slack / 2,
                         _ => 0,
                     };
-                    row.extend(deco_cells(&" ".repeat(left + 1), base_style()));
+                    row.extend(deco_cells(&" ".repeat(left + 1), base_style(self.p)));
                     row.extend(content);
-                    row.extend(deco_cells(&" ".repeat(slack - left + 1), base_style()));
+                    row.extend(deco_cells(
+                        &" ".repeat(slack - left + 1),
+                        base_style(self.p),
+                    ));
                     row.extend(deco_cells("│", border));
                 }
                 self.emit(row, Some(anchor));
@@ -1319,12 +1317,12 @@ impl<'a> Renderer<'a> {
 // ---------------------------------------------------------------------------
 // Math
 
-fn math_style(base: Style, link: Option<usize>) -> Style {
-    let style = base.fg(palette::TEAL);
+fn math_style(p: Palette, base: Style, link: Option<usize>) -> Style {
+    let style = base.fg(p.cyan);
     if link.is_some() {
         style
             .add_modifier(Modifier::UNDERLINED)
-            .underline_color(palette::BLUE)
+            .underline_color(p.blue)
     } else {
         style
     }
@@ -1418,7 +1416,7 @@ impl Renderer<'_> {
         else {
             return Vec::new();
         };
-        let style = math_style(base, *link);
+        let style = math_style(self.p, base, *link);
         let mut toks = Vec::new();
         let mut word = Vec::new();
         let space = |word: &mut Vec<Cell>, toks: &mut Vec<Tok>, src| {
@@ -1516,7 +1514,7 @@ impl Renderer<'_> {
         let Inline::Math { tex, range, .. } = m else {
             return;
         };
-        let style = math_style(base_style(), None);
+        let style = math_style(self.p, base_style(self.p), None);
         let avail = self.avail();
         if let Some(rows) = math_grid(tex) {
             let w = rows
@@ -1527,7 +1525,7 @@ impl Renderer<'_> {
             if w <= avail {
                 let pad = " ".repeat((avail - w) / 2);
                 for row in rows {
-                    let mut cells = deco_cells(&pad, base_style());
+                    let mut cells = deco_cells(&pad, base_style(self.p));
                     cells.extend(
                         row.graphemes(true)
                             .filter_map(|g| Self::math_cell(g, range, style, None)),
@@ -1537,8 +1535,8 @@ impl Renderer<'_> {
                 return;
             }
         }
-        let toks = self.math_tokens(m, base_style());
-        let rows = wrap(toks, avail, base_style());
+        let toks = self.math_tokens(m, base_style(self.p));
+        let rows = wrap(toks, avail, base_style(self.p));
         if rows.is_empty() {
             self.emit(Vec::new(), Some(fallback));
         }
