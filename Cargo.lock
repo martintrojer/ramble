@@ -499,9 +499,9 @@ dependencies = [
 
 [[package]]
 name = "debrief-review"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b45dd13a5977314825831c64e4c343e530cb71cf5438ea4583e554eb31c1141d"
+checksum = "ee66b63d4ee581dcc33279ded1b8ad87b2ae2fc6fbb9d35ad19f875b047690c0"
 dependencies = [
  "blake3",
  "dirs",
@@ -1843,7 +1843,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "ramble"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "clap",
