@@ -292,6 +292,38 @@ fn non_markdown_target_goes_to_the_editor_with_line() {
 }
 
 #[test]
+fn binary_viewable_target_goes_to_the_system_opener() {
+    let (dir, app) = app_with("`doc.pdf:3` and `app.jar`\n", &["doc.pdf", "app.jar"]);
+    let root = dir.path().canonicalize().unwrap();
+    let opened = Rc::new(RefCell::new(Vec::<String>::new()));
+    let o = opened.clone();
+    let edits = Rc::new(RefCell::new(Vec::<(PathBuf, Option<usize>)>::new()));
+    let e = edits.clone();
+    let mut app = app
+        .with_effects(
+            move |url| o.borrow_mut().push(url.to_string()),
+            |_| panic!("plain editor unused"),
+        )
+        .with_editor(move |p, line| {
+            e.borrow_mut().push((p.to_path_buf(), line));
+            Ok(())
+        });
+    goto(&mut app, "doc.pdf");
+    keys(&mut app, "gd");
+    let pdf = root.join("doc.pdf");
+    assert_eq!(*opened.borrow(), [pdf.to_string_lossy()]);
+    assert_eq!(app.status(), "Opened doc.pdf:3");
+    assert_eq!(app.pending_effect(), None);
+    // Not on the allow-list (the opener could run it): the editor.
+    goto(&mut app, "app.jar");
+    keys(&mut app, "gd");
+    app.run_pending_effect();
+    assert_eq!(*edits.borrow(), [(root.join("app.jar"), None)]);
+    assert_eq!(opened.borrow().len(), 1);
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
 fn deleted_since_load_is_a_status() {
     let (dir, app) = app_with("`gone.txt`\n", &["gone.txt"]);
     let (mut app, fx) = recording(app);

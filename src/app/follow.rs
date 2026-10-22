@@ -113,8 +113,7 @@ impl App {
             return;
         }
         if !nav::is_markdown(&path) {
-            self.pending_effect = Some(Effect::Edit { path, line: None });
-            return;
+            return self.open_outside(path, None, as_written);
         }
         let Ok(bytes) = std::fs::read(&path) else {
             self.set_status(missing());
@@ -132,6 +131,19 @@ impl App {
                 Some(row) => self.jump_to_row(row),
                 None => self.set_status(format!("No heading #{anchor}")),
             }
+        }
+    }
+
+    /// Open a non-markdown file outside ramble: a viewable format (PDF,
+    /// image, media; see [`nav::system_viewable`]) with the system opener,
+    /// anything else in the editor at `line`. `shown` names it in status.
+    pub(super) fn open_outside(&mut self, path: PathBuf, line: Option<usize>, shown: &str) {
+        match nav::system_viewable(&path) {
+            Some(real) => {
+                (self.opener)(&real.to_string_lossy());
+                self.set_status(format!("Opened {shown}"));
+            }
+            None => self.pending_effect = Some(Effect::Edit { path, line }),
         }
     }
 

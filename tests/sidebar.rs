@@ -894,7 +894,7 @@ fn enter_opens_file_and_pushes_history_with_sidebar_mode() {
 }
 
 #[test]
-fn non_markdown_from_tree_goes_to_editor() {
+fn text_from_tree_goes_to_editor() {
     let (_d, root) = fixture();
     let mut c = config(SidebarMode::Files);
     c.sidebar.show_all = true;
@@ -914,6 +914,78 @@ fn non_markdown_from_tree_goes_to_editor() {
         })
     );
     assert!(app.page().is_none());
+}
+
+/// The fixture with `show_all`, the files pane focused on `rel`.
+fn files_pane_on(root: &Path, rel: &str) -> App {
+    let mut c = config(SidebarMode::Files);
+    c.sidebar.show_all = true;
+    let mut app = app_on(root, StartTarget::Dir(root.to_path_buf()), c);
+    win(&mut app, 'h');
+    let want = root.join(rel);
+    for _ in 0..50 {
+        let sel = app.tree().unwrap().selected().map(Path::to_path_buf);
+        match sel {
+            Some(p) if p == want => return app,
+            // `l` expands an ancestor directory and keeps it selected.
+            Some(p) if p.is_dir() && want.starts_with(&p) => keys(&mut app, "lj"),
+            _ => keys(&mut app, "j"),
+        }
+    }
+    panic!("{rel} not reached in the tree");
+}
+
+#[test]
+fn viewable_from_tree_goes_to_the_system_opener() {
+    let (_d, root) = fixture();
+    let opened = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let o = opened.clone();
+    let mut app = files_pane_on(&root, "img/logo.png").with_effects(
+        move |url| o.borrow_mut().push(url.to_string()),
+        |_| panic!("no editor"),
+    );
+    keys(&mut app, "o");
+    let png = root.join("img/logo.png");
+    assert_eq!(*opened.borrow(), [png.to_string_lossy()]);
+    assert_eq!(app.pending_effect(), None);
+    assert!(app.page().is_none());
+}
+
+/// A FIFO in the tree goes to the editor without being opened: opening
+/// one for reading blocks until a writer appears, which froze the TUI.
+#[cfg(unix)]
+#[test]
+fn fifo_from_tree_goes_to_editor_without_blocking() {
+    let (_d, root) = fixture();
+    let fifo = root.join("build.log");
+    let ok = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "mkfifo failed");
+    let mut app = files_pane_on(&root, "build.log");
+    let (tx, rx) = std::sync::mpsc::channel();
+    // Bound the hang: if `o` blocks, open the FIFO for writing from a
+    // helper after the timeout so the test fails instead of hanging.
+    let path = fifo.clone();
+    let guard = std::thread::spawn(move || {
+        if rx.recv_timeout(std::time::Duration::from_secs(5)).is_err() {
+            let _ = std::fs::OpenOptions::new().write(true).open(&path);
+            return true;
+        }
+        false
+    });
+    keys(&mut app, "o");
+    tx.send(()).unwrap();
+    assert!(!guard.join().unwrap(), "`o` on a FIFO blocked");
+    assert_eq!(
+        app.pending_effect(),
+        Some(&Effect::Edit {
+            path: fifo,
+            line: None
+        })
+    );
 }
 
 #[test]

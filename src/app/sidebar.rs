@@ -1610,10 +1610,8 @@ impl App {
                     }
                     self.sidebar_relayout(true);
                 } else if !item.markdown {
-                    self.pending_effect = Some(super::Effect::Edit {
-                        path: item.path,
-                        line: None,
-                    });
+                    let shown = item.path.display().to_string();
+                    self.open_outside(item.path, None, &shown);
                 } else {
                     self.open_from_tree(&item.path);
                 }

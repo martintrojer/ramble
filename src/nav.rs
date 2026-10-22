@@ -170,7 +170,53 @@ fn hex(c: u8) -> Option<u8> {
     (c as char).to_digit(16).map(|d| d as u8)
 }
 
-/// Extensions ramble opens itself; anything else goes to the editor.
+/// Extensions of formats handed to the system opener (`open` /
+/// `xdg-open`): documents, images, audio and video, whose default
+/// handlers are viewers. An allow-list: archives, installers, scripts,
+/// executables and anything unknown go to the editor instead, because
+/// the system opener runs some of them (Terminal.app runs an executable
+/// or a `.terminal` file).
+#[rustfmt::skip]
+const VIEWABLE_EXTENSIONS: &[&str] = &[
+    // Documents
+    "pdf", "epub", "djvu", "docx", "xlsx", "pptx", "odt", "ods", "odp",
+    // Images (not svg: it is text)
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico", "heic", "heif", "avif",
+    // Audio and video
+    "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "aiff", "mp4", "m4v", "mov",
+    "mkv", "webm", "avi",
+];
+
+/// The path to hand to the system opener for a linked non-markdown file,
+/// or `None` for the editor. `path` is resolved first (a symlink is judged
+/// by its target, and the target is what gets opened), and must be a
+/// regular file without an execute bit whose extension is on the
+/// allow-list. Nothing is read, so a FIFO or device never blocks.
+pub fn system_viewable(path: &Path) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(path).ok()?;
+    let meta = std::fs::metadata(&real).ok()?;
+    if !meta.is_file() || is_executable(&meta) {
+        return None;
+    }
+    let ext = real.extension()?.to_str()?;
+    VIEWABLE_EXTENSIONS
+        .iter()
+        .any(|v| ext.eq_ignore_ascii_case(v))
+        .then_some(real)
+}
+
+#[cfg(unix)]
+fn is_executable(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Extensions ramble opens itself; see [`system_viewable`] for the rest.
 pub fn is_markdown(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         ["md", "markdown", "mdown", "mkd"]

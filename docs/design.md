@@ -78,8 +78,8 @@ Enumerations accept only their documented values; there are no aliases.
   an existing regular file into links: relative, absolute or `~/` paths,
   optionally `:LINE[:COL]`; no whitespace, at most 512 bytes, not URLs.
   Relative paths are tried against the page's folder, its VCS root, then the
-  tree root. A markdown target opens in ramble at LINE; anything else in the
-  editor with `+LINE`. Backends never touch them.
+  tree root. A markdown target opens in ramble at LINE; anything else as a
+  followed link does (below), the editor getting `+LINE`. Backends never touch them.
 
 ### render
 
@@ -152,8 +152,13 @@ requests only).
 `documentLink`, else (server) `definition`, else the local parse. URLs and
 same-page anchors are always local. In the local parse a wikilink without an
 extension gets `.md`, and so does a markdown link when only the `.md` file
-exists. Markdown opens in ramble, URLs with `open`/`xdg-open`, other files in
-the editor. An unresolvable link leaves history unchanged.
+exists. Markdown opens in ramble. URLs open with `open`/`xdg-open`, and so do
+viewable files: after resolving symlinks, a regular file without an execute
+bit whose extension is on an allow-list of documents, images, audio and video
+(`.pdf`, `.png`, `.mp4`, ...). Everything else goes to the editor: the system
+opener runs executables and some binary formats (`.terminal`), and a link in
+an untrusted document must not run code. Nothing is read to decide. The file
+tree and code-path links follow the same rule. An unresolvable link leaves history unchanged.
 
 ### Notebook operations
 

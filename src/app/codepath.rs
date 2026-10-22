@@ -4,7 +4,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use super::{App, Effect};
+use super::App;
 use crate::doc::{Document, Link, LinkKind};
 use crate::nav;
 
@@ -128,18 +128,14 @@ impl App {
     }
 
     /// Follow a code-path link: markdown opens here at its line, anything
-    /// else goes to the editor with the line.
+    /// else outside ([`App::open_outside`], the editor with the line).
     pub(super) fn follow_code_path(&mut self, link: &Link) {
         let Some(path) = link.resolved.clone().filter(|p| p.is_file()) else {
             self.set_status(format!("No such file: {}", link.dest));
             return;
         };
         if !nav::is_markdown(&path) {
-            self.pending_effect = Some(Effect::Edit {
-                path,
-                line: link.line,
-            });
-            return;
+            return self.open_outside(path, link.line, &link.dest);
         }
         self.open_link_file(path, None, &link.dest);
         let Some(line) = link.line else { return };

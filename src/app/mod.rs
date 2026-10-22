@@ -219,9 +219,11 @@ pub struct App {
     history: History,
     /// Text of the current page when it came from stdin (kept for history).
     stdin: Option<Arc<String>>,
-    /// Opens an external URL (`open` / `xdg-open` by default).
+    /// Opens an external URL or a viewable file (PDF, image, media) with
+    /// `open` / `xdg-open` by default.
     opener: Box<dyn FnMut(&str)>,
-    /// Edits a non-markdown file (`$VISUAL` / `$EDITOR` / `vi` by default).
+    /// Edits any other non-markdown file (`$VISUAL` / `$EDITOR` / `vi` by
+    /// default).
     editor: Box<Editor>,
     /// A side effect to run outside the TUI; `run` drains it.
     pending_effect: Option<Effect>,
@@ -399,8 +401,8 @@ impl App {
         std::mem::take(&mut self.term_out.borrow_mut())
     }
 
-    /// Replace the side effects: `opener` gets external URLs, `editor`
-    /// gets non-markdown files. Tests pass recording closures.
+    /// Replace the side effects: `opener` gets external URLs and viewable
+    /// files, `editor` other non-markdown files. Tests pass recording closures.
     pub fn with_effects(
         mut self,
         opener: impl FnMut(&str) + 'static,

@@ -896,6 +896,22 @@ fn non_markdown_link_goes_to_injected_editor() {
 }
 
 #[test]
+fn pdf_link_goes_to_the_system_opener() {
+    let (dir, mut app, fx) = nav_app_with("# A\n\n[p](doc.pdf)\n");
+    std::fs::write(dir.path().join("doc.pdf"), "%PDF-1.7\n").unwrap();
+    goto_text(&mut app, "p");
+    keys(&mut app, "gd");
+    // The opener gets the resolved path (`/var` is `/private/var` on macOS).
+    let pdf = dir.path().join("doc.pdf").canonicalize().unwrap();
+    assert_eq!(fx.borrow().opened, [pdf.to_string_lossy()]);
+    assert_eq!(app.status(), "Opened doc.pdf");
+    assert_eq!(app.pending_effect(), None);
+    assert!(fx.borrow().edited.is_empty());
+    assert_eq!(page_path(&app), dir.path().join("a.md"));
+    assert_eq!(app.history_depth(), 0);
+}
+
+#[test]
 fn gd_off_a_link_is_a_status() {
     let (_d, mut app, _fx) = nav_app();
     keys(&mut app, "gd");

@@ -101,6 +101,60 @@ fn is_markdown_extensions() {
     }
 }
 
+#[test]
+fn system_viewable_is_an_allow_list_of_plain_regular_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let file = |name: &str, bytes: &[u8]| {
+        let p = root.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p
+    };
+    let viewable = |p: &Path| nav::system_viewable(p);
+    let pdf = file("a.PDF", b"%PDF-1.7\n");
+    assert_eq!(viewable(&pdf), Some(pdf.clone()), "case-insensitive");
+    assert!(viewable(&file("a.png", b"png")).is_some());
+    for p in [
+        file("a.txt", b"plain\n"),
+        file("Makefile", b"all:\n"),
+        // Binary content, or a format the opener may run: the editor.
+        file("a.bin", b"\x7fELF\0\0"),
+        file("evil.terminal", b"bplist00\0"),
+        file("lib.dylib", b"x"),
+        file("app.jar", b"PK\0"),
+        file("i.pkg", b"x"),
+    ] {
+        assert_eq!(viewable(&p), None, "{}", p.display());
+    }
+    assert_eq!(viewable(&root.join("gone.pdf")), None);
+    assert_eq!(viewable(&root), None, "a directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn system_viewable_resolves_symlinks_and_refuses_executables() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let script = root.join("setup");
+    std::fs::write(&script, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let pic = root.join("pic.png");
+    std::os::unix::fs::symlink(&script, &pic).unwrap();
+    assert_eq!(nav::system_viewable(&pic), None, "judged by the target");
+
+    let exec_pdf = root.join("x.pdf");
+    std::fs::write(&exec_pdf, "%PDF").unwrap();
+    std::fs::set_permissions(&exec_pdf, std::fs::Permissions::from_mode(0o744)).unwrap();
+    assert_eq!(nav::system_viewable(&exec_pdf), None, "execute bit");
+
+    let real = root.join("real.pdf");
+    std::fs::write(&real, "%PDF").unwrap();
+    let alias = root.join("alias.pdf");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    assert_eq!(nav::system_viewable(&alias), Some(real), "opens the target");
+}
+
 fn e(name: &str, row: usize) -> Entry {
     Entry {
         page: PageRef::File(PathBuf::from(name)),

@@ -40,7 +40,8 @@ ramble --init-config         # write ~/.config/ramble/config.toml
 ## Links
 
 - `gd`, `Enter` or `C-]` follows the link: markdown opens in ramble,
-  `#anchors` jump, URLs open in the browser, other files open in your editor.
+  `#anchors` jump, URLs open in the browser, PDFs, images, audio and video
+  open with `open` / `xdg-open`, and other files open in your editor.
 - Inline code naming a real file is a link: `` `src/main.rs:12` `` opens it at
   line 12.
 - `C-o` / `Tab` go back and forward; each page keeps its cursor, scroll and
