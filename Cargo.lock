@@ -1275,9 +1275,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13a94ea4a4d357e55dd69e6359fd34f17a3162a9ae93e1bb4b08b26e9dc75c23"
+checksum = "106af54db7023f939cf63bb39df61a7cf4907f16e7f8515e0cb6383ffcf83b13"
 dependencies = [
  "mdroots-core",
  "mdroots-index",
@@ -1290,9 +1290,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-core"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c832e387c7af43cd1209a98c372b96a76dc2a7c838694088fbe6b8c49672bf2b"
+checksum = "63e4b0f651dd3bafd0895c68d7779e0723675168a6e5ec298c5a660eef99619e"
 dependencies = [
  "mdroots-resolve",
  "mdroots-syntax",
@@ -1300,9 +1300,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-index"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f3707465c44db2960bb59eb893ad7fe22b3b5aa68bbb56b2c9a67391df233f1"
+checksum = "34b0a2f84f78cb4c770cee8e3145991ac92c518bcbbd60c1842fdd4119b484c7"
 dependencies = [
  "mdroots-core",
  "mdroots-roots",
@@ -1312,9 +1312,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-resolve"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aca4a574b788cd1472bca8df1e544992f05716631022e5958f2c0c9404429080"
+checksum = "eb9329f2c03bef4485e8f017a0f09c324793603548d7dfca321dfd188b6a945d"
 dependencies = [
  "mdroots-syntax",
  "serde_json",
@@ -1324,9 +1324,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-roots"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9cc1218236d49fba68fd2a179ce5ec64710904e371f46107399666eb665d18c"
+checksum = "3aa58d2be7dcb75630e9b2fba966a117309d42a912dd04d6ddcf993d72ad02a3"
 dependencies = [
  "ignore",
  "mdroots-core",
@@ -1335,9 +1335,9 @@ dependencies = [
 
 [[package]]
 name = "mdroots-syntax"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4ed2c75a78086f2fea5b66a76a4de0e9b833b5bbafc6a08b5db0e88dcc7a800"
+checksum = "166a2b9958d2c329014eda6ae629a487de8984aae6104aa67c0f9e1a78ad9da3"
 dependencies = [
  "pulldown-cmark",
  "saphyr",
@@ -1843,7 +1843,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "ramble"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "clap",
