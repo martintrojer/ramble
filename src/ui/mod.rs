@@ -10,6 +10,7 @@ mod help;
 mod hints;
 mod hover;
 mod picker;
+pub mod scrollbar;
 pub(crate) mod sidebar;
 mod status;
 
@@ -25,6 +26,7 @@ use crate::config::SidebarSide;
 /// content or over it), content view, status line.
 /// Records where everything went in the app's layout (for the mouse).
 pub fn draw(frame: &mut Frame, app: &App) {
+    app.scrollbars().next_frame();
     let p = app.theme().palette;
     // `fill`: the theme background and text colour under everything; what
     // a widget clears is filled again after its clear.

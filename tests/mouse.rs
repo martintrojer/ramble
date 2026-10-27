@@ -904,7 +904,8 @@ fn long_outline() -> T {
     t
 }
 
-/// The outline rows as drawn (title excluded), trimmed.
+/// The outline rows as drawn (title excluded), trimmed, without the
+/// scrollbar on the right edge.
 fn outline_rows(t: &mut T) -> Vec<String> {
     let pane = t.app.layout().outline.expect("outline drawn").pane;
     let rows = t.draw();
@@ -915,9 +916,46 @@ fn outline_rows(t: &mut T) -> Vec<String> {
                 .skip(pane.x as usize)
                 .take(pane.width as usize)
                 .collect();
-            r.trim_matches(|c: char| c == ' ' || c == '▎').to_string()
+            r.trim_end_matches('┃')
+                .trim_matches(|c: char| c == ' ' || c == '▎')
+                .to_string()
         })
         .collect()
+}
+
+/// The page's right column: the scrollbar's, when it shows.
+fn page_bar(t: &mut T) -> String {
+    let text = t.app.layout().text.expect("page drawn");
+    let rows = t.draw();
+    (text.y..text.bottom())
+        .filter_map(|y| rows[y as usize].chars().nth(text.right() as usize - 1))
+        .collect()
+}
+
+/// The page shows a scrollbar once it scrolls (it hides after
+/// `SHOW_FOR`; that timing is the unit test's), not before, and never
+/// with `[render] scrollbars = false`.
+#[test]
+fn the_page_shows_a_scrollbar_after_it_scrolls_unless_turned_off() {
+    let mut t = long_outline();
+    assert!(!page_bar(&mut t).contains('┃'), "no scroll yet");
+    t.keys("G");
+    let bar = page_bar(&mut t);
+    // No arrows: the thumb reaches the last row.
+    assert!(bar.ends_with('┃'), "scrolled: {bar:?}");
+    assert!(!bar.contains(['▲', '▼']), "no arrows: {bar:?}");
+
+    let mut t = setup_with(SidebarMode::Auto, |c| c.render.scrollbars = false);
+    let page: String = (1..=80)
+        .map(|i| format!("## H{i}\n\ntext {i}\n\n"))
+        .collect();
+    std::fs::write(t.root.join("a.md"), page).unwrap();
+    t.app
+        .handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE));
+    t.draw();
+    t.keys("G");
+    let bar = page_bar(&mut t);
+    assert!(!bar.contains('┃'), "off: {bar:?}");
 }
 
 #[test]

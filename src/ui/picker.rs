@@ -89,6 +89,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea>
         &mut state,
     );
     hit.skip = state.offset();
+    super::scrollbar::draw(frame, app, "picker", list, count, hit.skip);
     let shown = count.saturating_sub(hit.skip).min(list.height as usize) as u16;
     hit.items = Rect::new(list.x, list.y, list.width, shown);
     Some(hit)

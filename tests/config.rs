@@ -34,6 +34,7 @@ fn defaults_match_spec() {
     let c = Config::default();
     assert_eq!(c.render.max_width, 100);
     assert!(c.render.math);
+    assert!(c.render.scrollbars);
     assert_eq!(c.sidebar.show, SidebarShow::Always);
     assert_eq!(c.sidebar.default, SidebarMode::Auto);
     assert_eq!(c.sidebar.width, SidebarWidth::Auto);
@@ -74,12 +75,13 @@ fn defaults_match_spec() {
 #[test]
 fn partial_override_keeps_other_defaults() {
     let c = load_str(
-        "[render]\nmax_width = 72\nmath = false\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\npane_nav = false\n[review]\nenabled = false\n",
+        "[render]\nmax_width = 72\nmath = false\nscrollbars = false\n[sidebar]\ndefault = \"split\"\n[keys]\nleader = \",\"\npane_nav = false\n[review]\nenabled = false\n",
     )
     .unwrap();
     let mut want = Config::default();
     want.render.max_width = 72;
     want.render.math = false;
+    want.render.scrollbars = false;
     want.sidebar.default = SidebarMode::Split;
     want.keys.leader = ',';
     want.keys.pane_nav = false;

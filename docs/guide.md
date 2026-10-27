@@ -25,6 +25,8 @@ ramble --init-config         # write ~/.config/ramble/config.toml
   actually write: `py3`, `shell`, `rust,ignore`, `{.python}`.
 - LaTeX as Unicode: `$E = mc^2$` reads as E = mc², `$$\frac{a+b}{c}$$` is a
   stacked fraction. `[render] math = false` shows the source.
+- A scrollbar shows on a long list's right edge for a second after it
+  scrolls; `[render] scrollbars = false` turns it off.
 - Front matter folds to `▸ front matter · 5 keys`; `za` or `Enter` expands it.
 - `gR` toggles the highlighted raw source; every motion still works.
 - Live reload keeps your place. `R` (or `:e`) re-reads the page and the tree.

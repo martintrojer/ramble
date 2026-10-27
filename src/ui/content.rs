@@ -130,6 +130,9 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) {
         buf.set_style(Rect::new(x, y, 1, 1), style);
     }
 
+    let total = page.rendered.lines.len();
+    super::scrollbar::draw(frame, app, "page", area, total, top);
+
     if let Some(banner) = app.banner() {
         let rect = Rect::new(area.x, area.y, area.width, 1.min(area.height));
         frame.render_widget(

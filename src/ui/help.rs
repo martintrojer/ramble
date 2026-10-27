@@ -76,5 +76,7 @@ pub(super) fn draw(frame: &mut Frame, app: &App, area: Rect) -> Option<Rect> {
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).style(base), list);
+    let total = view.lines.len();
+    super::scrollbar::draw(frame, app, "help", list, total, view.scroll);
     Some(rect)
 }

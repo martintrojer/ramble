@@ -17,6 +17,10 @@
 # Draw LaTeX math ($…$, $$…$$, ```math) as Unicode; false shows the source.
 # math = true
 
+# A scrollbar on the right edge of a long list (page, file tree, outline,
+# help, pickers), shown for a second after the list scrolls.
+# scrollbars = true
+
 
 # ── Theme ───────────────────────────────────────────────────────────────────
 

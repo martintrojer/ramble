@@ -274,6 +274,8 @@ pub struct App {
     /// Where the last frame drew everything; set by `ui::draw`.
     layout: std::cell::Cell<Layout>,
     mouse: mouse::MouseState,
+    /// When each list's scrollbar last moved (it auto-hides).
+    scrollbars: crate::ui::scrollbar::Scrollbars,
 }
 
 impl App {
@@ -342,6 +344,7 @@ impl App {
             clue: Default::default(),
             layout: Default::default(),
             mouse: Default::default(),
+            scrollbars: Default::default(),
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -490,6 +493,16 @@ impl App {
     /// First visible rendered row.
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// The settings this run started with.
+    pub fn config(&self) -> &crate::config::Config {
+        &self.config
+    }
+
+    /// The lists' auto-hiding scrollbars.
+    pub fn scrollbars(&self) -> &crate::ui::scrollbar::Scrollbars {
+        &self.scrollbars
     }
 
     /// The colours and render options of this run.

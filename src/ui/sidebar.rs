@@ -110,6 +110,7 @@ fn list_skip(prev: usize, selected: Option<usize>, body: usize, len: usize) -> u
 /// returns where the items went (for mouse hit-testing).
 fn draw_list(
     frame: &mut Frame,
+    (app, bar): (&App, &'static str),
     area: Rect,
     head: Line,
     rows: Vec<Line>,
@@ -127,9 +128,12 @@ fn draw_list(
         items: Rect::new(area.x, area.y + 1, area.width, shown),
         skip,
     };
+    let total = rows.len();
     let mut lines = vec![head];
     lines.extend(rows.into_iter().skip(skip).take(body));
     frame.render_widget(Paragraph::new(lines), area);
+    let below_head = Rect::new(area.x, area.y + 1, area.width, body as u16);
+    super::scrollbar::draw(frame, app, bar, below_head, total, skip);
     if let Some(s) = selected
         && body > 0
     {
@@ -170,6 +174,7 @@ fn draw_files(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     let focused = app.focus() == Focus::Files;
     Some(draw_list(
         frame,
+        (app, "files"),
         area,
         title(p, files_title(app, tree, width), focused),
         rows,
@@ -242,6 +247,7 @@ fn draw_outline(frame: &mut Frame, app: &App, area: Rect) -> Option<ListArea> {
     let focused = app.focus() == Focus::Outline;
     Some(draw_list(
         frame,
+        (app, "outline"),
         area,
         title(p, clip_end(OUTLINE_TITLE, width), focused),
         rows,

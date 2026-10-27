@@ -71,6 +71,9 @@ pub struct RenderConfig {
     pub max_width: u16,
     /// Convert LaTeX math to Unicode; off shows the raw source.
     pub math: bool,
+    /// A scrollbar on a long list's right edge for a second after it
+    /// scrolls.
+    pub scrollbars: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -310,6 +313,7 @@ impl Default for Config {
             render: RenderConfig {
                 max_width: 100,
                 math: true,
+                scrollbars: true,
             },
             theme: ThemeConfig::default(),
             sidebar: SidebarConfig {
@@ -377,6 +381,7 @@ struct RawRender {
     /// Deprecated for `[theme] name`; only [`THEME`] is accepted.
     theme: Option<toml::Spanned<String>>,
     math: Option<bool>,
+    scrollbars: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -530,6 +535,7 @@ impl Config {
                     .push("[render] theme is deprecated; use [theme] name".into());
             }
             set(&mut c.render.math, r.math);
+            set(&mut c.render.scrollbars, r.scrollbars);
         }
         if let Some(t) = raw.theme {
             c.theme.fill = t.fill;
