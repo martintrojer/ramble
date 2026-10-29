@@ -10,6 +10,7 @@ Every config option, with its default, is in
 ```sh
 ramble notes/index.md        # read a file
 ramble --line 42 notes/a.md  # open with the cursor on source line 42
+ramble --follow notes/a.md   # preview beside your editor, following its cursor
 ramble notes/                # browse a folder
 cat README.md | ramble       # read stdin (keys come from the terminal)
 ramble --print doc.md        # render once to stdout
@@ -98,6 +99,66 @@ these keys to panes it thinks run vim; add ramble to its pattern:
 
 ```tmux
 set -g @vim_navigator_pattern '(\S+/)?g?\.?(view|l?n?vim?x?|fzf|debrief|ramble)(diff)?(-wrapped)?'
+```
+
+## Following your editor
+
+Run ramble as a live preview next to your editor:
+
+```sh
+tmux split-window -h ramble --follow notes/a.md
+```
+
+It re-renders on save, and with `--follow` it also moves to where your
+editor's cursor is:
+
+- The cursor moves to that line. The view scrolls only when the line is
+  off screen, and then centres it.
+- When the editor moves to another markdown file, ramble opens it (`C-o`
+  goes back). Other files are ignored.
+- Using ramble yourself (a key, a click or scroll, a paste) pauses
+  following for 2 seconds, and following waits while a prompt, picker,
+  comment box, visual mode or half-typed key sequence is open.
+- Inside tmux, ramble follows only editors in its own tmux window, so two
+  editor + preview pairs don't drag each other around.
+
+The editor tells ramble with `ramble --goto FILE:LINE`. It finds the
+following rambles (sockets in `$XDG_RUNTIME_DIR/ramble-<uid>/`, else
+`$TMPDIR`, else `/tmp`), picks those in its own tmux window, and exits 0
+even when none is listening. It takes a few milliseconds, so an editor can
+run it on each cursor move. Linux and macOS only.
+
+For nvim, put this in your config (e.g. `~/.config/nvim/plugin/ramble.lua`):
+
+```lua
+if vim.fn.executable("ramble") == 0 then
+	return
+end
+
+local last, timer
+
+local function send()
+	local path = vim.api.nvim_buf_get_name(0)
+	if path == "" then
+		return
+	end
+	local target = path .. ":" .. vim.api.nvim_win_get_cursor(0)[1]
+	if target == last then
+		return
+	end
+	last = target
+	vim.system({ "ramble", "--goto", target })
+end
+
+vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {
+	group = vim.api.nvim_create_augroup("ramble_follow", {}),
+	pattern = { "*.md", "*.markdown", "*.mdown", "*.mkd" },
+	callback = function()
+		timer = timer or vim.uv.new_timer()
+		timer:stop()
+		timer:start(50, 0, vim.schedule_wrap(send))
+	end,
+})
 ```
 
 ## Comments

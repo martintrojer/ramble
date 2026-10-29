@@ -15,6 +15,7 @@ mod clue;
 mod cmdline;
 mod codepath;
 mod comment;
+mod editor_follow;
 mod effect;
 mod fold;
 mod follow;
@@ -61,6 +62,7 @@ pub use clue::{CLUE_DELAY, ClueRow};
 pub use cmdline::CmdAction;
 pub use codepath::resolve as resolve_code_path;
 pub use comment::{CommentAction, CommentBox, EMPTY_COMMENT, NO_SOURCE_LINE};
+pub use editor_follow::FOLLOW_GRACE;
 pub use effect::{Clipboard, Effect, osc52};
 pub use help::{HelpAction, HelpLine, HelpView, help_list_rows, help_rect};
 pub use hints::{HINT_ALPHABET, hint_labels};
@@ -175,6 +177,9 @@ pub enum AppEvent {
     Mouse(MouseEvent, Instant),
     /// Text pasted into the terminal (bracketed paste).
     Paste(String),
+    /// The editor's cursor (`--follow`): 1-based source line of a file,
+    /// and when it arrived.
+    Follow(PathBuf, usize, Instant),
 }
 
 /// `text` as one prompt line: each line break (`\r\n`, `\n`, `\r`) and
@@ -276,6 +281,9 @@ pub struct App {
     mouse: mouse::MouseState,
     /// When each list's scrollbar last moved (it auto-hides).
     scrollbars: crate::ui::scrollbar::Scrollbars,
+    /// `--follow`: editor updates are dropped until then (the reader just
+    /// used ramble).
+    follow_quiet_until: Option<Instant>,
 }
 
 impl App {
@@ -345,6 +353,7 @@ impl App {
             layout: Default::default(),
             mouse: Default::default(),
             scrollbars: Default::default(),
+            follow_quiet_until: None,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,
@@ -439,15 +448,28 @@ impl App {
     /// Process one event from the loop.
     pub fn event(&mut self, ev: AppEvent) {
         match ev {
-            AppEvent::Key(key) => self.handle_key(key),
+            AppEvent::Key(key) => {
+                self.follow_touch(Instant::now());
+                self.handle_key(key);
+            }
             AppEvent::Resize(cols, rows) => {
                 self.sidebar_terminal_resized(cols, rows);
             }
             AppEvent::Tick(now) => self.tick(now),
             AppEvent::FsWatch(path, ev) => self.fs_event(&path, ev),
             AppEvent::Lsp(ev) => self.lsp_event(ev),
-            AppEvent::Mouse(m, now) => self.clearing_stale_status(|a| a.mouse(m, now)),
-            AppEvent::Paste(text) => self.paste(&text),
+            AppEvent::Mouse(m, now) => {
+                // Hovering on the way to another pane isn't using ramble.
+                if m.kind != crossterm::event::MouseEventKind::Moved {
+                    self.follow_touch(now);
+                }
+                self.clearing_stale_status(|a| a.mouse(m, now));
+            }
+            AppEvent::Paste(text) => {
+                self.follow_touch(Instant::now());
+                self.paste(&text);
+            }
+            AppEvent::Follow(path, line, now) => self.follow_event(&path, line, now),
         }
     }
 

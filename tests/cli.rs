@@ -501,3 +501,71 @@ fn line_is_a_positive_number() {
     assert!(parse(&["--line", "0", "f.md"]).is_err());
     assert!(parse(&["--line", "x", "f.md"]).is_err());
 }
+
+#[test]
+fn goto_resolves_file_against_cwd_and_splits_on_the_last_colon() {
+    let fx = fixture();
+    let cwd = fx.home.as_path();
+    let p = plan(
+        &args(&["--goto", "a:b.md:12"]),
+        &mut env(cwd, cwd),
+        &Config::default(),
+    );
+    match p {
+        Plan::Goto(path, line) => {
+            assert_eq!(path, cwd.join("a:b.md"));
+            assert_eq!(line, 12);
+        }
+        other => panic!("expected Goto, got {other:?}"),
+    }
+}
+
+#[test]
+fn goto_rejects_a_bad_line_and_other_modes() {
+    for argv in [
+        &["--goto", "a.md"][..],
+        &["--goto", "a.md:0"],
+        &["--goto", "a.md:x"],
+        &["--goto", ":3"],
+        &["--goto", "a.md:3", "--follow"],
+        &["--goto", "a.md:3", "b.md"],
+        &["--follow", "--print", "a.md"],
+    ] {
+        let parsed = Args::try_parse_from(std::iter::once("ramble").chain(argv.iter().copied()));
+        assert!(parsed.is_err(), "{argv:?} should not parse");
+    }
+}
+
+#[test]
+fn follow_needs_a_terminal() {
+    let fx = fixture();
+    let cwd = fx.home.as_path();
+    let mut e = env(cwd, cwd);
+    e.stdout_is_tty = false;
+    // With a file, so the --print fall-through can't produce the error.
+    let file = fx.file.to_str().unwrap();
+    match plan(&args(&["--follow", file]), &mut e, &Config::default()) {
+        Plan::UsageError { code, msg } => {
+            assert_eq!(code, 2);
+            assert!(msg.contains("--follow"), "{msg}");
+        }
+        other => panic!("expected UsageError, got {other:?}"),
+    }
+}
+
+#[test]
+fn goto_ignores_a_broken_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config.toml");
+    fs::write(&cfg, "[render\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ramble"))
+        .arg("--config")
+        .arg(&cfg)
+        .args(["--goto", "a.md:3"])
+        .env("XDG_RUNTIME_DIR", dir.path())
+        .env_remove("TMUX")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stderr.is_empty(), "{out:?}");
+}

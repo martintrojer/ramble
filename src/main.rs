@@ -15,7 +15,7 @@ fn main() -> ExitCode {
     let args = Args::parse();
     let mut env = Env::from_process();
 
-    let config = if args.init_config {
+    let config = if args.init_config || args.goto.is_some() {
         Config::default()
     } else {
         let path = args.config.clone().or_else(Config::default_path);
@@ -42,6 +42,7 @@ fn main() -> ExitCode {
                 Err(e) => fail(format!("ramble: {e:#}"), 1),
             }
         }
+        Plan::Goto(path, line) => goto(&path, line),
         Plan::Print {
             bytes,
             label,
@@ -72,10 +73,31 @@ fn main() -> ExitCode {
             if let Some(dir) = std::env::var_os("MDROOTS_CACHE_DIR") {
                 opts.mdroots = app::MdrootsOptions::cache_dir(dir.into());
             }
-            match app::run(*opts, args.line.map(|l| l as usize)) {
+            if args.follow && cfg!(not(unix)) {
+                return fail("ramble: --follow needs Linux or macOS", 2);
+            }
+            match app::run(*opts, args.line.map(|l| l as usize), args.follow) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => fail(format!("ramble: {e:#}"), 1),
             }
         }
     }
+}
+
+/// `--goto`: tell following rambles in this scope, always succeeding.
+#[cfg(unix)]
+fn goto(path: &std::path::Path, line: usize) -> ExitCode {
+    use ramble::follow_sock;
+    follow_sock::send_all(
+        &follow_sock::default_dir(),
+        &follow_sock::current_scope(),
+        line,
+        path,
+    );
+    ExitCode::SUCCESS
+}
+
+#[cfg(not(unix))]
+fn goto(_: &std::path::Path, _: usize) -> ExitCode {
+    fail("ramble: --goto needs Linux or macOS", 2)
 }

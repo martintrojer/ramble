@@ -25,7 +25,8 @@ How ramble works. For what it does from the user's side, see the
 
 ```
 ramble
-├── cli      args → tree root, start target, TTY detection, --print, --init-config
+├── cli      args → tree root, start target, TTY detection, --print, --init-config, --goto
+├── follow_sock  --follow socket (listen) and --goto (send); Unix only
 ├── config   TOML over built-in defaults
 ├── doc      pulldown-cmark layout parse + mdroots::syntax → Document
 ├── render   Document + width + theme → RenderedPage { lines, srcmap }
@@ -34,7 +35,7 @@ ramble
 ├── notebook notebook operations → mdroots | zk adapter | LSP | local
 ├── nav      history of pages; back/forward
 ├── ui       ratatui widgets only, no logic
-└── app      event loop: key | mouse | fs-watch | mdroots | lsp | resize | tick → state → draw
+└── app      event loop: key | mouse | fs-watch | follow | mdroots | lsp | resize | tick → state → draw
 ```
 
 Rust stack: ratatui, crossterm, pulldown-cmark, mdroots, syntect, lsp-types,
@@ -338,6 +339,21 @@ removes one. `:Launch <name>` runs one by name.
   `g? help` hint that is dropped first when space is short.
 - **Errors:** a deleted file shows a banner and keeps its content; an
   unresolvable link shows a message.
+
+## Following the editor
+
+`--follow` listens on `ramble-<uid>/<scope>.<pid>.sock` under
+`$XDG_RUNTIME_DIR` (else `$TMPDIR`, else `/tmp`). Editor hooks and
+`--goto` write `<line> <absolute path>` lines to it. The scope is the tmux
+window (`t<server pid>w<window id>`, looked up once), or `any` outside
+tmux. Senders reach their own scope plus `any`, and a sender outside tmux
+reaches everything; senders refuse a socket directory that isn't ours
+and 0700. A key, click, scroll or paste starts a 2 s grace window in
+which updates are dropped, as they are outside Normal mode or with a key
+sequence half typed. A drop
+guard removes the socket on exit or panic. A signal leaves it behind, and
+the next sender deletes it on `ECONNREFUSED`. Why, and the alternatives:
+[spec](specs/2026-10-22-follow-cursor.md).
 
 ## Testing
 

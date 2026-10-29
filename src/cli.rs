@@ -35,6 +35,34 @@ pub struct Args {
     /// Config file to use instead of the default location.
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
+    /// Follow the editor's cursor: move to where `--goto` (or an editor
+    /// hook) says it is.
+    #[arg(long, conflicts_with = "print")]
+    pub follow: bool,
+    /// Tell following rambles the editor's cursor is on FILE:LINE, then exit.
+    #[arg(
+        long,
+        value_name = "FILE:LINE",
+        value_parser = parse_goto,
+        conflicts_with_all = ["path", "print", "line", "width", "init_config", "follow"]
+    )]
+    pub goto: Option<(PathBuf, usize)>,
+}
+
+/// `FILE:LINE`, split on the last `:` so FILE may contain colons.
+pub fn parse_goto(s: &str) -> Result<(PathBuf, usize), String> {
+    let (file, line) = s
+        .rsplit_once(':')
+        .ok_or_else(|| "expected FILE:LINE".to_string())?;
+    let line: usize = line
+        .parse()
+        .ok()
+        .filter(|&n| n >= 1)
+        .ok_or_else(|| format!("bad line number {line:?}"))?;
+    if file.is_empty() {
+        return Err("expected FILE:LINE".into());
+    }
+    Ok((PathBuf::from(file), line))
 }
 
 /// Everything `plan` needs from the process, injectable for tests.
@@ -87,6 +115,9 @@ pub enum Plan {
     Interactive(Box<StartOptions>),
     /// Write the default config. `None` means `Config::default_path()`.
     InitConfig(Option<PathBuf>),
+    /// `--goto`: send this absolute file and 1-based line to following
+    /// rambles.
+    Goto(PathBuf, usize),
     UsageError {
         msg: String,
         code: i32,
@@ -102,7 +133,16 @@ pub fn plan(args: &Args, env: &mut Env, config: &Config) -> Plan {
     if args.init_config {
         return Plan::InitConfig(args.config.clone());
     }
+    if let Some((file, line)) = &args.goto {
+        let abs = env.cwd.join(file);
+        // A file that doesn't exist yet still names a path: hooks never fail.
+        let abs = abs.canonicalize().unwrap_or(abs);
+        return Plan::Goto(abs, *line);
+    }
     let print = args.print || !env.stdout_is_tty;
+    if args.follow && print {
+        return error("ramble: --follow needs a terminal".into(), 2);
+    }
 
     let arg = match &args.path {
         Some(p) => match env.cwd.join(p).canonicalize() {

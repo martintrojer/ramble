@@ -16,10 +16,10 @@ use crate::ui;
 /// How long one loop iteration waits for terminal input.
 const POLL: Duration = Duration::from_millis(100);
 
-/// Run the interactive TUI until the user quits.
-/// Run the TUI; `line` (`--line`) puts the cursor on that source line of
-/// the opened file.
-pub fn run(opts: StartOptions, line: Option<usize>) -> anyhow::Result<()> {
+/// Run the TUI until the user quits; `line` (`--line`) puts the cursor on
+/// that source line of the opened file, and `follow` (`--follow`) listens
+/// for the editor's cursor.
+pub fn run(opts: StartOptions, line: Option<usize>, follow: bool) -> anyhow::Result<()> {
     let size = crossterm::terminal::size().context("reading terminal size")?;
     let mouse = opts.config.mouse.enabled;
     let mut app = App::new(opts, size)?;
@@ -36,7 +36,7 @@ pub fn run(opts: StartOptions, line: Option<usize>) -> anyhow::Result<()> {
         pop_title();
         hook(info);
     }));
-    let result = event_loop(&mut terminal, &mut app, mouse);
+    let result = event_loop(&mut terminal, &mut app, mouse, follow);
     let _ = term_cmds(&term_teardown(mouse));
     ratatui::restore();
     pop_title();
@@ -119,12 +119,19 @@ fn update_title(app: &App, last: &mut Option<String>) -> std::io::Result<()> {
     Ok(())
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> anyhow::Result<()> {
+fn event_loop(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    mouse: bool,
+    follow: bool,
+) -> anyhow::Result<()> {
     let (tx, rx) = mpsc::channel::<AppEvent>();
-    app.set_sender(tx);
+    app.set_sender(tx.clone());
     if let Err(e) = app.start_watcher() {
         app.set_status(format!("live reload off: {e:#}"));
     }
+    // Held for the loop: dropping it (exit or panic unwind) removes the socket.
+    let _follow = follow.then(|| start_follow(tx, app));
     let mut title = None;
     while !app.should_quit() {
         update_title(app, &mut title)?;
@@ -154,6 +161,32 @@ fn event_loop(terminal: &mut DefaultTerminal, app: &mut App, mouse: bool) -> any
         write_terminal_output(app, &mut std::io::stdout())?;
     }
     Ok(())
+}
+
+/// Listen for the editor's cursor (`--follow`); a failure is a status
+/// message, like live reload's.
+#[cfg(unix)]
+fn start_follow(tx: mpsc::Sender<AppEvent>, app: &mut App) -> Option<crate::follow_sock::Listener> {
+    use crate::follow_sock;
+    let emit = move |path, line| {
+        let _ = tx.send(AppEvent::Follow(path, line, Instant::now()));
+    };
+    match follow_sock::listen(
+        &follow_sock::default_dir(),
+        &follow_sock::current_scope(),
+        emit,
+    ) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            app.set_status(format!("follow off: {e}"));
+            None
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn start_follow(_: mpsc::Sender<AppEvent>, _: &mut App) -> Option<()> {
+    None
 }
 
 /// Write the bytes the app queued for the terminal (OSC 52) to `out`.

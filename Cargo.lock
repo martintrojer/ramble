@@ -1852,6 +1852,7 @@ dependencies = [
  "ignore",
  "insta",
  "latex-to-unicode",
+ "libc",
  "lsp-types",
  "mdroots",
  "notify",

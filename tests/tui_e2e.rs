@@ -128,8 +128,9 @@ fn start_with(dir: &Path, doc: &Path, flags: &str) -> Option<Tmux> {
         quote(&d)
     };
     let shell_cmd = format!(
-        "env HOME={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {flags} {}",
+        "env HOME={} XDG_RUNTIME_DIR={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {flags} {}",
         quote(&home),
+        quote(&run_dir(dir)),
         xdg("XDG_CONFIG_HOME"),
         xdg("XDG_DATA_HOME"),
         xdg("XDG_CACHE_HOME"),
@@ -185,6 +186,53 @@ fn follow_link_and_back_in_tmux() {
     // C-] (sent once) follows the same link: the cursor was restored onto it.
     tmux.cmd(&["send-keys", "-t", "e2e", "C-]"]);
     tmux.wait_for("b.md after C-]", |s| first_line(s) == "Page B");
+
+    tmux.cmd(&["send-keys", "-t", "e2e", "q"]);
+}
+
+/// `$XDG_RUNTIME_DIR` for the spawned rambles: `--follow` sockets stay in
+/// the test's dir.
+fn run_dir(dir: &Path) -> std::path::PathBuf {
+    let d = dir.join("run");
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn follow_moves_to_the_line_another_pane_in_the_window_sends() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("long.md");
+    let body: String = (1..=120).map(|i| format!("line {i:03}\n\n")).collect();
+    std::fs::write(&doc, body).unwrap();
+    let Some(tmux) = start_with(dir.path(), &doc, "--follow") else {
+        return;
+    };
+    tmux.wait_for("first page", |s| first_line(s) == "line 001");
+    // Wait for the socket: the listener binds just after the first draw.
+    let run = run_dir(dir.path());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !std::fs::read_dir(&run)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|d| std::fs::read_dir(d.path()).is_ok_and(|mut e| e.next().is_some()))
+    {
+        assert!(Instant::now() < deadline, "no follow socket in {run:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Like an editor hook: `--goto` from another pane in the same window.
+    // Source line 179 is "line 090".
+    let goto = format!(
+        "env XDG_RUNTIME_DIR={} {} --goto {}:179",
+        quote(&run),
+        quote(Path::new(env!("CARGO_BIN_EXE_ramble"))),
+        quote(&doc)
+    );
+    let out = tmux.cmd(&["split-window", "-d", "-t", "e2e", &goto]);
+    assert!(out.status.success(), "split-window: {out:?}");
+    let screen = tmux.wait_for("line 090 on screen", |s| s.contains("line 090"));
+    assert!(!screen.contains("line 001"), "{screen}");
 
     tmux.cmd(&["send-keys", "-t", "e2e", "q"]);
 }
