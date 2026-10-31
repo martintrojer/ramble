@@ -1,5 +1,5 @@
 //! `--follow`: editor cursor updates moving the view (`App::follow_event`)
-//! and the real socket round trip (`follow_sock`).
+//! and a socket round trip through `debrief-follow`.
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ramble::app::{App, AppEvent, FOLLOW_GRACE, Mode, StartOptions, StartTarget};
 use ramble::config::{Config, SidebarShow};
-use ramble::follow_sock;
 use tempfile::TempDir;
 
 const ROWS: u16 = 12;
@@ -157,117 +156,30 @@ fn sock_dir() -> (TempDir, PathBuf) {
         .prefix("f")
         .tempdir_in("/tmp")
         .unwrap();
-    let dir = base.path().join("ramble-test");
+    let dir = base.path().join("follow-test");
     (base, dir)
 }
 
+/// The socket side lives in debrief-follow (tested there); this checks
+/// ramble's use of it: a sent line arrives, named as ramble's socket.
 #[test]
-fn a_sent_line_reaches_the_listener_in_scope_only() {
+fn a_sent_line_reaches_a_ramble_listener() {
     let (_base, dir) = sock_dir();
     let (tx, rx) = mpsc::channel();
-    let listener = follow_sock::listen(&dir, "t1w2", move |p, l| {
+    let listener = debrief_follow::listen(&dir, "any", "ramble", move |p, l| {
         let _ = tx.send((p, l));
     })
     .unwrap();
-    assert!(listener.path().exists());
-
-    // Another window's sender doesn't reach it (negative window: 300 ms
-    // is far longer than a local socket write).
-    follow_sock::send_all(&dir, "t1w3", 7, Path::new("/n/a.md"));
-    assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
-
-    follow_sock::send_all(&dir, "t1w2", 7, Path::new("/n/a b.md"));
+    let name = listener
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert!(name.starts_with("any.ramble."), "{name}");
+    debrief_follow::send_all(&dir, "any", 7, Path::new("/n/a b.md"));
     let got = rx.recv_timeout(Duration::from_secs(2)).expect("delivered");
     assert_eq!(got, (PathBuf::from("/n/a b.md"), 7));
-
-    let sock = listener.path().to_path_buf();
-    drop(listener);
-    assert!(!sock.exists(), "dropping the listener removes the socket");
-}
-
-#[test]
-fn a_dead_socket_is_removed_by_the_next_sender() {
-    let (_base, dir) = sock_dir();
-    follow_sock::ensure_dir(&dir).unwrap();
-    let stale = dir.join(follow_sock::socket_name("any", 1));
-    // Bind and drop: the file stays, nothing listens.
-    drop(std::os::unix::net::UnixListener::bind(&stale).unwrap());
-    assert!(stale.exists());
-    follow_sock::send_all(&dir, "any", 1, Path::new("/x.md"));
-    assert!(!stale.exists());
-}
-
-#[test]
-fn a_socket_dir_others_can_open_is_refused() {
-    use std::os::unix::fs::PermissionsExt;
-    let (_base, dir) = sock_dir();
-    std::fs::create_dir(&dir).unwrap();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let err = follow_sock::listen(&dir, "any", |_, _| {}).unwrap_err();
-    assert!(err.to_string().contains("other users"), "{err}");
-}
-
-#[test]
-fn a_client_holding_its_connection_open_does_not_stall_others() {
-    use std::io::Write;
-    let (_base, dir) = sock_dir();
-    let (tx, rx) = mpsc::channel();
-    let listener = follow_sock::listen(&dir, "any", move |p, l| {
-        let _ = tx.send((p, l));
-    })
-    .unwrap();
-    // Keeps writing well inside the per-read timeout, never closes.
-    let sock = listener.path().to_path_buf();
-    let hog = std::thread::spawn(move || {
-        let mut s = std::os::unix::net::UnixStream::connect(&sock).unwrap();
-        for _ in 0..40 {
-            if s.write_all(b"1 /hog.md\n").is_err() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    });
-    std::thread::sleep(Duration::from_millis(50));
-    follow_sock::send_all(&dir, "any", 7, Path::new("/n/a.md"));
-    // The hog gets at most its own deadline (500 ms); the sender must be
-    // served well before the hog's 4 s of writes end.
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut got = None;
-    while let Ok(m) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        if m.0 == Path::new("/n/a.md") {
-            got = Some(m);
-            break;
-        }
-    }
-    assert_eq!(got, Some((PathBuf::from("/n/a.md"), 7)));
-    hog.join().unwrap();
-}
-
-#[test]
-fn senders_skip_a_socket_dir_others_can_open_and_non_sockets() {
-    use std::os::unix::fs::PermissionsExt;
-    let (_base, dir) = sock_dir();
-    let (tx, rx) = mpsc::channel();
-    let listener = follow_sock::listen(&dir, "any", move |p, l| {
-        let _ = tx.send((p, l));
-    })
-    .unwrap();
-    // A plain file named like a socket is never touched.
-    let plain = dir.join(follow_sock::socket_name("any", 2));
-    std::fs::write(&plain, "keep").unwrap();
-    // Open the dir to others: as if someone else had made it.
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
-    follow_sock::send_all(&dir, "any", 3, Path::new("/n/a.md"));
-    // Negative window: a local socket write lands in well under 300 ms.
-    assert!(
-        rx.recv_timeout(Duration::from_millis(300)).is_err(),
-        "sent into a dir others can open"
-    );
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    follow_sock::send_all(&dir, "any", 3, Path::new("/n/a.md"));
-    assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
-    assert!(plain.exists(), "a non-socket *.sock was removed");
-    drop(listener);
 }
 
 fn mouse(kind: MouseEventKind, now: Instant) -> AppEvent {
@@ -326,4 +238,33 @@ fn an_unreadable_or_binary_markdown_file_is_ignored_silently() {
     app.follow_event(&locked, 1, later());
     assert_eq!(app.page().unwrap().path.as_deref(), Some(path.as_path()));
     assert_eq!(app.status(), "");
+}
+
+/// `App`'s listener (`--follow`, or the first follow launcher): started
+/// once (no rebind), removed with the app, and a bind failure is the
+/// "follow off" status.
+#[test]
+fn the_listener_starts_once_and_a_failure_is_a_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_base, dir) = sock_dir();
+    let (_d, _path, mut app) = setup();
+    let (tx, _rx) = mpsc::channel();
+    app.set_sender(tx);
+    assert!(!app.following());
+    app.follow_start_in(&dir);
+    assert!(app.following(), "{}", app.status());
+    let socks = || std::fs::read_dir(&dir).unwrap().count();
+    assert_eq!(socks(), 1);
+    app.follow_start_in(&dir);
+    assert_eq!(socks(), 1, "no rebind");
+    drop(app);
+    assert_eq!(socks(), 0, "dropping the app removes the socket");
+
+    let (_d, _path, mut app) = setup();
+    let (tx, _rx) = mpsc::channel();
+    app.set_sender(tx);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    app.follow_start_in(&dir);
+    assert!(!app.following());
+    assert!(app.status().starts_with("follow off: "), "{}", app.status());
 }

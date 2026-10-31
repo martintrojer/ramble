@@ -24,7 +24,11 @@ impl Tmux {
     }
 
     fn capture(&self) -> String {
-        String::from_utf8_lossy(&self.cmd(&["capture-pane", "-p", "-t", "e2e"]).stdout).into()
+        self.capture_of("e2e")
+    }
+
+    fn capture_of(&self, target: &str) -> String {
+        String::from_utf8_lossy(&self.cmd(&["capture-pane", "-p", "-t", target]).stdout).into()
     }
 
     /// Poll the pane until `pred` holds, or panic with the last screen.
@@ -111,6 +115,11 @@ fn start(dir: &Path, doc: &Path) -> Option<Tmux> {
 
 /// [`start`] with extra `flags` before the file.
 fn start_with(dir: &Path, doc: &Path, flags: &str) -> Option<Tmux> {
+    start_env(dir, doc, "", flags)
+}
+
+/// [`start_with`] with `env` (`NAME=value ...`, quoted) set for ramble.
+fn start_env(dir: &Path, doc: &Path, env: &str, flags: &str) -> Option<Tmux> {
     if Command::new("tmux").arg("-V").output().is_err() {
         eprintln!("skipping tui_e2e: tmux not found on PATH");
         return None;
@@ -128,7 +137,7 @@ fn start_with(dir: &Path, doc: &Path, flags: &str) -> Option<Tmux> {
         quote(&d)
     };
     let shell_cmd = format!(
-        "env HOME={} XDG_RUNTIME_DIR={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {} {flags} {}",
+        "env HOME={} XDG_RUNTIME_DIR={} XDG_CONFIG_HOME={} XDG_DATA_HOME={} XDG_CACHE_HOME={} MDROOTS_CACHE_DIR={} {env} {} {flags} {}",
         quote(&home),
         quote(&run_dir(dir)),
         xdg("XDG_CONFIG_HOME"),
@@ -235,6 +244,54 @@ fn follow_moves_to_the_line_another_pane_in_the_window_sends() {
     assert!(!screen.contains("line 001"), "{screen}");
 
     tmux.cmd(&["send-keys", "-t", "e2e", "q"]);
+}
+
+/// `<leader>O` in tmux: the editor (a stub that runs `--goto`, as an
+/// editor hook would) opens in a split beside ramble without suspending
+/// it, ramble starts listening, and the stub's first position moves it.
+#[test]
+fn leader_shift_o_splits_the_editor_and_follows_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let doc = dir.path().join("long.md");
+    let body: String = (1..=120).map(|i| format!("line {i:03}\n\n")).collect();
+    std::fs::write(&doc, body).unwrap();
+    let run = run_dir(dir.path());
+    // The split pane gets tmux's environment, not ramble's: the stub sets
+    // the runtime dir itself. Source line 179 is "line 090".
+    let editor = dir.path().join("editor");
+    std::fs::write(
+        &editor,
+        format!(
+            "#!/bin/sh\nXDG_RUNTIME_DIR={} {} --goto {}:179\nsleep 600\n",
+            quote(&run),
+            quote(Path::new(env!("CARGO_BIN_EXE_ramble"))),
+            quote(&doc)
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let env = format!("VISUAL={}", quote(&editor));
+    let Some(tmux) = start_env(dir.path(), &doc, &env, "") else {
+        return;
+    };
+    tmux.wait_for("first page", |s| first_line(s) == "line 001");
+    tmux.cmd(&["send-keys", "-t", "e2e", "Space", "O"]);
+    // The editor pane has focus now; ramble is pane 0.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let screen = loop {
+        let s = tmux.capture_of("e2e.0");
+        if s.contains("line 090") {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "did not follow:\n{s}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(!screen.contains("line 001"), "{screen}");
+    let panes = tmux.cmd(&["display-message", "-p", "-t", "e2e", "#{window_panes}"]);
+    assert_eq!(String::from_utf8_lossy(&panes.stdout).trim(), "2");
 }
 
 fn quote(p: &Path) -> String {

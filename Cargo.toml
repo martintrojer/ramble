@@ -34,10 +34,9 @@ nucleo = "0.5"
 latex-to-unicode = "0.1"
 term-maths = "1"
 mdroots = "0.4.0"
-debrief-review = "0.6.2"
+debrief-review = "0.6.5"
+debrief-follow = "0.6.5"
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 
 # Scripted fake language server for tests/lsp.rs. Not a test target itself.
 [[bin]]

@@ -103,13 +103,15 @@ set -g @vim_navigator_pattern '(\S+/)?g?\.?(view|l?n?vim?x?|fzf|debrief|ramble)(
 
 ## Following your editor
 
-Run ramble as a live preview next to your editor:
+Run ramble as a live preview next to your editor. From ramble,
+`<leader>O` opens `$EDITOR` at the cursor line in a tmux split and starts
+following it. Or start the preview yourself:
 
 ```sh
 tmux split-window -h ramble --follow notes/a.md
 ```
 
-It re-renders on save, and with `--follow` it also moves to where your
+It re-renders on save, and while following it also moves to where your
 editor's cursor is:
 
 - The cursor moves to that line. The view scrolls only when the line is
@@ -122,22 +124,32 @@ editor's cursor is:
 - Inside tmux, ramble follows only editors in its own tmux window, so two
   editor + preview pairs don't drag each other around.
 
-The editor tells ramble with `ramble --goto FILE:LINE`. It finds the
-following rambles (sockets in `$XDG_RUNTIME_DIR/ramble-<uid>/`, else
-`$TMPDIR`, else `/tmp`), picks those in its own tmux window, and exits 0
-even when none is listening. It takes a few milliseconds, so an editor can
-run it on each cursor move. Linux and macOS only.
+The editor tells ramble with `ramble --goto FILE:LINE` (or
+`debrief --goto`: [debrief](https://github.com/martintrojer/debrief)
+follows the editor in its diffs the same way, and one call reaches both).
+It finds the following rambles and debriefs (sockets in
+`$XDG_RUNTIME_DIR/debrief-follow-<uid>/`, else `$TMPDIR`, else `/tmp`),
+picks those in its own tmux window, and exits 0 even when none is
+listening. It takes a few milliseconds, so an editor can run it on each
+cursor move. Linux and macOS only.
 
-For nvim, put this in your config (e.g. `~/.config/nvim/plugin/ramble.lua`):
+For nvim, put this in your config (e.g. `~/.config/nvim/plugin/follow.lua`).
+It sends every file, since debrief follows any file and ramble ignores
+what isn't markdown:
 
 ```lua
-if vim.fn.executable("ramble") == 0 then
+local bin = vim.fn.executable("debrief") == 1 and "debrief"
+	or vim.fn.executable("ramble") == 1 and "ramble"
+if not bin then
 	return
 end
 
 local last, timer
 
 local function send()
+	if vim.bo.buftype ~= "" then
+		return
+	end
 	local path = vim.api.nvim_buf_get_name(0)
 	if path == "" then
 		return
@@ -147,12 +159,11 @@ local function send()
 		return
 	end
 	last = target
-	vim.system({ "ramble", "--goto", target })
+	vim.system({ bin, "--goto", target })
 end
 
 vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {
-	group = vim.api.nvim_create_augroup("ramble_follow", {}),
-	pattern = { "*.md", "*.markdown", "*.mdown", "*.mkd" },
+	group = vim.api.nvim_create_augroup("debrief_follow", {}),
 	callback = function()
 		timer = timer or vim.uv.new_timer()
 		timer:stop()
@@ -186,7 +197,11 @@ another ramble show up within a second.
 ## Launchers
 
 Keys that hand off to another program and reload on return. `<leader>o`
-opens `$VISUAL` / `$EDITOR` at the cursor line. Add your own:
+opens `$VISUAL` / `$EDITOR` at the cursor line. `<leader>O` opens it in a
+tmux split beside ramble instead, without suspending it, and starts
+[following your editor](#following-your-editor) (outside tmux it's
+`<leader>o`). `follow = true` does the same for any launcher. Add your
+own:
 
 ```toml
 [[launch]]

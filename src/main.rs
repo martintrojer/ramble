@@ -87,13 +87,7 @@ fn main() -> ExitCode {
 /// `--goto`: tell following rambles in this scope, always succeeding.
 #[cfg(unix)]
 fn goto(path: &std::path::Path, line: usize) -> ExitCode {
-    use ramble::follow_sock;
-    follow_sock::send_all(
-        &follow_sock::default_dir(),
-        &follow_sock::current_scope(),
-        line,
-        path,
-    );
+    let _ = debrief_follow::goto(path, line);
     ExitCode::SUCCESS
 }
 

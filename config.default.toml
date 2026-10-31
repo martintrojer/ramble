@@ -250,7 +250,11 @@
 # ${vcs_root} ${editor}.
 #
 # An entry with the same name replaces a default; new names are added;
-# `disabled = true` removes a default. For example:
+# of two on one key, the later takes it, with a warning;
+# `disabled = true` removes a default. `follow = true` runs the command
+# in a tmux split beside ramble (no suspend) and makes ramble follow the
+# editor's cursor (see the guide's "Following your editor"); outside tmux
+# it runs like any launcher. For example:
 #   [[launch]]
 #   name = "edit"
 #   disabled = true
@@ -259,3 +263,10 @@
 # name = "edit"
 # key = "<leader>o"
 # command = ["${editor}", "+${line}", "${file}"]
+
+# The editor in a tmux split, followed.
+# [[launch]]
+# name = "edit-follow"
+# key = "<leader>O"
+# command = ["${editor}", "+${line}", "${file}"]
+# follow = true

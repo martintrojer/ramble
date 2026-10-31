@@ -176,6 +176,7 @@ fn leader_lists_groups_built_ins_and_launchers() {
             command: vec!["true".into()],
             needs_vcs: false,
             disabled: false,
+            follow: false,
         });
     }
     let (_d, mut app) = app_sized(c, (100, 30));
@@ -208,6 +209,7 @@ fn mixed_groups_show_a_key_count() {
         command: vec!["true".into()],
         needs_vcs: false,
         disabled: false,
+        follow: false,
     });
     let (_d, mut app) = app_sized(c, (100, 30));
     keys(&mut app, " ");
@@ -472,6 +474,7 @@ fn a_launcher_on_a_built_in_leader_key_wins() {
         command: vec!["true".into()],
         needs_vcs: false,
         disabled: false,
+        follow: false,
     });
     let (_d, mut app) = app_sized(c, (100, 30));
     keys(&mut app, " ");
@@ -487,6 +490,7 @@ fn launchers_that_need_a_repo_say_so() {
         command: vec!["true".into()],
         needs_vcs,
         disabled: false,
+        follow: false,
     };
     c.launch.push(l("browse", "<leader>rd", false));
     c.launch.push(l("changes", "<leader>rw", true));

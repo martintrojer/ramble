@@ -1,6 +1,9 @@
 # Follow the editor's cursor
 
-Agreed with the user 2026-10-22. Calls marked *(my call)* were filled in
+Agreed with the user 2026-10-22. Superseded in part by
+`2026-10-31-follow-launcher.md`: the socket code is now debrief's
+`debrief-follow` crate, the directory is `debrief-follow-<uid>/` and
+sockets are `<scope>.<tool>.<pid>.sock`. Calls marked *(my call)* were filled in
 by the agent while writing the spec. They aren't user decisions; check them.
 
 ## Problem

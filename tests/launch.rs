@@ -134,6 +134,7 @@ fn dir_and_vcs_launchers() -> Config {
         command: s(cmd),
         needs_vcs,
         disabled: false,
+        follow: false,
     };
     c.launch
         .push(l("browse", "<leader>rd", &["lf", "${dir}"], false));
@@ -374,4 +375,91 @@ fn vcs_root_walks_file_ancestors() {
             Some(d.as_path())
         );
     }
+}
+
+const TMUX: [(&str, &str); 3] = [
+    ("TMUX", "/tmp/tmux-1/default,42,0"),
+    ("TMUX_PANE", "%7"),
+    ("VISUAL", "nvim"),
+];
+
+fn tmux_env(k: &str) -> Option<String> {
+    TMUX.iter()
+        .find(|(n, _)| *n == k)
+        .map(|(_, v)| v.to_string())
+}
+
+#[test]
+fn leader_shift_o_in_tmux_splits_without_suspending_or_reloading() {
+    let (dir, app, calls) = launch_app(no_lsp(), true, Exit::Code(0));
+    let split: Calls = Rc::default();
+    let rec = split.clone();
+    let mut app = app.with_env(tmux_env).with_pane_runner(move |cmd| {
+        rec.borrow_mut().push(cmd.clone());
+        Ok(Exit::Code(0))
+    });
+    goto(&mut app, "line five");
+    keys(&mut app, " O");
+    let Some(Effect::Split(cmd)) = app.pending_effect().cloned() else {
+        panic!("not a split: {:?} / {}", app.pending_effect(), app.status());
+    };
+    assert!(!app.effect_suspends());
+    let file = root(&dir).join("sub/a.md");
+    let cwd = root(&dir).display().to_string();
+    assert_eq!(
+        cmd.argv,
+        s(&[
+            "tmux",
+            "split-window",
+            "-h",
+            "-t",
+            "%7",
+            "-c",
+            &cwd,
+            "--",
+            "nvim",
+            "+5",
+            file.to_str().unwrap()
+        ])
+    );
+    app.run_pending_effect();
+    assert_eq!(split.borrow().len(), 1, "through the pane runner");
+    assert!(calls.borrow().is_empty(), "never the suspending runner");
+    assert_eq!(app.status(), "");
+}
+
+#[test]
+fn a_failing_split_is_a_status() {
+    let (_dir, app, _calls) = launch_app(no_lsp(), true, Exit::Code(0));
+    let mut app = app
+        .with_env(tmux_env)
+        .with_pane_runner(|_| Ok(Exit::Code(1)));
+    keys(&mut app, " O");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "edit-follow: tmux exited with status 1");
+}
+
+#[test]
+fn a_slow_tmux_is_not_an_error() {
+    let (_dir, app, _calls) = launch_app(no_lsp(), true, Exit::Code(0));
+    let mut app = app.with_env(tmux_env).with_pane_runner(|_| {
+        Err(anyhow::Error::new(ramble::app::StillRunning).context("tmux still running after 200ms"))
+    });
+    keys(&mut app, " O");
+    app.run_pending_effect();
+    assert_eq!(app.status(), "");
+}
+
+#[test]
+fn leader_shift_o_outside_tmux_is_a_plain_launch() {
+    let (_dir, mut app, calls) = launch_app(no_lsp(), true, Exit::Code(0));
+    keys(&mut app, " O");
+    assert!(
+        matches!(app.pending_effect(), Some(Effect::Launch(l)) if l.name == "edit-follow"),
+        "{:?}",
+        app.pending_effect()
+    );
+    assert!(app.effect_suspends());
+    app.run_pending_effect();
+    assert_eq!(calls.borrow().len(), 1);
 }

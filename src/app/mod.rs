@@ -74,7 +74,7 @@ pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use mdroots_glue::MdrootsOptions;
 pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
-pub use pane_nav::{Dir, TMUX_WAIT, tmux_command};
+pub use pane_nav::{Dir, StillRunning, TMUX_WAIT, tmux_command};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use review_glue::{
     FileMarks, MARKER as REVIEW_MARKER, Markers, NO_MORE_REVIEW, NO_REVIEW, REVIEW_POLL, canonical,
@@ -284,6 +284,12 @@ pub struct App {
     /// `--follow`: editor updates are dropped until then (the reader just
     /// used ramble).
     follow_quiet_until: Option<Instant>,
+    /// The follow socket while listening (`--follow`, or the first
+    /// `follow = true` launcher); dropping it removes the socket.
+    #[cfg(unix)]
+    follow_listener: Option<debrief_follow::Listener>,
+    #[cfg(not(unix))]
+    follow_listener: Option<()>,
 }
 
 impl App {
@@ -354,6 +360,7 @@ impl App {
             mouse: Default::default(),
             scrollbars: Default::default(),
             follow_quiet_until: None,
+            follow_listener: None,
         };
         match opts.target {
             StartTarget::File(path) => app.open_file(&path)?,

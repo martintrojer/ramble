@@ -8,8 +8,6 @@ pub mod backend;
 pub mod cli;
 pub mod config;
 pub mod doc;
-#[cfg(unix)]
-pub mod follow_sock;
 pub mod nav;
 pub mod notebook;
 pub mod render;

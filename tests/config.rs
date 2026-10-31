@@ -59,15 +59,27 @@ fn defaults_match_spec() {
         command: command.iter().map(|s| s.to_string()).collect(),
         needs_vcs,
         disabled: false,
+        follow: false,
     };
     assert_eq!(
         c.launch,
-        [launcher(
-            "edit",
-            "<leader>o",
-            &["${editor}", "+${line}", "${file}"],
-            false
-        ),]
+        [
+            launcher(
+                "edit",
+                "<leader>o",
+                &["${editor}", "+${line}", "${file}"],
+                false
+            ),
+            Launcher {
+                follow: true,
+                ..launcher(
+                    "edit-follow",
+                    "<leader>O",
+                    &["${editor}", "+${line}", "${file}"],
+                    false
+                )
+            },
+        ]
     );
     assert!(c.review.enabled);
 }
@@ -148,7 +160,7 @@ disabled = true
 "#,
     )
     .unwrap();
-    assert_eq!(names(&c), ["edit", "open"]);
+    assert_eq!(names(&c), ["edit", "edit-follow", "open"]);
     assert_eq!(
         c.launch[0],
         Launcher {
@@ -157,12 +169,26 @@ disabled = true
             command: vec!["hx".into(), "${file}".into()],
             needs_vcs: false,
             disabled: false,
+            follow: false,
         }
     );
-    assert_eq!(c.launch[1].key.as_deref(), Some("<leader>x"));
-    assert!(c.launch[1].needs_vcs);
+    assert_eq!(c.launch[2].key.as_deref(), Some("<leader>x"));
+    assert!(c.launch[2].needs_vcs);
+    assert!(c.launch[1].follow, "edit-follow is a follow launcher");
     let c = load_str("[[launch]]\nname = \"edit\"\ndisabled = true\n").unwrap();
-    assert!(c.launch.is_empty(), "disabled removes a default");
+    assert_eq!(names(&c), ["edit-follow"], "disabled removes a default");
+}
+
+#[test]
+fn follow_is_a_launcher_option() {
+    let c = load_str(
+        "[[launch]]\nname = \"lg\"\nkey = \"<leader>g\"\ncommand = [\"lazygit\"]\nfollow = true\n",
+    )
+    .unwrap();
+    assert!(c.launch.iter().find(|l| l.name == "lg").unwrap().follow);
+    let c = load_str("[[launch]]\nname = \"edit-follow\"\ncommand = [\"hx\"]\n").unwrap();
+    let l = c.launch.iter().find(|l| l.name == "edit-follow").unwrap();
+    assert!(!l.follow, "an entry replaces a default whole");
 }
 
 #[test]
@@ -413,7 +439,7 @@ fn uncommented_default_file_equals_defaults() {
     }
     assert_eq!(
         uncommented.lines().filter(|l| *l == "[[launch]]").count(),
-        1
+        2
     );
     // The server examples are documentation only: no server by default.
     assert!(!uncommented.lines().any(|l| l == "[[lsp.server]]"));

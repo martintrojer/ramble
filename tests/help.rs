@@ -31,6 +31,7 @@ fn launcher(name: &str, key: Option<&str>, needs_vcs: bool) -> Launcher {
         command: vec!["true".into()],
         needs_vcs,
         disabled: false,
+        follow: false,
     }
 }
 

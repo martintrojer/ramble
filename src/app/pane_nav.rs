@@ -98,6 +98,19 @@ impl App {
     }
 }
 
+/// The pane runner gave up waiting; the command goes on (a slow tmux
+/// still opens its split).
+#[derive(Debug)]
+pub struct StillRunning;
+
+impl std::fmt::Display for StillRunning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("still running")
+    }
+}
+
+impl std::error::Error for StillRunning {}
+
 /// Default pane runner: start the command with no terminal I/O and wait at
 /// most [`TMUX_WAIT`]; a slower command finishes on its own.
 pub fn spawn_capped(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
@@ -121,7 +134,8 @@ pub fn spawn_capped(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
         if Instant::now() >= deadline {
             // Reap it off the UI thread.
             std::thread::spawn(move || child.wait());
-            anyhow::bail!("{prog} still running after {TMUX_WAIT:?}");
+            return Err(anyhow::Error::new(StillRunning)
+                .context(format!("{prog} still running after {TMUX_WAIT:?}")));
         }
         std::thread::sleep(Duration::from_millis(5));
     }

@@ -26,7 +26,6 @@ How ramble works. For what it does from the user's side, see the
 ```
 ramble
 ├── cli      args → tree root, start target, TTY detection, --print, --init-config, --goto
-├── follow_sock  --follow socket (listen) and --goto (send); Unix only
 ├── config   TOML over built-in defaults
 ├── doc      pulldown-cmark layout parse + mdroots::syntax → Document
 ├── render   Document + width + theme → RenderedPage { lines, srcmap }
@@ -313,7 +312,10 @@ root in the user cache dir, never into the repo.
 
 A launcher binds a key to a command. Running one suspends the TUI, runs the
 command in the restored terminal, waits, then resumes and reloads the page.
-The default is the editor:
+A `follow = true` launcher inside tmux instead runs as
+`tmux split-window -h -t $TMUX_PANE -c <cwd> -- <argv>` with the TUI up, and starts following
+(below); outside tmux it runs as usual. The defaults are the editor on
+`<leader>o` and the same with `follow = true` on `<leader>O` (`edit-follow`):
 
 ```toml
 [[launch]]
@@ -342,7 +344,8 @@ removes one. `:Launch <name>` runs one by name.
 
 ## Following the editor
 
-`--follow` listens on `ramble-<uid>/<scope>.<pid>.sock` under
+`--follow`, or the first follow launcher, listens on
+`debrief-follow-<uid>/<scope>.ramble.<pid>.sock` under
 `$XDG_RUNTIME_DIR` (else `$TMPDIR`, else `/tmp`). Editor hooks and
 `--goto` write `<line> <absolute path>` lines to it. The scope is the tmux
 window (`t<server pid>w<window id>`, looked up once), or `any` outside
@@ -352,8 +355,10 @@ and 0700. A key, click, scroll or paste starts a 2 s grace window in
 which updates are dropped, as they are outside Normal mode or with a key
 sequence half typed. A drop
 guard removes the socket on exit or panic. A signal leaves it behind, and
-the next sender deletes it on `ECONNREFUSED`. Why, and the alternatives:
-[spec](specs/2026-10-22-follow-cursor.md).
+the next sender deletes it on `ECONNREFUSED`. The socket side is debrief's
+`debrief-follow` crate, shared so one hook reaches both tools. Why, and
+the alternatives: [spec](specs/2026-10-22-follow-cursor.md),
+[launcher](specs/2026-10-31-follow-launcher.md).
 
 ## Testing
 

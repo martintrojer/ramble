@@ -498,10 +498,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "debrief-review"
-version = "0.6.2"
+name = "debrief-follow"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee66b63d4ee581dcc33279ded1b8ad87b2ae2fc6fbb9d35ad19f875b047690c0"
+checksum = "124aaf06c8db942bbc86f153d614fb562500be4e6fb576e1fee127fd856cff3a"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
+name = "debrief-review"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "646d9ef0e3f32f99f06dbe2319b5a0fec4f3461712624d71bd7e2b317867fd3c"
 dependencies = [
  "blake3",
  "dirs",
@@ -1848,11 +1857,11 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "debrief-follow",
  "debrief-review",
  "ignore",
  "insta",
  "latex-to-unicode",
- "libc",
  "lsp-types",
  "mdroots",
  "notify",

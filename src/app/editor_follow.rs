@@ -1,7 +1,8 @@
 //! Following the editor's cursor (`--follow`): what an
 //! [`AppEvent::Follow`](super::AppEvent::Follow) does to the view. The
-//! socket side is [`crate::follow_sock`]; the spec is
-//! docs/specs/2026-10-22-follow-cursor.md.
+//! socket side is the `debrief-follow` crate; the specs are
+//! docs/specs/2026-10-22-follow-cursor.md and
+//! docs/specs/2026-10-31-follow-launcher.md.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -13,7 +14,40 @@ use crate::nav;
 /// dropped for this long, so following never fights the reader.
 pub const FOLLOW_GRACE: Duration = Duration::from_secs(2);
 
+/// The tool name in ramble's socket file names.
+const TOOL: &str = "ramble";
+
 impl App {
+    /// Listen for the editor's cursor (once): `--follow`, or the first
+    /// follow launcher. A failure is a status message, like live reload's.
+    pub fn follow_start(&mut self) {
+        #[cfg(unix)]
+        self.follow_start_in(&debrief_follow::default_dir());
+        #[cfg(not(unix))]
+        self.set_status("follow off: needs Linux or macOS");
+    }
+
+    /// [`App::follow_start`] with the socket directory given (tests).
+    #[cfg(unix)]
+    pub fn follow_start_in(&mut self, dir: &Path) {
+        if self.follow_listener.is_some() {
+            return;
+        }
+        let Some(tx) = self.sender() else { return };
+        let emit = move |path, line| {
+            let _ = tx.send(super::AppEvent::Follow(path, line, Instant::now()));
+        };
+        match debrief_follow::listen(dir, &debrief_follow::current_scope(), TOOL, emit) {
+            Ok(l) => self.follow_listener = Some(l),
+            Err(e) => self.set_status(format!("follow off: {e}")),
+        }
+    }
+
+    /// Whether ramble is listening for the editor.
+    pub fn following(&self) -> bool {
+        self.follow_listener.is_some()
+    }
+
     /// The reader used ramble at `now`: start the grace window.
     pub(super) fn follow_touch(&mut self, now: Instant) {
         self.follow_quiet_until = Some(now + FOLLOW_GRACE);

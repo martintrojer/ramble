@@ -271,6 +271,9 @@ pub struct Launcher {
     pub command: Vec<String>,
     pub needs_vcs: bool,
     pub disabled: bool,
+    /// Inside tmux, run in a split beside ramble (no suspend) and follow
+    /// the editor's cursor; outside tmux, a plain launcher.
+    pub follow: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -304,6 +307,7 @@ fn launcher(name: &str, key: &str, command: &[&str], needs_vcs: bool) -> Launche
         command: strings(command),
         needs_vcs,
         disabled: false,
+        follow: false,
     }
 }
 
@@ -334,12 +338,23 @@ impl Default for Config {
                 pane_nav: true,
             },
             lsp: LspConfig { server: vec![] },
-            launch: vec![launcher(
-                "edit",
-                "<leader>o",
-                &["${editor}", "+${line}", "${file}"],
-                false,
-            )],
+            launch: vec![
+                launcher(
+                    "edit",
+                    "<leader>o",
+                    &["${editor}", "+${line}", "${file}"],
+                    false,
+                ),
+                Launcher {
+                    follow: true,
+                    ..launcher(
+                        "edit-follow",
+                        "<leader>O",
+                        &["${editor}", "+${line}", "${file}"],
+                        false,
+                    )
+                },
+            ],
             review: ReviewConfig {
                 enabled: true,
                 kinds: debrief_review::builtin_kinds(),
@@ -432,6 +447,8 @@ struct RawLauncher {
     needs_vcs: bool,
     #[serde(default)]
     disabled: bool,
+    #[serde(default)]
+    follow: bool,
 }
 
 #[derive(Deserialize)]
@@ -641,6 +658,7 @@ impl Config {
                 command,
                 needs_vcs: l.needs_vcs,
                 disabled: false,
+                follow: l.follow,
             };
             match pos {
                 Some(i) => c.launch[i] = new,

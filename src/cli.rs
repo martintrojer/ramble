@@ -50,20 +50,7 @@ pub struct Args {
 }
 
 /// `FILE:LINE`, split on the last `:` so FILE may contain colons.
-pub fn parse_goto(s: &str) -> Result<(PathBuf, usize), String> {
-    let (file, line) = s
-        .rsplit_once(':')
-        .ok_or_else(|| "expected FILE:LINE".to_string())?;
-    let line: usize = line
-        .parse()
-        .ok()
-        .filter(|&n| n >= 1)
-        .ok_or_else(|| format!("bad line number {line:?}"))?;
-    if file.is_empty() {
-        return Err("expected FILE:LINE".into());
-    }
-    Ok((PathBuf::from(file), line))
-}
+pub use debrief_follow::parse_goto;
 
 /// Everything `plan` needs from the process, injectable for tests.
 pub struct Env {

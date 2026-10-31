@@ -130,14 +130,17 @@ fn event_loop(
     if let Err(e) = app.start_watcher() {
         app.set_status(format!("live reload off: {e:#}"));
     }
-    // Held for the loop: dropping it (exit or panic unwind) removes the socket.
-    let _follow = follow.then(|| start_follow(tx, app));
+    if follow {
+        app.follow_start();
+    }
     let mut title = None;
     while !app.should_quit() {
         update_title(app, &mut title)?;
-        if app.pending_effect().is_some() {
+        if app.effect_suspends() {
             suspend_and_run(terminal, mouse, || app.run_pending_effect())?;
             title = None; // the command may have set its own title
+        } else if app.pending_effect().is_some() {
+            app.run_pending_effect();
         }
         if app.take_clear_request() {
             terminal.clear()?;
@@ -161,32 +164,6 @@ fn event_loop(
         write_terminal_output(app, &mut std::io::stdout())?;
     }
     Ok(())
-}
-
-/// Listen for the editor's cursor (`--follow`); a failure is a status
-/// message, like live reload's.
-#[cfg(unix)]
-fn start_follow(tx: mpsc::Sender<AppEvent>, app: &mut App) -> Option<crate::follow_sock::Listener> {
-    use crate::follow_sock;
-    let emit = move |path, line| {
-        let _ = tx.send(AppEvent::Follow(path, line, Instant::now()));
-    };
-    match follow_sock::listen(
-        &follow_sock::default_dir(),
-        &follow_sock::current_scope(),
-        emit,
-    ) {
-        Ok(l) => Some(l),
-        Err(e) => {
-            app.set_status(format!("follow off: {e}"));
-            None
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn start_follow(_: mpsc::Sender<AppEvent>, _: &mut App) -> Option<()> {
-    None
 }
 
 /// Write the bytes the app queued for the terminal (OSC 52) to `out`.

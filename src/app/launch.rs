@@ -114,12 +114,19 @@ pub fn parse_key(key: &str) -> Result<Vec<char>, String> {
 /// Launcher key bindings: the chars after the leader, and the index into
 /// `Config.launch`. Bad keys are skipped with a message.
 pub(super) fn bindings(launchers: &[Launcher]) -> (Vec<(Vec<char>, usize)>, Vec<String>) {
-    let mut out = Vec::new();
+    let mut out: Vec<(Vec<char>, usize)> = Vec::new();
     let mut errors = Vec::new();
     for (i, l) in launchers.iter().enumerate() {
         let Some(key) = &l.key else { continue };
         match parse_key(key) {
-            Ok(seq) => out.push((seq, i)),
+            Ok(seq) => {
+                // A later entry (the user's, after the defaults) takes the key.
+                if let Some(j) = out.iter().position(|(s, _)| *s == seq) {
+                    let lost = &launchers[out.remove(j).1].name;
+                    errors.push(format!("launcher {}: {key} is taken by {}", lost, l.name));
+                }
+                out.push((seq, i));
+            }
             Err(e) => errors.push(format!("launcher {}: {e}", l.name)),
         }
     }
@@ -188,10 +195,49 @@ impl App {
         let Some(l) = self.config.launch.get(i) else {
             return;
         };
-        match self.build_launch(l) {
-            Ok(cmd) => self.pending_effect = Some(Effect::Launch(cmd)),
-            Err(msg) => self.set_status(msg),
-        }
+        let cmd = match self.build_launch(l) {
+            Ok(cmd) => cmd,
+            Err(msg) => return self.set_status(msg),
+        };
+        let pane = l
+            .follow
+            .then(|| debrief_follow::tmux_pane(&*self.env))
+            .flatten();
+        self.pending_effect = Some(match pane {
+            Some(pane) => Effect::Split(LaunchCommand {
+                argv: debrief_follow::split_argv(&pane, &cmd.cwd, &cmd.argv),
+                ..cmd
+            }),
+            None => Effect::Launch(cmd),
+        });
+    }
+
+    /// Run a follow launcher's tmux split (TUI still up). Listen first, so
+    /// the editor's first position can't be missed, and drop the grace
+    /// window the launching key started: that position is wanted. No
+    /// reload: the watcher sees saves.
+    pub(super) fn run_split(&mut self, cmd: &LaunchCommand) {
+        self.set_status("");
+        self.follow_start();
+        self.follow_quiet_until = None;
+        // The pane runner: no terminal I/O while the TUI is up.
+        let err = match (self.pane_runner)(cmd) {
+            Ok(Exit::Code(0)) => return,
+            Ok(Exit::Code(n)) => format!("tmux exited with status {n}"),
+            Ok(Exit::Signal(n)) => format!("tmux killed by signal {n}"),
+            // A slow tmux still opens the split.
+            Err(e) if e.is::<super::pane_nav::StillRunning>() => return,
+            Err(e) => format!("{e:#}"),
+        };
+        // Keep a "follow off" from the listener beside it.
+        let msg = format!("{}: {err}", cmd.name);
+        // Only this split's own status: cleared above.
+        let prev = self.status().to_string();
+        self.set_status(if prev.is_empty() {
+            msg
+        } else {
+            format!("{prev}; {msg}")
+        });
     }
 
     /// The current file lies in a VCS repository (`needs_vcs` launchers).
@@ -317,6 +363,21 @@ mod tests {
         assert!(parse_key("<leader><C-x>").is_err());
         assert!(parse_key("x").is_err());
         assert!(parse_key("<leader>").is_err());
+    }
+
+    #[test]
+    fn a_later_launcher_takes_a_shared_key_with_a_warning() {
+        let l = |name: &str| Launcher {
+            name: name.into(),
+            key: Some("<leader>O".into()),
+            command: vec!["x".into()],
+            needs_vcs: false,
+            disabled: false,
+            follow: false,
+        };
+        let (b, errors) = bindings(&[l("edit-follow"), l("mine")]);
+        assert_eq!(b, [(vec!['O'], 1)]);
+        assert_eq!(errors, ["launcher edit-follow: <leader>O is taken by mine"]);
     }
 
     #[test]

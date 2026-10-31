@@ -15,6 +15,9 @@ pub enum Effect {
     Edit { path: PathBuf, line: Option<usize> },
     /// Run a launcher, then reload the page.
     Launch(LaunchCommand),
+    /// A `follow = true` launcher inside tmux: `tmux split-window` running
+    /// the command beside ramble. Runs without suspending the TUI.
+    Split(LaunchCommand),
     /// `C-e` in the comment prompt: edit `initial` in the editor, then
     /// save it as a comment of `kind` on `lines` of `path` (batch-relative).
     EditComment {
@@ -36,8 +39,13 @@ impl App {
         self.pending_effect.as_ref()
     }
 
+    /// Whether the queued effect needs the TUI suspended (a split doesn't).
+    pub fn effect_suspends(&self) -> bool {
+        !matches!(self.pending_effect, None | Some(Effect::Split(_)))
+    }
+
     /// Run the queued side effect (if any). The caller must have left the
-    /// TUI first; `run` does this.
+    /// TUI first when [`App::effect_suspends`]; `run` does this.
     pub fn run_pending_effect(&mut self) {
         match self.pending_effect.take() {
             Some(Effect::Edit { path, line }) => {
@@ -46,6 +54,7 @@ impl App {
                 }
             }
             Some(Effect::Launch(cmd)) => self.run_launch(&cmd),
+            Some(Effect::Split(cmd)) => self.run_split(&cmd),
             Some(Effect::EditComment {
                 path,
                 lines,
