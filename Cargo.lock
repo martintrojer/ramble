@@ -499,18 +499,19 @@ dependencies = [
 
 [[package]]
 name = "debrief-follow"
-version = "0.6.5"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "124aaf06c8db942bbc86f153d614fb562500be4e6fb576e1fee127fd856cff3a"
+checksum = "0a3f1ca63f63a06bd7ef03505cfc1f3ff9e5c2fb8fd2efe7e02edc2aaaceedce"
 dependencies = [
  "rustix",
+ "serde_json",
 ]
 
 [[package]]
 name = "debrief-review"
-version = "0.6.5"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "646d9ef0e3f32f99f06dbe2319b5a0fec4f3461712624d71bd7e2b317867fd3c"
+checksum = "bc67e4fa7801c35a5d849ffddefb799b3e6565ac02d36a383e46dd3c8f0c613c"
 dependencies = [
  "blake3",
  "dirs",
