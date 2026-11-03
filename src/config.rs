@@ -224,7 +224,7 @@ pub struct KeysConfig {
     /// Show the next-key box after a pause in a key sequence.
     pub clue: bool,
     /// `C-h/j/k/l` move between panes (as `C-w h/j/k/l`), handing off to
-    /// tmux at the edge; false leaves them unbound.
+    /// tmux or rex at the edge; false leaves them unbound.
     pub pane_nav: bool,
 }
 
@@ -271,8 +271,8 @@ pub struct Launcher {
     pub command: Vec<String>,
     pub needs_vcs: bool,
     pub disabled: bool,
-    /// Inside tmux, run in a split beside ramble (no suspend) and follow
-    /// the editor's cursor; outside tmux, a plain launcher.
+    /// Inside tmux or rex, run in a split beside ramble (no suspend) and
+    /// follow the editor's cursor; outside both, a plain launcher.
     pub follow: bool,
 }
 

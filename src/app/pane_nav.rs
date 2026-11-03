@@ -1,7 +1,7 @@
 //! `C-h/j/k/l` (`[keys] pane_nav`): the focus moves of `C-w h/j/k/l`, as
-//! in nvim. Where there is no pane that way and ramble runs inside tmux,
-//! the move continues into the tmux pane there (`tmux select-pane`), as
-//! vim-tmux-navigator does.
+//! in nvim. Where there is no pane that way and ramble runs inside tmux or
+//! rex, the move continues into the multiplexer's pane there (`tmux
+//! select-pane`, `rex focus`), as vim-tmux-navigator does.
 
 use std::time::{Duration, Instant};
 
@@ -12,35 +12,17 @@ use super::launch::{Exit, LaunchCommand};
 use super::sidebar::{SidebarAction, focus_toward};
 use super::{App, Focus};
 
-/// How long the tmux hand-off may hold up the UI.
-pub const TMUX_WAIT: Duration = Duration::from_millis(200);
+pub use debrief_follow::Dir;
+use debrief_follow::Mux;
 
-/// A pane direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dir {
-    Left,
-    Down,
-    Up,
-    Right,
-}
+/// How long the multiplexer hand-off may hold up the UI.
+pub const MUX_WAIT: Duration = Duration::from_millis(200);
 
-impl Dir {
-    /// The `tmux select-pane` flag for this direction.
-    pub fn tmux_flag(self) -> &'static str {
-        match self {
-            Dir::Left => "-L",
-            Dir::Down => "-D",
-            Dir::Up => "-U",
-            Dir::Right => "-R",
-        }
-    }
-}
-
-/// The `tmux select-pane` command for `dir`.
-pub fn tmux_command(dir: Dir) -> LaunchCommand {
+/// The command that moves `mux`'s focus toward `dir`.
+pub fn focus_command(mux: &Mux, dir: Dir) -> LaunchCommand {
     LaunchCommand {
-        name: "tmux".into(),
-        argv: vec!["tmux".into(), "select-pane".into(), dir.tmux_flag().into()],
+        name: mux.name().into(),
+        argv: mux.focus_argv(dir),
         cwd: ".".into(),
     }
 }
@@ -65,13 +47,16 @@ impl App {
         Some(KeyResult::Action(Action::PaneNav(dir)))
     }
 
-    /// Move to the pane toward `dir` as `C-w` does; with none there and
-    /// `$TMUX` set, select the tmux pane that way instead.
+    /// Move to the pane toward `dir` as `C-w` does; with none there
+    /// inside tmux or rex, move to the multiplexer's pane that way instead.
     pub(super) fn pane_nav(&mut self, dir: Dir) {
         let a = focus_toward(dir, self.sidebar_side());
-        if !self.has_pane_toward(a) && self.in_tmux() {
-            // Failure (no pane there, tmux gone) is not ours to report.
-            let _ = (self.pane_runner)(&tmux_command(dir));
+        if !self.has_pane_toward(a)
+            && let Some(mux) = Mux::detect(&*self.env)
+        {
+            // Failure (no pane there, the multiplexer gone) is not ours
+            // to report.
+            let _ = (self.pane_runner)(&focus_command(&mux, dir));
             return;
         }
         self.sidebar_action(a);
@@ -92,14 +77,10 @@ impl App {
             _ => true,
         }
     }
-
-    fn in_tmux(&self) -> bool {
-        (self.env)("TMUX").is_some_and(|v| !v.is_empty())
-    }
 }
 
-/// The pane runner gave up waiting; the command goes on (a slow tmux
-/// still opens its split).
+/// The pane runner gave up waiting; the command goes on (a slow
+/// multiplexer still opens its split).
 #[derive(Debug)]
 pub struct StillRunning;
 
@@ -112,7 +93,7 @@ impl std::fmt::Display for StillRunning {
 impl std::error::Error for StillRunning {}
 
 /// Default pane runner: start the command with no terminal I/O and wait at
-/// most [`TMUX_WAIT`]; a slower command finishes on its own.
+/// most [`MUX_WAIT`]; a slower command finishes on its own.
 pub fn spawn_capped(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
     use std::process::{Command, Stdio};
     let (prog, args) = cmd
@@ -126,7 +107,7 @@ pub fn spawn_capped(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    let deadline = Instant::now() + TMUX_WAIT;
+    let deadline = Instant::now() + MUX_WAIT;
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok(Exit::Code(status.code().unwrap_or(-1)));
@@ -135,7 +116,7 @@ pub fn spawn_capped(cmd: &LaunchCommand) -> anyhow::Result<Exit> {
             // Reap it off the UI thread.
             std::thread::spawn(move || child.wait());
             return Err(anyhow::Error::new(StillRunning)
-                .context(format!("{prog} still running after {TMUX_WAIT:?}")));
+                .context(format!("{prog} still running after {MUX_WAIT:?}")));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -154,22 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn flags_follow_tmux() {
-        let flags: Vec<_> = [Dir::Left, Dir::Down, Dir::Up, Dir::Right]
-            .map(|d| tmux_command(d).argv.join(" "))
-            .to_vec();
-        assert_eq!(
-            flags,
-            [
-                "tmux select-pane -L",
-                "tmux select-pane -D",
-                "tmux select-pane -U",
-                "tmux select-pane -R"
-            ]
-        );
-    }
-
-    #[test]
     fn spawn_capped_returns_the_exit_code_of_a_quick_command() {
         assert!(matches!(
             spawn_capped(&cmd(&["sh", "-c", "exit 3"])),
@@ -182,6 +147,6 @@ mod tests {
     fn spawn_capped_never_waits_much_longer_than_the_cap() {
         let t = Instant::now();
         assert!(spawn_capped(&cmd(&["sleep", "5"])).is_err());
-        assert!(t.elapsed() < TMUX_WAIT + Duration::from_secs(1));
+        assert!(t.elapsed() < MUX_WAIT + Duration::from_secs(1));
     }
 }

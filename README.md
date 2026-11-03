@@ -24,7 +24,7 @@ notebook: backlinks, full-text search and tags with no setup.
   SSH and tmux). Press `g?` for every key and pause mid-sequence for hints.
 - **It never touches your files.** `<leader>o` opens `$EDITOR` at the line
   you're on, and ramble reloads when you're back.
-- **It previews while you write.** In a tmux split beside your editor it
+- **It previews while you write.** In a tmux or rex split beside your editor it
   re-renders on save and, with `--follow`, keeps up with your cursor
   ([setup](docs/guide.md#following-your-editor)).
 - **It reviews.** `cc` leaves a comment on a line; `<leader>rr` sends the
@@ -57,13 +57,14 @@ ramble notes/            # browse a folder
 ramble notes/index.md    # read a file
 cat README.md | ramble   # read stdin
 tmux split-window -h ramble --follow README.md  # live preview that follows your editor
+rex split -- ramble --follow README.md          # the same in rex
 ```
 
 No config needed. `ramble --init-config` writes every option, commented out.
 
 ## More
 
-- [Guide](docs/guide.md): features, keys, sidebar, following your editor, comments, tmux, launchers
+- [Guide](docs/guide.md): features, keys, sidebar, following your editor, comments, tmux and rex, launchers
 - [Default config](config.default.toml): every option, with its default
 - [Design](docs/design.md): how it works and why
 

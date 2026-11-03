@@ -472,33 +472,33 @@ pub(crate) static BINDINGS: &[Binding] = &[
         "last pane",
         App::can_focus_or_peek,
     ),
-    // `[keys] pane_nav`: C-w h/j/k/l, then the tmux pane past the edge.
+    // `[keys] pane_nav`: C-w h/j/k/l, then the tmux or rex pane past the edge.
     b(
         "C-h",
         Any,
         G::Sidebar,
-        "as C-w h (at the edge: tmux)",
+        "as C-w h (at the edge: tmux/rex)",
         pane_nav,
     ),
     b(
         "C-j",
         Any,
         G::Sidebar,
-        "as C-w j (at the edge: tmux)",
+        "as C-w j (at the edge: tmux/rex)",
         pane_nav,
     ),
     b(
         "C-k",
         Any,
         G::Sidebar,
-        "as C-w k (at the edge: tmux)",
+        "as C-w k (at the edge: tmux/rex)",
         pane_nav,
     ),
     b(
         "C-l",
         Any,
         G::Sidebar,
-        "as C-w l (at the edge: tmux)",
+        "as C-w l (at the edge: tmux/rex)",
         pane_nav,
     ),
     b("j, Down", S, G::Sidebar, "down", always),

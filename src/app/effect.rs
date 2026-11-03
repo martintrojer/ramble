@@ -15,8 +15,9 @@ pub enum Effect {
     Edit { path: PathBuf, line: Option<usize> },
     /// Run a launcher, then reload the page.
     Launch(LaunchCommand),
-    /// A `follow = true` launcher inside tmux: `tmux split-window` running
-    /// the command beside ramble. Runs without suspending the TUI.
+    /// A `follow = true` launcher inside tmux or rex: `tmux split-window`
+    /// or `rex split` running the command beside ramble. Runs without
+    /// suspending the TUI.
     Split(LaunchCommand),
     /// `C-e` in the comment prompt: edit `initial` in the editor, then
     /// save it as a comment of `kind` on `lines` of `path` (batch-relative).

@@ -1,6 +1,7 @@
 //! `C-h/j/k/l` (`[keys] pane_nav`): the moves of `C-w h/j/k/l`, and the
-//! tmux hand-off at the edge. A recording runner stands in for tmux and an
-//! injected environment for `$TMUX`; no real tmux is run.
+//! tmux or rex hand-off at the edge. A recording runner stands in for the
+//! multiplexer and an injected environment for its variables; no real
+//! tmux or rex is run.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -48,7 +49,7 @@ struct T {
 }
 
 impl T {
-    /// The tmux commands run so far, then forget them.
+    /// The multiplexer commands run so far, then forget them.
     fn tmux(&self) -> Vec<String> {
         self.calls
             .borrow_mut()
@@ -58,8 +59,8 @@ impl T {
     }
 }
 
-/// `a.md` open, 100x20, with `$TMUX` set when `tmux` and a recording pane
-/// runner.
+/// `a.md` open, 100x20, with `$TMUX` and `$TMUX_PANE` set when `tmux`
+/// and a recording pane runner.
 fn start(config: Config, tmux: bool) -> T {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -78,7 +79,11 @@ fn start(config: Config, tmux: bool) -> T {
         (100, 20),
     )
     .unwrap()
-    .with_env(move |k| (tmux && k == "TMUX").then(|| "/tmp/tmux-1/default,1,0".into()))
+    .with_env(move |k| match k {
+        "TMUX" if tmux => Some("/tmp/tmux-1/default,1,0".into()),
+        "TMUX_PANE" if tmux => Some("%1".into()),
+        _ => None,
+    })
     .with_pane_runner(move |cmd: &LaunchCommand| {
         rec.borrow_mut().push(cmd.argv.clone());
         Ok(Exit::Code(0))
@@ -194,6 +199,31 @@ fn an_auto_sidebar_peeks_instead_of_handing_off() {
 }
 
 #[test]
+fn inside_rex_edges_move_the_rex_focus() {
+    let mut t = start(config(SidebarMode::Split, SidebarSide::Left), false);
+    t.app = t.app.with_env(|k| match k {
+        "REX_SESSION" => Some("session:s".into()),
+        "REX_BLOCK" => Some("block:b".into()),
+        _ => None,
+    });
+    t.app.handle_key(ctrl('l'));
+    assert_eq!(
+        t.tmux(),
+        ["rex --autostart=false focus -s session:s right"],
+        "right of the content"
+    );
+    t.app.handle_key(ctrl('h'));
+    t.app.handle_key(ctrl('h'));
+    assert_eq!(t.app.focus(), Focus::Files);
+    assert_eq!(
+        t.tmux(),
+        ["rex --autostart=false focus -s session:s left"],
+        "left of the sidebar"
+    );
+    assert_eq!(t.app.status(), "");
+}
+
+#[test]
 fn outside_tmux_edges_do_what_ctrl_w_does() {
     let mut t = start(config(SidebarMode::Outline, SidebarSide::Left), false);
     t.app.handle_key(ctrl('l'));
@@ -209,7 +239,11 @@ fn outside_tmux_edges_do_what_ctrl_w_does() {
 #[test]
 fn an_empty_tmux_variable_counts_as_unset() {
     let mut t = start(config(SidebarMode::Files, SidebarSide::Left), false);
-    t.app = t.app.with_env(|k| (k == "TMUX").then(String::new));
+    t.app = t.app.with_env(|k| match k {
+        "TMUX" => Some(String::new()),
+        "TMUX_PANE" => Some("%1".into()),
+        _ => None,
+    });
     t.app.handle_key(ctrl('l'));
     assert!(t.tmux().is_empty());
 }
@@ -270,7 +304,11 @@ fn the_comment_box_keeps_ctrl_j_newline_and_ctrl_h() {
         (100, 20),
     )
     .unwrap()
-    .with_env(|k| (k == "TMUX").then(|| "x".into()))
+    .with_env(|k| match k {
+        "TMUX" => Some("x".into()),
+        "TMUX_PANE" => Some("%1".into()),
+        _ => None,
+    })
     .with_pane_runner(move |cmd: &LaunchCommand| {
         rec.borrow_mut().push(cmd.argv.clone());
         Ok(Exit::Code(0))

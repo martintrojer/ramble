@@ -199,20 +199,20 @@ impl App {
             Ok(cmd) => cmd,
             Err(msg) => return self.set_status(msg),
         };
-        let pane = l
+        let mux = l
             .follow
-            .then(|| debrief_follow::tmux_pane(&*self.env))
+            .then(|| debrief_follow::Mux::detect(&*self.env))
             .flatten();
-        self.pending_effect = Some(match pane {
-            Some(pane) => Effect::Split(LaunchCommand {
-                argv: debrief_follow::split_argv(&pane, &cmd.cwd, &cmd.argv),
+        self.pending_effect = Some(match mux {
+            Some(mux) => Effect::Split(LaunchCommand {
+                argv: mux.split_argv(&cmd.cwd, &cmd.argv),
                 ..cmd
             }),
             None => Effect::Launch(cmd),
         });
     }
 
-    /// Run a follow launcher's tmux split (TUI still up). Listen first, so
+    /// Run a follow launcher's tmux or rex split (TUI still up). Listen first, so
     /// the editor's first position can't be missed, and drop the grace
     /// window the launching key started: that position is wanted. No
     /// reload: the watcher sees saves.
@@ -221,11 +221,17 @@ impl App {
         self.follow_start();
         self.follow_quiet_until = None;
         // The pane runner: no terminal I/O while the TUI is up.
+        // `tmux` or `rex` (by file name: rex may run from $REX_BIN_DIR).
+        let mux = cmd
+            .argv
+            .first()
+            .and_then(|p| Path::new(p).file_name()?.to_str())
+            .unwrap_or("multiplexer");
         let err = match (self.pane_runner)(cmd) {
             Ok(Exit::Code(0)) => return,
-            Ok(Exit::Code(n)) => format!("tmux exited with status {n}"),
-            Ok(Exit::Signal(n)) => format!("tmux killed by signal {n}"),
-            // A slow tmux still opens the split.
+            Ok(Exit::Code(n)) => format!("{mux} exited with status {n}"),
+            Ok(Exit::Signal(n)) => format!("{mux} killed by signal {n}"),
+            // A slow multiplexer still opens the split.
             Err(e) if e.is::<super::pane_nav::StillRunning>() => return,
             Err(e) => format!("{e:#}"),
         };

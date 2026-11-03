@@ -451,6 +451,53 @@ fn a_slow_tmux_is_not_an_error() {
 }
 
 #[test]
+fn leader_shift_o_in_rex_splits_beside_rambles_block() {
+    let (dir, app, calls) = launch_app(no_lsp(), true, Exit::Code(0));
+    let mut app = app
+        .with_env(|k| {
+            [
+                ("REX_SESSION", "session:s"),
+                ("REX_BLOCK", "block:b"),
+                ("VISUAL", "nvim"),
+            ]
+            .iter()
+            .find(|(n, _)| *n == k)
+            .map(|(_, v)| v.to_string())
+        })
+        .with_pane_runner(|_| Ok(Exit::Code(2)));
+    goto(&mut app, "line five");
+    keys(&mut app, " O");
+    let Some(Effect::Split(cmd)) = app.pending_effect().cloned() else {
+        panic!("not a split: {:?} / {}", app.pending_effect(), app.status());
+    };
+    assert!(!app.effect_suspends());
+    let file = root(&dir).join("sub/a.md");
+    let cwd = root(&dir).display().to_string();
+    assert_eq!(
+        cmd.argv,
+        s(&[
+            "rex",
+            "--autostart=false",
+            "split",
+            "-s",
+            "session:s",
+            "-b",
+            "block:b",
+            "--split=right",
+            "-c",
+            &cwd,
+            "--",
+            "nvim",
+            "+5",
+            file.to_str().unwrap()
+        ])
+    );
+    app.run_pending_effect();
+    assert!(calls.borrow().is_empty(), "never the suspending runner");
+    assert_eq!(app.status(), "edit-follow: rex exited with status 2");
+}
+
+#[test]
 fn leader_shift_o_outside_tmux_is_a_plain_launch() {
     let (_dir, mut app, calls) = launch_app(no_lsp(), true, Exit::Code(0));
     keys(&mut app, " O");

@@ -89,12 +89,16 @@ terminal's own selection. `[mouse] enabled = false` hands the mouse back.
   read and shows while you use it. `side = "right"` moves it.
 - It sizes itself to its rows and hides below 80 columns.
 
-## Panes and tmux
+## Panes, tmux and rex
 
-`C-h/j/k/l` move between ramble's panes and, at the edge inside tmux, on to
-the next tmux pane, like
+`C-h/j/k/l` move between ramble's panes and, at the edge inside tmux or
+[rex](https://www.superlogical.com/rex), on to the multiplexer's next
+pane, like
 [vim-tmux-navigator](https://github.com/christoomey/vim-tmux-navigator).
-`[keys] pane_nav = false` unbinds them. vim-tmux-navigator only forwards
+`[keys] pane_nav = false` unbinds them. ramble is inside tmux when `$TMUX`
+and `$TMUX_PANE` are set, and inside rex when `$REX_SESSION` and
+`$REX_BLOCK` are (rex runs from `$REX_BIN_DIR` when set, else `$PATH`);
+with both, `$TERM_PROGRAM` picks the inner one. vim-tmux-navigator only forwards
 these keys to panes it thinks run vim; add ramble to its pattern:
 
 ```tmux
@@ -104,11 +108,12 @@ set -g @vim_navigator_pattern '(\S+/)?g?\.?(view|l?n?vim?x?|fzf|debrief|ramble)(
 ## Following your editor
 
 Run ramble as a live preview next to your editor. From ramble,
-`<leader>O` opens `$EDITOR` at the cursor line in a tmux split and starts
-following it. Or start the preview yourself:
+`<leader>O` opens `$EDITOR` at the cursor line in a tmux or rex split and
+starts following it. Or start the preview yourself:
 
 ```sh
 tmux split-window -h ramble --follow notes/a.md
+rex split -- ramble --follow notes/a.md
 ```
 
 It re-renders on save, and while following it also moves to where your
@@ -121,15 +126,15 @@ editor's cursor is:
 - Using ramble yourself (a key, a click or scroll, a paste) pauses
   following for 2 seconds, and following waits while a prompt, picker,
   comment box, visual mode or half-typed key sequence is open.
-- Inside tmux, ramble follows only editors in its own tmux window, so two
-  editor + preview pairs don't drag each other around.
+- Inside tmux or rex, ramble follows only editors in its own window (a
+  rex tab), so two editor + preview pairs don't drag each other around.
 
 The editor tells ramble with `ramble --goto FILE:LINE` (or
 `debrief --goto`: [debrief](https://github.com/martintrojer/debrief)
 follows the editor in its diffs the same way, and one call reaches both).
 It finds the following rambles and debriefs (sockets in
 `$XDG_RUNTIME_DIR/debrief-follow-<uid>/`, else `$TMPDIR`, else `/tmp`),
-picks those in its own tmux window, and exits 0 even when none is
+picks those in its own tmux or rex window, and exits 0 even when none is
 listening. It takes a few milliseconds, so an editor can run it on each
 cursor move. Linux and macOS only.
 
@@ -198,8 +203,8 @@ another ramble show up within a second.
 
 Keys that hand off to another program and reload on return. `<leader>o`
 opens `$VISUAL` / `$EDITOR` at the cursor line. `<leader>O` opens it in a
-tmux split beside ramble instead, without suspending it, and starts
-[following your editor](#following-your-editor) (outside tmux it's
+tmux or rex split beside ramble instead, without suspending it, and starts
+[following your editor](#following-your-editor) (outside both it's
 `<leader>o`). `follow = true` does the same for any launcher. Add your
 own:
 

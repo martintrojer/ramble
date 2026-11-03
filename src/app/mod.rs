@@ -74,7 +74,7 @@ pub use layout::{Hit, Layout, ListArea};
 pub use lsp_glue::{SPINNER_AFTER, server_spec, tag as lsp_tag};
 pub use mdroots_glue::MdrootsOptions;
 pub use mouse::{MULTI_CLICK, WHEEL_ROWS};
-pub use pane_nav::{Dir, StillRunning, TMUX_WAIT, tmux_command};
+pub use pane_nav::{Dir, MUX_WAIT, StillRunning, focus_command};
 pub use picker::{PICKER_TAG_BASE, PickerAction, PickerView, filter as picker_filter};
 pub use review_glue::{
     FileMarks, MARKER as REVIEW_MARKER, Markers, NO_MORE_REVIEW, NO_REVIEW, REVIEW_POLL, canonical,
@@ -241,10 +241,12 @@ pub struct App {
     term_out: Rc<RefCell<Vec<u8>>>,
     /// Runs launcher commands (`launch::system_run` by default).
     runner: Box<launch::Runner>,
-    /// Runs `tmux select-pane` for a pane move at the edge
-    /// (`pane_nav::spawn_capped` by default: never blocks long).
+    /// Runs the multiplexer's focus move at a pane edge and a follow
+    /// launcher's split (`pane_nav::spawn_capped` by default: never
+    /// blocks long).
     pane_runner: Box<launch::Runner>,
-    /// Environment lookup for `${editor}` and `$TMUX`.
+    /// Environment lookup for `${editor}` and the multiplexer's
+    /// variables (`$TMUX`, `$REX_SESSION`, ...).
     env: Box<launch::EnvLookup>,
     /// Launcher key sequences after the leader, with indices into
     /// `config.launch`.
@@ -399,8 +401,8 @@ impl App {
         self
     }
 
-    /// Replace the runner of the tmux hand-off at a pane edge (tests
-    /// record the command).
+    /// Replace the runner of the multiplexer hand-off at a pane edge and
+    /// of a follow launcher's split (tests record the command).
     pub fn with_pane_runner(
         mut self,
         runner: impl FnMut(&LaunchCommand) -> anyhow::Result<Exit> + 'static,
@@ -409,7 +411,8 @@ impl App {
         self
     }
 
-    /// Replace the environment lookup used for `${editor}` and `$TMUX`.
+    /// Replace the environment lookup used for `${editor}` and the
+    /// multiplexer's variables.
     pub fn with_env(mut self, env: impl Fn(&str) -> Option<String> + 'static) -> Self {
         self.env = Box::new(env);
         self
